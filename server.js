@@ -300,6 +300,14 @@ function connectDeriv(){
   });
 }
 
+app.use((req,res,next)=>{
+  res.setHeader('Access-Control-Allow-Origin','https://quispillocharly-gif.github.io');
+  res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type');
+  if(req.method==='OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.static(__dirname));
 
 app.get('/api/cloud/status', (req,res)=>{
@@ -321,6 +329,20 @@ app.get('/api/cloud/status', (req,res)=>{
 
 app.get('/api/cloud/prediction', (req,res)=>{
   res.json({ok:true,prediction:lastPrediction});
+});
+
+app.get('/api/cloud/snapshot', (req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({
+    ok:true,
+    status,
+    symbol:SYMBOL,
+    lastEpoch,
+    lastTickAt,
+    lastDigit,
+    recentDigits:hist.slice(-120),
+    memory:mem
+  });
 });
 
 app.get('/health', (req,res)=>{
