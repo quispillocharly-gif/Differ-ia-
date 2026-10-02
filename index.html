@@ -3,74 +3,123 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DIFFER ONLINE AI V1</title>
+<meta name="theme-color" content="#020805">
+<title>DIFFER IA // BLACK MATRIX</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#020611;color:#eaf6ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}.wrap{max-width:980px;margin:auto;padding:14px}.hero,.panel{background:#081321;border:1px solid #1c5273;border-radius:18px;padding:15px;margin:10px 0;box-shadow:0 14px 40px #0007}.hero{background:radial-gradient(circle at top right,#17365c 0,#09182a 38%,#06101d 70%)}.tag{font-size:11px;letter-spacing:2.5px;color:#66f7d5}h1{margin:5px 0;font-size:30px}.muted{color:#9cb2c6;font-size:13px}.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}button,input,select{background:#0a1b2c;color:#eefaff;border:1px solid #3c769b;border-radius:11px;padding:11px;font-weight:750}.primary{border-color:#61f4d2}.danger{border-color:#ff6f91}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.card{background:#050d18;border:1px solid #14324a;border-radius:14px;padding:12px}.card small{display:block;color:#8da7bb;font-size:11px;letter-spacing:.6px}.card b{display:block;margin-top:5px;font-size:22px;color:#72f7dc}.decision{font-size:25px;font-weight:900;margin-bottom:6px}.reason{min-height:42px}.meter{height:10px;background:#101d29;border-radius:10px;overflow:hidden;margin-top:11px}.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#65f4d7,#6ea8ff)}.auth input{width:100%;margin-top:8px}.log{height:220px;overflow:auto;white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#bcd0df}.big{width:100%;min-height:58px;font-size:18px;margin-top:9px}.stateBuy{color:#70ffd6}.stateWait{color:#ffd778}.statePause{color:#ff7595}.warning{border-color:#8d6e27;background:#211b0c}.warning b{color:#ffd778}@media(min-width:760px){.grid{grid-template-columns:repeat(4,1fr)}}
+:root{--bg:#010403;--panel:rgba(3,12,8,.91);--panel2:rgba(4,18,12,.88);--line:rgba(0,255,136,.20);--green:#00ff88;--mint:#85ffc0;--cyan:#35e7ff;--text:#dffff0;--muted:#79aa8e;--danger:#ff4268;--warn:#ffd05a;--shadow:0 0 0 1px rgba(0,255,136,.06),0 0 24px rgba(0,255,136,.06),0 20px 60px rgba(0,0,0,.55)}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}body{overflow-x:hidden}
+#matrixRain{position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:.18;pointer-events:none}.scanlines{position:fixed;inset:0;z-index:1;pointer-events:none;background:repeating-linear-gradient(to bottom,rgba(255,255,255,.018) 0 1px,transparent 1px 4px);mix-blend-mode:screen}.vignette{position:fixed;inset:0;z-index:1;pointer-events:none;background:radial-gradient(circle at center,transparent 45%,rgba(0,0,0,.72) 100%)}.wrap{position:relative;z-index:2;max-width:1180px;margin:auto;padding:14px}
+.topline{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:4px 2px 10px;color:#6ca584;font-size:11px;letter-spacing:1.5px}.online{color:var(--green);text-shadow:0 0 10px rgba(0,255,136,.55)}
+.hero,.panel,.card{position:relative;overflow:hidden;background:linear-gradient(180deg,var(--panel),rgba(2,8,5,.94));border:1px solid var(--line);box-shadow:var(--shadow)}.hero{border-radius:22px;padding:19px;margin-bottom:12px}.hero-grid{display:grid;grid-template-columns:1.6fr .8fr;gap:14px;align-items:center}.eyebrow{display:flex;align-items:center;gap:8px;color:var(--mint);font-size:11px;letter-spacing:2.5px;text-transform:uppercase}.pulseDot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.7s infinite}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,255,136,.65)}70%{box-shadow:0 0 0 10px rgba(0,255,136,0)}100%{box-shadow:0 0 0 0 rgba(0,255,136,0)}}
+h1{margin:8px 0 5px;font-size:clamp(26px,5vw,48px);line-height:.98;letter-spacing:-2px;color:var(--green);text-shadow:0 0 18px rgba(0,255,136,.28)}.subtitle{color:#92bfa5;font-size:13px;line-height:1.5;max-width:760px}.corebox{background:rgba(0,255,136,.035);border:1px solid rgba(0,255,136,.14);border-radius:16px;padding:13px}.corebox .label{font-size:10px;color:#6ba985;letter-spacing:1.7px}.corebox .value{font-size:17px;color:var(--mint);margin-top:5px}.coreline{height:1px;background:linear-gradient(90deg,transparent,var(--green),transparent);opacity:.35;margin:10px 0}.core-mini{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-size:10px;color:#7fb392}.core-mini b{color:#b7ffda}
+.panel{border-radius:18px;padding:14px;margin:10px 0}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.panel-title{color:var(--mint);font-size:11px;letter-spacing:1.8px;text-transform:uppercase}.chip{font-size:10px;padding:5px 8px;border:1px solid rgba(0,255,136,.16);border-radius:999px;color:#88bda0;background:rgba(0,255,136,.035)}
+.controls{display:grid;grid-template-columns:1fr repeat(3,.8fr) 1.15fr 1.15fr;gap:9px;align-items:end}label{display:flex;flex-direction:column;gap:6px;color:#7da98e;font-size:10px;text-transform:uppercase;letter-spacing:1.2px}input,select,button{font:inherit}input,select{width:100%;min-height:44px;background:#020704;color:var(--green);border:1px solid rgba(0,255,136,.18);border-radius:11px;padding:10px 11px;outline:none}input:focus,select:focus{border-color:rgba(0,255,136,.48);box-shadow:0 0 0 3px rgba(0,255,136,.07)}
+button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);background:linear-gradient(180deg,rgba(0,255,136,.16),rgba(0,255,136,.05));color:var(--mint);padding:10px 12px;cursor:pointer;text-transform:uppercase;letter-spacing:.8px;transition:.16s}.primary{border-color:rgba(0,255,136,.45);box-shadow:0 0 18px rgba(0,255,136,.10)}.danger{color:#ffd7df;border-color:rgba(255,66,104,.36);background:linear-gradient(180deg,rgba(255,66,104,.14),rgba(255,66,104,.04))}
+.statusStrip{margin-top:10px;border:1px solid rgba(0,255,136,.13);background:rgba(0,255,136,.026);border-radius:12px;padding:9px 11px;color:#a6d5b7;font-size:11px;display:flex;justify-content:space-between;gap:10px;align-items:center}#status{color:var(--green);font-weight:800}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:10px 0}.card{border-radius:15px;padding:12px;min-height:84px}.card small{display:block;color:#658e76;font-size:9px;letter-spacing:1.35px;text-transform:uppercase}.card b{display:block;margin-top:8px;color:var(--green);font-size:clamp(17px,3.2vw,24px);text-shadow:0 0 11px rgba(0,255,136,.17);word-break:break-word}.hot b{color:var(--cyan)}.warn b{color:var(--warn)}.dangerCard b{color:#ff7792}
+.decisionPanel{border-color:rgba(53,231,255,.18);background:radial-gradient(circle at top right,rgba(53,231,255,.055),transparent 35%),linear-gradient(180deg,var(--panel2),rgba(2,9,6,.95))}.decision{font-size:clamp(20px,4.5vw,33px);font-weight:900;letter-spacing:1px;text-align:center;padding:17px 12px;border-radius:14px;border:1px solid rgba(0,255,136,.16);background:rgba(0,0,0,.18);text-transform:uppercase}.stateBuy{color:var(--green);text-shadow:0 0 18px rgba(0,255,136,.38);animation:buyGlow 1.2s ease-in-out infinite alternate}@keyframes buyGlow{from{box-shadow:inset 0 0 12px rgba(0,255,136,.03)}to{box-shadow:inset 0 0 28px rgba(0,255,136,.12),0 0 20px rgba(0,255,136,.08)}}.stateWait{color:var(--warn)}.statePause{color:#ff7792}.reason{min-height:38px;color:#82ad93;font-size:11px;line-height:1.5;text-align:center;padding:8px}.meterWrap{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:center}.meter{height:11px;border-radius:999px;background:#010503;border:1px solid rgba(0,255,136,.14);overflow:hidden}.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#00a65a,var(--green),var(--cyan));transition:width .25s}.big{width:100%;margin-top:11px;min-height:52px;font-size:12px}
+.progressGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.progressBox{border:1px solid rgba(0,255,136,.12);border-radius:13px;padding:11px;background:rgba(0,255,136,.022)}.progressLabel{display:flex;justify-content:space-between;color:#729a82;font-size:9px;letter-spacing:1px;text-transform:uppercase;margin-bottom:7px}.bar{height:9px;border-radius:999px;background:#010503;overflow:hidden;border:1px solid rgba(0,255,136,.12)}.bar i{display:block;height:100%;width:0;transition:width .3s}#tpFill{background:linear-gradient(90deg,#0b5,#00ff88)}#slFill{background:linear-gradient(90deg,#7a1b31,#ff4268)}
+.authGrid{display:grid;grid-template-columns:1fr 1fr auto;gap:9px;align-items:end}.authStatusBox{margin-top:10px;display:flex;justify-content:space-between;gap:10px;align-items:center;border-top:1px solid rgba(0,255,136,.09);padding-top:10px;color:#759987;font-size:10px}#authStatus{color:var(--cyan);font-weight:800}
+.cloudGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.cloudMini{padding:10px;border:1px solid rgba(53,231,255,.12);border-radius:12px;background:rgba(53,231,255,.025)}.cloudMini small{display:block;color:#668f83;font-size:9px;text-transform:uppercase;letter-spacing:1px}.cloudMini b{display:block;margin-top:5px;color:var(--cyan);font-size:14px}.cloudOnline{color:var(--green)!important}
+.log{height:270px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#010503;border:1px solid rgba(0,255,136,.12);border-radius:13px;padding:12px;color:#a9f3c8;font-size:10px;line-height:1.55}.warning{border-color:rgba(255,208,90,.18);background:linear-gradient(180deg,rgba(255,208,90,.035),rgba(3,10,7,.94))}.warning .panel-title{color:#ffe18a}.muted{color:#789887;font-size:10px;line-height:1.45}.footer{text-align:center;color:#486b56;font-size:9px;letter-spacing:1.8px;padding:10px 0 4px}
+@media(max-width:900px){.hero-grid{grid-template-columns:1fr}.controls{grid-template-columns:repeat(2,1fr)}.authGrid{grid-template-columns:1fr}.cloudGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.wrap{padding:10px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.controls{grid-template-columns:1fr 1fr}.progressGrid{grid-template-columns:1fr}.hero{padding:15px}.panel{padding:12px}}
 </style>
 </head>
 <body>
+<canvas id="matrixRain"></canvas><div class="scanlines"></div><div class="vignette"></div>
 <div class="wrap">
-  <div class="hero">
-    <div class="tag">PROYECTO NUEVO · APRENDIZAJE EN VIVO</div>
-    <h1>DIFFER ONLINE AI V1</h1>
-    <div class="muted">La IA aprende de ticks y de sus propias compras mientras funciona. No usa simulador interno.</div>
-  </div>
+  <div class="topline"><span>NODE://DIFFER-IA/BLACK-MATRIX</span><span class="online">● CLOUD LINK ACTIVE</span></div>
+  <section class="hero"><div class="hero-grid">
+    <div><div class="eyebrow"><span class="pulseDot"></span> neural market terminal</div><h1>DIFFER // BLACK MATRIX</h1><div class="subtitle">Motor de aprendizaje online para DIGIT DIFFER con memoria local + nube 24/7. Interfaz renovada; núcleo de conexión y cerebro conservados.</div></div>
+    <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
+  </div></section>
 
-  <div class="panel controls">
-    <label>CUENTA
-      <select id="mode"><option value="DEMO">DEMO</option><option value="REAL">REAL</option></select>
-    </label>
-    <label>STAKE $ <input id="baseStake" type="number" min="0.01" step="0.01" value="1.00" style="width:90px"></label>
-    <label>TP $ <input id="targetInput" type="number" min="0.01" step="0.01" value="3.00" style="width:82px"></label>
-    <label>SL $ <input id="stopLossInput" type="number" min="0.01" step="0.01" value="5.00" style="width:82px"></label>
-    <button id="start" class="primary">INICIAR AUTO IA</button>
-    <button id="stop" class="danger">DETENER COMPRAS</button>
-    <b id="status">CARGANDO IA…</b>
-  </div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">01 // CONTROL DE SESIÓN</div><span class="chip">AUTO EXECUTION CORE</span></div>
+    <div class="controls">
+      <label>Cuenta<select id="mode"><option value="DEMO">DEMO</option><option value="REAL">REAL</option></select></label>
+      <label>Stake $<input id="baseStake" type="number" min="0.01" step="0.01" value="1.00"></label>
+      <label>TP $<input id="targetInput" type="number" min="0.01" step="0.01" value="3.00"></label>
+      <label>SL $<input id="stopLossInput" type="number" min="0.01" step="0.01" value="5.00"></label>
+      <button id="start" class="primary">▶ INICIAR IA</button><button id="stop" class="danger">■ DETENER</button>
+    </div>
+    <div class="statusStrip"><span>SYSTEM STATUS</span><span id="status">CARGANDO IA…</span></div>
+  </section>
 
   <div class="grid">
-    <div class="card"><small>PNL SESIÓN</small><b id="pnl">$0.00</b></div>
-    <div class="card"><small>WIN</small><b id="wins">0</b></div>
-    <div class="card"><small>MATCH</small><b id="losses">0</b></div>
-    <div class="card"><small>OPERACIONES</small><b id="ops">0</b></div>
-    <div class="card"><small>ÚLTIMO TICK</small><b id="tick">—</b></div>
-    <div class="card"><small>CANDIDATO</small><b id="pick">—</b></div>
-    <div class="card"><small>RIESGO PREDICHO</small><b id="risk">—</b></div>
-    <div class="card"><small>CONFIANZA IA</small><b id="confidence">—</b></div>
+    <div class="card hot"><small>PNL sesión</small><b id="pnl">$0.00</b></div><div class="card"><small>Wins</small><b id="wins">0</b></div><div class="card dangerCard"><small>Match</small><b id="losses">0</b></div><div class="card"><small>Operaciones</small><b id="ops">0</b></div>
+    <div class="card"><small>Último tick</small><b id="tick">—</b></div><div class="card hot"><small>Candidato IA</small><b id="pick">—</b></div><div class="card warn"><small>Riesgo predicho</small><b id="risk">—</b></div><div class="card"><small>Confianza IA</small><b id="confidence">—</b></div>
   </div>
 
-  <div class="panel">
-    <div id="decision" class="decision stateWait">APRENDIENDO</div>
-    <div id="reason" class="muted reason">Cargando memoria y mercado.</div>
-    <div class="meter"><i id="meter"></i></div>
+  <section class="panel decisionPanel"><div class="panel-head"><div class="panel-title">02 // DECISIÓN NEURAL</div><span class="chip" id="decisionChip">LIVE ANALYSIS</span></div>
+    <div id="decision" class="decision stateWait">APRENDIENDO</div><div id="reason" class="reason">Cargando memoria, sincronizando nube y observando contexto.</div>
+    <div class="meterWrap"><div class="meter"><i id="meter"></i></div><div id="confidenceText">0%</div></div>
     <button id="manualBuy" class="big">COMPRA MANUAL CON CANDIDATO IA</button>
-  </div>
+  </section>
 
   <div class="grid">
-    <div class="card"><small>TICKS APRENDIDOS</small><b id="learnedTicks">0</b></div>
-    <div class="card"><small>TRADES APRENDIDOS</small><b id="learnedTrades">0</b></div>
-    <div class="card"><small>HORIZONTE ADAPTATIVO</small><b id="horizon">1T</b></div>
-    <div class="card"><small>SALUD DEL MODELO</small><b id="health">—</b></div>
+    <div class="card"><small>Ticks aprendidos</small><b id="learnedTicks">0</b></div><div class="card"><small>Trades aprendidos</small><b id="learnedTrades">0</b></div><div class="card"><small>Horizonte adaptativo</small><b id="horizon">1T</b></div><div class="card hot"><small>Salud del modelo</small><b id="health">—</b></div>
   </div>
 
-  <div class="panel auth">
-    <b>CONEXIÓN DERIV · COPIA AISLADA DE REAL PRO</b>
-    <div class="muted">App ID y PAT permanecen en esta página. El proyecto original no se modifica.</div>
-    <input id="app" placeholder="App ID" inputmode="numeric" autocomplete="off">
-    <input id="pat" placeholder="PAT" type="password" autocomplete="off">
-    <button id="auth" class="primary">CONECTAR DERIV</button>
-    <span id="authStatus">NO CONECTADO</span>
-  </div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">03 // OBJETIVO DE SESIÓN</div><span class="chip">TP / SL MONITOR</span></div>
+    <div class="progressGrid">
+      <div class="progressBox"><div class="progressLabel"><span>Progreso hacia TP</span><span id="tpText">0%</span></div><div class="bar"><i id="tpFill"></i></div></div>
+      <div class="progressBox"><div class="progressLabel"><span>Uso de Stop Loss</span><span id="slText">0%</span></div><div class="bar"><i id="slFill"></i></div></div>
+    </div>
+  </section>
 
-  <div class="panel warning">
-    <b>MEMORIA PERSISTENTE</b>
-    <div class="muted">Cerrar la página no borra lo aprendido. “DETENER COMPRAS” solo detiene entradas; el cerebro sigue observando y aprendiendo ticks.</div>
-    <button id="resetMemory" class="danger">BORRAR MEMORIA IA</button>
-  </div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">04 // CLOUD MEMORY 24/7</div><span class="chip">RAILWAY NODE</span></div>
+    <div class="cloudGrid"><div class="cloudMini"><small>Estado nube</small><b id="cloudState">CHECKING</b></div><div class="cloudMini"><small>Ticks cloud</small><b id="cloudTicks">—</b></div><div class="cloudMini"><small>Último dígito</small><b id="cloudDigit">—</b></div><div class="cloudMini"><small>Uptime</small><b id="cloudUptime">—</b></div></div>
+  </section>
 
-  <div class="panel"><div id="log" class="log"></div></div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">05 // DERIV AUTH GATE</div><span class="chip">REAL PRO CONNECTION LAYER</span></div>
+    <div class="authGrid"><label>App ID<input id="app" placeholder="App ID" inputmode="numeric" autocomplete="off"></label><label>PAT<input id="pat" placeholder="PAT" type="password" autocomplete="off"></label><button id="auth" class="primary">CONECTAR DERIV</button></div>
+    <div class="authStatusBox"><span>AUTH STATUS</span><span id="authStatus">NO CONECTADO</span></div>
+  </section>
+
+  <section class="panel warning"><div class="panel-head"><div class="panel-title">06 // MEMORIA PERSISTENTE</div><span class="chip">LOCAL + CLOUD</span></div>
+    <div class="muted">Cerrar la página no borra la memoria local. Railway sigue aprendiendo ticks en la nube 24/7. Al volver, el navegador sincroniza el modelo cloud si tiene más aprendizaje.</div>
+    <button id="resetMemory" class="danger" style="margin-top:10px">BORRAR MEMORIA IA LOCAL</button>
+  </section>
+
+  <section class="panel"><div class="panel-head"><div class="panel-title">07 // SYSTEM LOG</div><span class="chip">LIVE TRACE</span></div><div id="log" class="log"></div></section>
+  <div class="footer">DIFFER IA // BLACK MATRIX CORE // CLOUD MEMORY ENABLED</div>
 </div>
+
 <script src="demo.js?v=real-pro-connection-copy"></script>
 <script src="ai-brain.js?v=cloud-sync-v1"></script>
+<script>
+(function(){
+  var q=function(id){return document.getElementById(id)};
+  var canvas=q('matrixRain'),ctx=canvas.getContext('2d'),chars='01DIFFERAI<>[]{}$#@*+',cols=0,drops=[];
+  function resize(){var dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.floor(innerWidth*dpr);canvas.height=Math.floor(innerHeight*dpr);canvas.style.width=innerWidth+'px';canvas.style.height=innerHeight+'px';ctx.setTransform(dpr,0,0,dpr,0,0);cols=Math.ceil(innerWidth/18);drops=Array.from({length:cols},function(){return Math.random()*-50})}
+  function rain(){ctx.fillStyle='rgba(1,4,3,.085)';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.font='13px monospace';for(var i=0;i<drops.length;i++){var c=chars[(Math.random()*chars.length)|0],y=drops[i]*18;ctx.fillStyle=Math.random()>.96?'rgba(133,255,192,.95)':'rgba(0,255,136,.58)';ctx.fillText(c,i*18,y);if(y>innerHeight&&Math.random()>.975)drops[i]=0;drops[i]+=.55+Math.random()*.35}requestAnimationFrame(rain)}
+  resize();addEventListener('resize',resize);rain();
+
+  function numberFrom(id){var t=(q(id).textContent||'').replace(/[^0-9+.-]/g,'');var n=Number(t);return Number.isFinite(n)?n:0}
+  function clamp(n,a,b){return Math.max(a,Math.min(b,n))}
+  function hud(){
+    var pnl=numberFrom('pnl'),tp=Math.max(.01,Number(q('targetInput').value)||3),sl=Math.max(.01,Number(q('stopLossInput').value)||5);
+    var tpPct=clamp(Math.max(0,pnl)/tp*100,0,100),slPct=clamp(Math.max(0,-pnl)/sl*100,0,100);
+    q('tpFill').style.width=tpPct.toFixed(1)+'%';q('tpText').textContent=tpPct.toFixed(0)+'%';q('slFill').style.width=slPct.toFixed(1)+'%';q('slText').textContent=slPct.toFixed(0)+'%';
+    var conf=q('confidence').textContent||'—';q('confidenceText').textContent=conf==='—'?'0%':conf;
+    var auth=(q('authStatus').textContent||'').toUpperCase();var connected=auth.indexOf('CONECTADO')>=0;q('derivBadge').textContent=connected?'ONLINE':'OFFLINE';q('derivBadge').style.color=connected?'#00ff88':'#ff7792';
+    var st=(q('status').textContent||'').toUpperCase();q('coreMode').textContent=st.indexOf('AUTO IA ACTIVO')>=0?'AUTO EXECUTION':st.indexOf('PAUSA')>=0?'SAFE PAUSE':'OBSERVING MARKET';
+    var dec=(q('decision').textContent||'').toUpperCase();q('decisionChip').textContent=dec.indexOf('COMPRAR')>=0?'SIGNAL LOCKED':dec.indexOf('PAUSA')>=0?'RISK HOLD':'LIVE ANALYSIS';
+  }
+  setInterval(hud,350);hud();
+
+  async function cloud(){
+    try{
+      var r=await fetch('https://differ-ia-cloud-production.up.railway.app/api/cloud/status?ui='+Date.now(),{cache:'no-store'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      var d=await r.json(),online=d.status==='ONLINE';
+      q('cloudState').textContent=online?'ONLINE':'SYNCING';q('cloudState').style.color=online?'#00ff88':'#ffd05a';q('cloudBadge').textContent=online?'ONLINE':'SYNCING';q('cloudBadge').style.color=online?'#00ff88':'#ffd05a';q('memBadge').textContent='CLOUD';
+      q('cloudTicks').textContent=Number(d.tickCount||0).toLocaleString();q('cloudDigit').textContent=Number.isInteger(d.lastDigit)?'D'+d.lastDigit:'—';
+      var s=Number(d.uptimeSeconds||0),h=Math.floor(s/3600),m=Math.floor((s%3600)/60);q('cloudUptime').textContent=h+'h '+m+'m';
+    }catch(e){q('cloudState').textContent='OFFLINE';q('cloudState').style.color='#ff7792';q('cloudBadge').textContent='OFFLINE';q('cloudBadge').style.color='#ff7792'}
+  }
+  cloud();setInterval(cloud,15000);
+})();
+</script>
 </body>
 </html>
