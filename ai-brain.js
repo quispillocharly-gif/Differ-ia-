@@ -9,6 +9,7 @@ const HORIZONS=[1,2,3];
 const UNIFORM=.10;
 const MAX_HIST=1200;
 const LOG_MAX=180;
+const CLOUD_URL='https://differ-ia-cloud-production.up.railway.app';
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -395,6 +396,47 @@ function digitFromQuote(q,pip){
   return Number(s[s.length-1]);
 }
 
+async function syncFromCloud(){
+  try{
+    const r=await fetch(CLOUD_URL+'/api/cloud/snapshot?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    if(!data?.ok||!data.memory)throw new Error('respuesta inválida');
+
+    const cloud=normalizeMemory(data.memory);
+    const localTicks=safeNum(mem.tickCount,0);
+    const cloudTicks=safeNum(cloud.tickCount,0);
+
+    if(cloudTicks>localTicks){
+      // Solo reemplaza el aprendizaje predictivo. Conserva estadísticas de trading locales.
+      mem.models=cloud.models;
+      mem.globalP=cloud.globalP;
+      mem.globalN=cloud.globalN;
+      mem.modelLoss=cloud.modelLoss;
+      mem.tickCount=cloudTicks;
+      mem.createdAt=Math.min(safeNum(mem.createdAt,Date.now()),safeNum(cloud.createdAt,Date.now()));
+      mem.updatedAt=Math.max(safeNum(mem.updatedAt,0),safeNum(cloud.updatedAt,0));
+
+      if(Array.isArray(data.recentDigits)&&data.recentDigits.length){
+        hist=data.recentDigits.slice(-MAX_HIST).map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9);
+        epochs=[];
+      }
+      if(Number.isFinite(Number(data.lastEpoch))){
+        mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),Number(data.lastEpoch));
+      }
+
+      saveMemory(true);
+      renderSession();
+      renderDecision(predict());
+      log('NUBE · memoria sincronizada: '+cloudTicks+' ticks aprendidos');
+    }else{
+      log('NUBE · memoria local ya está al día ('+localTicks+' ticks)');
+    }
+  }catch(e){
+    log('NUBE · no disponible, continúo con memoria local · '+(e?.message||e));
+  }
+}
+
 function connectMarket(){
   clearTimeout(reconnectTimer);
   try{marketWS?.close()}catch(_){}
@@ -477,5 +519,5 @@ window.demoTradeError=tradeError;
 renderSession();
 renderDecision(null);
 log(`IA cargada · memoria: ${mem.tickCount} ticks y ${mem.tradeCount} operaciones aprendidas`);
-connectMarket();
+syncFromCloud().finally(connectMarket);
 })();
