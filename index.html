@@ -68,7 +68,7 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
   </section>
 
   <section class="panel"><div class="panel-head"><div class="panel-title">04 // CLOUD MEMORY 24/7</div><span class="chip">RAILWAY NODE</span></div>
-    <div class="cloudGrid"><div class="cloudMini"><small>Estado nube</small><b id="cloudState">CHECKING</b></div><div class="cloudMini"><small>Ticks cloud</small><b id="cloudTicks">—</b></div><div class="cloudMini"><small>Último dígito</small><b id="cloudDigit">—</b></div><div class="cloudMini"><small>Uptime</small><b id="cloudUptime">—</b></div></div>
+    <div class="cloudGrid"><div class="cloudMini"><small>Estado nube</small><b id="cloudState">CHECKING</b></div><div class="cloudMini"><small>Ticks cloud</small><b id="cloudTicks">—</b></div><div class="cloudMini"><small>Último dígito</small><b id="cloudDigit">—</b></div><div class="cloudMini"><small>Uptime</small><b id="cloudUptime">—</b></div><div class="cloudMini"><small>Shadow trades</small><b id="shadowTrades">—</b></div><div class="cloudMini"><small>Shadow wins</small><b id="shadowWins">—</b></div><div class="cloudMini"><small>Shadow matches</small><b id="shadowMatches">—</b></div><div class="cloudMini"><small>Modelos activos</small><b id="shadowModels">—</b></div></div>
   </section>
 
   <section class="panel"><div class="panel-head"><div class="panel-title">05 // DERIV AUTH GATE</div><span class="chip">REAL PRO CONNECTION LAYER</span></div>
@@ -115,6 +115,7 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
       var d=await r.json(),online=d.status==='ONLINE';
       q('cloudState').textContent=online?'ONLINE':'SYNCING';q('cloudState').style.color=online?'#00ff88':'#ffd05a';q('cloudBadge').textContent=online?'ONLINE':'SYNCING';q('cloudBadge').style.color=online?'#00ff88':'#ffd05a';q('memBadge').textContent='CLOUD';
       q('cloudTicks').textContent=Number(d.tickCount||0).toLocaleString();q('cloudDigit').textContent=Number.isInteger(d.lastDigit)?'D'+d.lastDigit:'—';
+      var sh=d.shadow||{};q('shadowTrades').textContent=Number(sh.total||0).toLocaleString();q('shadowWins').textContent=Number(sh.wins||0).toLocaleString();q('shadowMatches').textContent=Number(sh.matches||0).toLocaleString();q('shadowModels').textContent=Number(sh.modelCount||0);
       var s=Number(d.uptimeSeconds||0),h=Math.floor(s/3600),m=Math.floor((s%3600)/60);q('cloudUptime').textContent=h+'h '+m+'m';
     }catch(e){q('cloudState').textContent='OFFLINE';q('cloudState').style.color='#ff7792';q('cloudBadge').textContent='OFFLINE';q('cloudBadge').style.color='#ff7792'}
   }
