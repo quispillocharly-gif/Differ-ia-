@@ -16,9 +16,10 @@ let epochs=[];
 let liveTickCounter=0;
 let autoRunning=false;
 let pendingTrade=null;
-let session={pnl:0,wins:0,losses:0,ops:0,stake:1};
+let session={pnl:0,wins:0,losses:0,ops:0};
 let lastDecision=null;
 let recentLogs=[];
+let nextStake=null;
 
 function blankP(){return Array(10).fill(UNIFORM)}
 function freshMemory(){
@@ -279,7 +280,6 @@ function renderSession(){
   $('wins').textContent=session.wins;
   $('losses').textContent=session.losses;
   $('ops').textContent=session.ops;
-  if($('currentStake'))$('currentStake').textContent='$'+Math.max(.01,safeNum(session.stake,baseStake())).toFixed(2);
   $('learnedTicks').textContent=mem.tickCount;
   $('learnedTrades').textContent=mem.tradeCount;
   $('horizon').textContent=horizonNow()+'T';
@@ -301,7 +301,7 @@ function canTradeMode(){
 
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
-  const digit=decision.best.d,stake=Math.max(.01,safeNum(session.stake,baseStake())),mode=$('mode').value;
+  const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
   pendingTrade={digit,stake,mode,signalTick:liveTickCounter,predictedRisk:decision.best.risk,confidence:decision.confidence,manual};
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
@@ -327,10 +327,10 @@ function settleTrade(profit){
   session.pnl+=profit;
   if(loss){
     session.losses++;mem.digitStats[t.digit].l++;
-    session.stake=baseStake();
+    nextStake=baseStake();
   }else{
     session.wins++;mem.digitStats[t.digit].w++;
-    session.stake=Math.max(baseStake(),t.stake+Math.max(0,profit));
+    nextStake=Math.max(baseStake(),t.stake+Math.max(0,profit));
   }
 
   mem.tradeCount++;
@@ -343,7 +343,7 @@ function settleTrade(profit){
   mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now()});
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
-  log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · próximo stake $${session.stake.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
+  log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
   pendingTrade=null;
   saveMemory(true);
   renderSession();
@@ -441,7 +441,8 @@ function connectMarket(){
 
 $('start').onclick=()=>{
   if(!canTradeMode())return;
-  session={pnl:0,wins:0,losses:0,ops:0,stake:baseStake()};
+  session={pnl:0,wins:0,losses:0,ops:0};
+  nextStake=baseStake();
   pendingTrade=null;
   autoRunning=true;
   $('status').textContent='AUTO IA ACTIVO';
