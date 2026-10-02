@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DIFFER ONLINE AI V1</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#020611;color:#eaf6ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}.wrap{max-width:980px;margin:auto;padding:14px}.hero,.panel{background:#081321;border:1px solid #1c5273;border-radius:18px;padding:15px;margin:10px 0;box-shadow:0 14px 40px #0007}.hero{background:radial-gradient(circle at top right,#17365c 0,#09182a 38%,#06101d 70%)}.tag{font-size:11px;letter-spacing:2.5px;color:#66f7d5}h1{margin:5px 0;font-size:30px}.muted{color:#9cb2c6;font-size:13px}.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}button,input,select{background:#0a1b2c;color:#eefaff;border:1px solid #3c769b;border-radius:11px;padding:11px;font-weight:750}.primary{border-color:#61f4d2}.danger{border-color:#ff6f91}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.card{background:#050d18;border:1px solid #14324a;border-radius:14px;padding:12px}.card small{display:block;color:#8da7bb;font-size:11px;letter-spacing:.6px}.card b{display:block;margin-top:5px;font-size:22px;color:#72f7dc}.decision{font-size:25px;font-weight:900;margin-bottom:6px}.reason{min-height:42px}.meter{height:10px;background:#101d29;border-radius:10px;overflow:hidden;margin-top:11px}.meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#65f4d7,#6ea8ff)}.auth input{width:100%;margin-top:8px}.log{height:220px;overflow:auto;white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Consolas,monospace;color:#bcd0df}.big{width:100%;min-height:58px;font-size:18px;margin-top:9px}.stateBuy{color:#70ffd6}.stateWait{color:#ffd778}.statePause{color:#ff7595}.warning{border-color:#8d6e27;background:#211b0c}.warning b{color:#ffd778}@media(min-width:760px){.grid{grid-template-columns:repeat(4,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="tag">PROYECTO NUEVO · APRENDIZAJE EN VIVO</div>
+    <h1>DIFFER ONLINE AI V1</h1>
+    <div class="muted">La IA aprende de ticks y de sus propias compras mientras funciona. No usa simulador interno.</div>
+  </div>
+
+  <div class="panel controls">
+    <label>CUENTA
+      <select id="mode"><option value="DEMO">DEMO</option><option value="REAL">REAL</option></select>
+    </label>
+    <label>STAKE $ <input id="baseStake" type="number" min="0.01" step="0.01" value="1.00" style="width:90px"></label>
+    <label>TP $ <input id="targetInput" type="number" min="0.01" step="0.01" value="3.00" style="width:82px"></label>
+    <label>SL $ <input id="stopLossInput" type="number" min="0.01" step="0.01" value="5.00" style="width:82px"></label>
+    <button id="start" class="primary">INICIAR AUTO IA</button>
+    <button id="stop" class="danger">DETENER COMPRAS</button>
+    <b id="status">CARGANDO IA…</b>
+  </div>
+
+  <div class="grid">
+    <div class="card"><small>PNL SESIÓN</small><b id="pnl">$0.00</b></div>
+    <div class="card"><small>WIN</small><b id="wins">0</b></div>
+    <div class="card"><small>MATCH</small><b id="losses">0</b></div>
+    <div class="card"><small>OPERACIONES</small><b id="ops">0</b></div>
+    <div class="card"><small>ÚLTIMO TICK</small><b id="tick">—</b></div>
+    <div class="card"><small>CANDIDATO</small><b id="pick">—</b></div>
+    <div class="card"><small>RIESGO PREDICHO</small><b id="risk">—</b></div>
+    <div class="card"><small>CONFIANZA IA</small><b id="confidence">—</b></div>
+  </div>
+
+  <div class="panel">
+    <div id="decision" class="decision stateWait">APRENDIENDO</div>
+    <div id="reason" class="muted reason">Cargando memoria y mercado.</div>
+    <div class="meter"><i id="meter"></i></div>
+    <button id="manualBuy" class="big">COMPRA MANUAL CON CANDIDATO IA</button>
+  </div>
+
+  <div class="grid">
+    <div class="card"><small>TICKS APRENDIDOS</small><b id="learnedTicks">0</b></div>
+    <div class="card"><small>TRADES APRENDIDOS</small><b id="learnedTrades">0</b></div>
+    <div class="card"><small>HORIZONTE ADAPTATIVO</small><b id="horizon">1T</b></div>
+    <div class="card"><small>SALUD DEL MODELO</small><b id="health">—</b></div>
+  </div>
+
+  <div class="panel auth">
+    <b>CONEXIÓN DERIV · COPIA AISLADA DE REAL PRO</b>
+    <div class="muted">App ID y PAT permanecen en esta página. El proyecto original no se modifica.</div>
+    <input id="app" placeholder="App ID" inputmode="numeric" autocomplete="off">
+    <input id="pat" placeholder="PAT" type="password" autocomplete="off">
+    <button id="auth" class="primary">CONECTAR DERIV</button>
+    <span id="authStatus">NO CONECTADO</span>
+  </div>
+
+  <div class="panel warning">
+    <b>MEMORIA PERSISTENTE</b>
+    <div class="muted">Cerrar la página no borra lo aprendido. “DETENER COMPRAS” solo detiene entradas; el cerebro sigue observando y aprendiendo ticks.</div>
+    <button id="resetMemory" class="danger">BORRAR MEMORIA IA</button>
+  </div>
+
+  <div class="panel"><div id="log" class="log"></div></div>
+</div>
+<script src="demo.js?v=real-pro-connection-copy"></script>
+<script src="ai-brain.js?v=online-ai-v1"></script>
+</body>
+</html>
