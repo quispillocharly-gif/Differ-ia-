@@ -279,7 +279,8 @@ function renderSession(){
   $('wins').textContent=session.wins;
   $('losses').textContent=session.losses;
   $('ops').textContent=session.ops;
-  if($('currentStake'))$('currentStake').textContent='  $('learnedTicks').textContent=mem.tickCount;
+  if($('currentStake'))$('currentStake').textContent='$'+Math.max(.01,safeNum(session.stake,baseStake())).toFixed(2);
+  $('learnedTicks').textContent=mem.tickCount;
   $('learnedTrades').textContent=mem.tradeCount;
   $('horizon').textContent=horizonNow()+'T';
 }
@@ -342,7 +343,7 @@ function settleTrade(profit){
   mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now()});
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
-  log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}${profit.toFixed(2)} · próximo stake ${session.stake.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
+  log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · próximo stake $${session.stake.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
   pendingTrade=null;
   saveMemory(true);
   renderSession();
@@ -441,200 +442,6 @@ function connectMarket(){
 $('start').onclick=()=>{
   if(!canTradeMode())return;
   session={pnl:0,wins:0,losses:0,ops:0,stake:baseStake()};
-  pendingTrade=null;
-  autoRunning=true;
-  $('status').textContent='AUTO IA ACTIVO';
-  log(`NUEVA SESIÓN ${$('mode').value} · stake $${baseStake().toFixed(2)} · TP $${target().toFixed(2)} · SL $${stopLoss().toFixed(2)}`);
-  renderSession();
-};
-
-$('stop').onclick=()=>{
-  autoRunning=false;
-  $('status').textContent='COMPRAS DETENIDAS · IA SIGUE APRENDIENDO';
-  log('STOP MANUAL DE COMPRAS · aprendizaje continúa');
-};
-
-$('manualBuy').onclick=()=>{
-  if(pendingTrade){$('status').textContent='OPERACIÓN EN CURSO';return}
-  if(!lastDecision){$('status').textContent='AÚN SIN CANDIDATO';return}
-  enterTrade(lastDecision,true);
-};
-
-$('resetMemory').onclick=()=>{
-  const ok=confirm('¿Borrar toda la memoria aprendida por esta IA?');
-  if(!ok)return;
-  localStorage.removeItem(KEY);
-  mem=freshMemory();hist=[];epochs=[];lastDecision=null;
-  renderSession();renderDecision(null);
-  log('MEMORIA IA BORRADA · comienza aprendizaje nuevo');
-};
-
-window.demoSettlement=settleTrade;
-window.demoTradeError=tradeError;
-
-renderSession();
-renderDecision(null);
-log(`IA cargada · memoria: ${mem.tickCount} ticks y ${mem.tradeCount} operaciones aprendidas`);
-connectMarket();
-})();
-+Math.max(.01,safeNum(session.stake,baseStake())).toFixed(2);
-  $('learnedTicks').textContent=mem.tickCount;
-  $('learnedTrades').textContent=mem.tradeCount;
-  $('horizon').textContent=horizonNow()+'T';
-}
-
-function baseStake(){return Math.max(.01,safeNum($('baseStake').value,1))}
-function target(){return Math.max(.01,safeNum($('targetInput').value,3))}
-function stopLoss(){return Math.max(.01,safeNum($('stopLossInput').value,5))}
-
-function canTradeMode(){
-  const mode=$('mode').value;
-  if(!window.demoReady){$('status').textContent='CONECTA DERIV PRIMERO';return false}
-  if(window.currentAccountType!==mode.toLowerCase()){
-    $('status').textContent='RECONECTA DERIV EN '+mode;
-    return false;
-  }
-  return true;
-}
-
-function enterTrade(decision,manual=false){
-  if(pendingTrade||!decision||!canTradeMode())return;
-  const digit=decision.best.d,stake=baseStake(),mode=$('mode').value;
-  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,predictedRisk:decision.best.risk,confidence:decision.confidence,manual};
-  session.ops++;
-  mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
-  $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
-  log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)}`);
-  renderSession();
-  window.sendDemoTrade(digit,stake).catch(tradeError);
-}
-
-function tradeError(e){
-  log('ERROR DERIV · '+(e?.message||e));
-  pendingTrade=null;
-  $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
-}
-
-function settleTrade(profit){
-  profit=Number(profit);
-  if(!Number.isFinite(profit)){tradeError(new Error('Resultado inválido'));return}
-  const t=pendingTrade;
-  if(!t){log('RESULTADO RECIBIDO SIN OPERACIÓN PENDIENTE');return}
-
-  const loss=profit<=0?1:0;
-  session.pnl+=profit;
-  if(loss){session.losses++;mem.digitStats[t.digit].l++}
-  else{session.wins++;mem.digitStats[t.digit].w++}
-
-  mem.tradeCount++;
-  mem.lossEWMA=.92*safeNum(mem.lossEWMA,.10)+.08*loss;
-  const calibrationError=loss-safeNum(t.predictedRisk,UNIFORM);
-  mem.calibrationEWMA=.94*safeNum(mem.calibrationEWMA,0)+.06*calibrationError;
-
-  const elapsed=clamp(liveTickCounter-t.signalTick,1,3);
-  mem.delayEWMA=.82*safeNum(mem.delayEWMA,1)+.18*elapsed;
-  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now()});
-  if(mem.recentTrades.length>60)mem.recentTrades.shift();
-
-  log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
-  pendingTrade=null;
-  saveMemory(true);
-  renderSession();
-
-  if(session.pnl>=target()){
-    autoRunning=false;
-    $('status').textContent='TP +$'+target().toFixed(2)+' · COMPRAS DETENIDAS · IA SIGUE APRENDIENDO';
-  }else if(session.pnl<=-stopLoss()){
-    autoRunning=false;
-    $('status').textContent='SL -$'+stopLoss().toFixed(2)+' · COMPRAS DETENIDAS · IA SIGUE APRENDIENDO';
-  }else if(autoRunning){
-    $('status').textContent='AUTO IA ACTIVO';
-  }
-}
-
-function processDigit(d,epoch,isLive){
-  if(!Number.isInteger(d)||d<0||d>9)return;
-  if(epoch&&epoch<=safeNum(mem.lastMarketEpoch,0) && !isLive)return;
-
-  learnDigit(d,hist);
-  hist.push(d);epochs.push(epoch||0);
-  if(hist.length>MAX_HIST){hist.shift();epochs.shift()}
-  if(epoch)mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),epoch);
-  if(isLive){
-    liveTickCounter++;
-    $('tick').textContent='D'+d;
-  }
-
-  if(mem.tickCount%250===0)pruneModels(false);
-  if(!isLive)return;
-
-  saveMemory(false);
-  renderSession();
-
-  const decision=predict();
-  renderDecision(decision);
-
-  if(autoRunning && !pendingTrade && decision?.action==='BUY'){
-    enterTrade(decision,false);
-  }else if(autoRunning && decision?.action==='PAUSE'){
-    $('status').textContent='PAUSA IA · SIGUE APRENDIENDO';
-  }
-}
-
-function digitFromQuote(q,pip){
-  const n=Number(q);if(!Number.isFinite(n))return null;
-  const p=Number.isFinite(Number(pip))?Number(pip):4;
-  const s=n.toFixed(p);
-  return Number(s[s.length-1]);
-}
-
-function connectMarket(){
-  clearTimeout(reconnectTimer);
-  try{marketWS?.close()}catch(_){}
-  marketWS=new WebSocket('wss://api.derivws.com/trading/v1/options/ws/public');
-  marketWS.onopen=()=>{
-    $('status').textContent=autoRunning?'AUTO IA ACTIVO':'IA APRENDIENDO · COMPRAS DETENIDAS';
-    marketWS.send(JSON.stringify({ticks_history:'R_75',count:700,end:'latest',style:'ticks'}));
-  };
-  marketWS.onmessage=e=>{
-    let m;try{m=JSON.parse(e.data)}catch(_){return}
-    if(m.error){log('MERCADO ERROR · '+(m.error.message||'desconocido'));return}
-    if(m.history?.prices){
-      const prices=m.history.prices;
-      const times=Array.isArray(m.history.times)?m.history.times:[];
-      const pip=Number(m.pip_size||4);
-      let added=0;
-      for(let i=0;i<prices.length;i++){
-        const ep=Number(times[i]||0);
-        if(ep && ep<=safeNum(mem.lastMarketEpoch,0))continue;
-        const d=digitFromQuote(prices[i],pip);
-        if(d!==null){processDigit(d,ep,false);added++}
-      }
-      pruneModels(false);
-      saveMemory(true);
-      renderSession();
-      renderDecision(predict());
-      log(`MERCADO · historial recibido · ${added} ticks nuevos incorporados a memoria`);
-      marketWS.send(JSON.stringify({ticks:'R_75',subscribe:1}));
-    }
-    if(m.tick){
-      const ep=Number(m.tick.epoch||0);
-      if(ep && ep===lastEpoch)return;
-      lastEpoch=ep;
-      const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
-      if(d!==null)processDigit(d,ep,true);
-    }
-  };
-  marketWS.onerror=()=>log('MERCADO · error WebSocket público');
-  marketWS.onclose=()=>{
-    $('status').textContent='MERCADO DESCONECTADO · RECONECTANDO';
-    reconnectTimer=setTimeout(connectMarket,2500);
-  };
-}
-
-$('start').onclick=()=>{
-  if(!canTradeMode())return;
-  session={pnl:0,wins:0,losses:0,ops:0};
   pendingTrade=null;
   autoRunning=true;
   $('status').textContent='AUTO IA ACTIVO';
