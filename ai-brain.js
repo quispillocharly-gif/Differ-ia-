@@ -21,6 +21,8 @@ let session={pnl:0,wins:0,losses:0,ops:0};
 let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
+let sharedModel={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
+let sharedSyncTimer=null,sharedLogged=false;
 
 function blankP(){return Array(10).fill(UNIFORM)}
 function freshMemory(){
@@ -94,6 +96,48 @@ function log(s){
 function fmtPct(x){return Number.isFinite(x)?(x*100).toFixed(2)+'%':'—'}
 function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
 function safeNum(x,d=0){x=Number(x);return Number.isFinite(x)?x:d}
+
+function normalizeShared(x){
+  const base={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
+  if(!x||typeof x!=='object')return base;
+  const out={...base,...x};
+  out.accepted=Math.max(0,safeNum(out.accepted,0));
+  out.wins=Math.max(0,safeNum(out.wins,0));
+  out.matches=Math.max(0,safeNum(out.matches,0));
+  out.matchRate=out.accepted?out.matches/out.accepted:UNIFORM;
+  out.byDigit=Array.from({length:10},(_,d)=>{
+    const n=x.byDigit?.[d]||{};
+    return {n:Math.max(0,safeNum(n.n,0)),matches:Math.max(0,safeNum(n.matches,0))};
+  });
+  out.contexts=x.contexts&&typeof x.contexts==='object'?x.contexts:{};
+  out.updatedAt=Math.max(0,safeNum(out.updatedAt,0));
+  return out;
+}
+
+function sharedDistribution(){
+  if(!sharedModel||sharedModel.accepted<1)return null;
+  const ctx=hist.slice(-2).join('');
+  const risks=Array(10).fill(UNIFORM);
+
+  for(let d=0;d<10;d++){
+    const g=sharedModel.byDigit[d]||{n:0,matches:0};
+    const globalRisk=(safeNum(g.matches,0)+18*UNIFORM)/(safeNum(g.n,0)+18);
+    const node=ctx?sharedModel.contexts[ctx+'>'+d]:null;
+    if(node){
+      const localRisk=(safeNum(node.matches,0)+28*globalRisk)/(safeNum(node.n,0)+28);
+      const ev=1-Math.exp(-safeNum(node.n,0)/35);
+      risks[d]=(1-ev)*globalRisk+ev*localRisk;
+    }else{
+      risks[d]=globalRisk;
+    }
+  }
+
+  const sum=risks.reduce((a,b)=>a+b,0)||1;
+  return {
+    p:risks.map(x=>x/sum),
+    support:clamp(1-Math.exp(-sharedModel.accepted/280),0,1)
+  };
+}
 function contextKey(arr,endIndex,order){
   const start=endIndex-order+1;
   if(start<0)return null;
@@ -199,8 +243,18 @@ function predict(){
   modelViews.push({name:'recent',p:rp,w:rw,n:recent.length});
 
   const p=dist.map((x,d)=>x/(denom[d]||1));
-  const sum=p.reduce((a,b)=>a+b,0)||1;
+  let sum=p.reduce((a,b)=>a+b,0)||1;
   for(let d=0;d<10;d++)p[d]/=sum;
+
+  // Experiencias compartidas: aportan como un experto adicional, nunca dominan por sí solas.
+  const shared=sharedDistribution();
+  if(shared&&shared.support>0){
+    const w=.24*shared.support;
+    for(let d=0;d<10;d++)p[d]=(1-w)*p[d]+w*shared.p[d];
+    sum=p.reduce((a,b)=>a+b,0)||1;
+    for(let d=0;d<10;d++)p[d]/=sum;
+    modelViews.push({name:'collab',p:shared.p.slice(),w,n:sharedModel.accepted});
+  }
 
   // Penalización suave por fijación: no bloquea ningún dígito.
   const recentPicks=mem.recentPicks.slice(-12);
@@ -303,7 +357,7 @@ function canTradeMode(){
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
-  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,predictedRisk:decision.best.risk,confidence:decision.confidence,manual};
+  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,manual};
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
@@ -316,6 +370,48 @@ function tradeError(e){
   log('ERROR DERIV · '+(e?.message||e));
   pendingTrade=null;
   $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
+}
+
+async function syncCollaborative(){
+  try{
+    const r=await fetch(CLOUD_URL+'/api/cloud/collaborative?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    if(!data?.ok||!data.collaborative)throw new Error('respuesta inválida');
+    sharedModel=normalizeShared(data.collaborative);
+    if(!sharedLogged){
+      sharedLogged=true;
+      log('COLAB · '+sharedModel.accepted+' experiencias compartidas disponibles para la IA');
+    }
+  }catch(e){
+    if(!sharedLogged){
+      sharedLogged=true;
+      log('COLAB · nube colaborativa no disponible · '+(e?.message||e));
+    }
+  }
+}
+
+function shareExperience(t,loss,elapsed){
+  if(!t||!Number.isFinite(Number(t.signalEpoch))||Number(t.signalEpoch)<=0)return;
+  const payload={
+    signalEpoch:Number(t.signalEpoch),
+    digit:Number(t.digit),
+    loss:!!loss,
+    risk:clamp(safeNum(t.predictedRisk,UNIFORM),0,.5),
+    confidence:clamp(safeNum(t.confidence,0),0,1),
+    elapsed:clamp(Math.round(safeNum(elapsed,1)),1,3),
+    context:Array.isArray(t.context)?t.context.slice(-6):[],
+    manual:!!t.manual
+  };
+
+  fetch(CLOUD_URL+'/api/cloud/experience',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload),
+    keepalive:true
+  }).then(r=>r.ok?r.json():null).then(data=>{
+    if(data?.accepted)syncCollaborative();
+  }).catch(()=>{});
 }
 
 function settleTrade(profit){
@@ -341,6 +437,7 @@ function settleTrade(profit){
 
   const elapsed=clamp(liveTickCounter-t.signalTick,1,3);
   mem.delayEWMA=.82*safeNum(mem.delayEWMA,1)+.18*elapsed;
+  shareExperience(t,loss,elapsed);
   mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now()});
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
@@ -519,5 +616,9 @@ window.demoTradeError=tradeError;
 renderSession();
 renderDecision(null);
 log(`IA cargada · memoria: ${mem.tickCount} ticks y ${mem.tradeCount} operaciones aprendidas`);
-syncFromCloud().finally(connectMarket);
+syncFromCloud().then(syncCollaborative).finally(()=>{
+  clearInterval(sharedSyncTimer);
+  sharedSyncTimer=setInterval(syncCollaborative,30000);
+  connectMarket();
+});
 })();
