@@ -34,6 +34,11 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
     <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
   </div></section>
 
+  <section class="panel"><div class="panel-head"><div class="panel-title">00 // CONECTAR CUENTA DERIV</div><span class="chip">ACCESO SEGURO</span></div>
+    <div class="authGrid"><label>App ID<input id="app" placeholder="App ID" inputmode="numeric" autocomplete="off"></label><label>PAT<input id="pat" placeholder="PAT" type="password" autocomplete="off"></label><button id="auth" class="primary">CONECTAR DERIV</button></div>
+    <div class="authStatusBox"><span>ESTADO DE CONEXIÓN</span><span id="authStatus">NO CONECTADO</span></div>
+  </section>
+
   <section class="panel analyzerPanel">
     <div class="panel-head"><div class="panel-title">LIVE // VOLATILITY 75 ANALYZER</div><span class="chip" id="visualFeedChip">PUBLIC STREAM</span></div>
     <div class="analyzerGrid">
@@ -50,7 +55,7 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
     </div>
   </section>
 
-  <section class="panel"><div class="panel-head"><div class="panel-title">01 // CONTROL DE SESIÓN</div><span class="chip">AUTO EXECUTION CORE</span></div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">02 // CONTROL DE SESIÓN</div><span class="chip">AUTO EXECUTION CORE</span></div>
     <div class="controls">
       <label>Cuenta<select id="mode"><option value="DEMO">DEMO</option><option value="REAL">REAL</option></select></label>
       <label>Stake $<input id="baseStake" type="number" min="0.01" step="0.01" value="1.00"></label>
@@ -67,7 +72,7 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
     <div class="card"><small>Confianza IA</small><b id="confidence">—</b></div>
   </div>
 
-  <section class="panel decisionPanel"><div class="panel-head"><div class="panel-title">02 // DECISIÓN NEURAL</div><span class="chip" id="decisionChip">LIVE ANALYSIS</span></div>
+  <section class="panel decisionPanel"><div class="panel-head"><div class="panel-title">03 // DECISIÓN NEURAL</div><span class="chip" id="decisionChip">LIVE ANALYSIS</span></div>
     <div id="decision" class="decision stateWait">APRENDIENDO</div><div id="reason" class="reason">Cargando memoria, sincronizando nube y observando contexto.</div>
     <div class="meterWrap"><div class="meter"><i id="meter"></i></div><div id="confidenceText">0%</div></div>
     <button id="manualBuy" class="big">COMPRA MANUAL CON CANDIDATO IA</button>
@@ -77,20 +82,15 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
     <div class="card"><small>Ticks aprendidos</small><b id="learnedTicks">0</b></div><div class="card"><small>Trades aprendidos</small><b id="learnedTrades">0</b></div><div class="card"><small>Horizonte adaptativo</small><b id="horizon">1T</b></div><div class="card hot"><small>Salud del modelo</small><b id="health">—</b></div>
   </div>
 
-  <section class="panel"><div class="panel-head"><div class="panel-title">03 // OBJETIVO DE SESIÓN</div><span class="chip">TP / SL MONITOR</span></div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">04 // OBJETIVO DE SESIÓN</div><span class="chip">TP / SL MONITOR</span></div>
     <div class="progressGrid">
       <div class="progressBox"><div class="progressLabel"><span>Progreso hacia TP</span><span id="tpText">0%</span></div><div class="bar"><i id="tpFill"></i></div></div>
       <div class="progressBox"><div class="progressLabel"><span>Uso de Stop Loss</span><span id="slText">0%</span></div><div class="bar"><i id="slFill"></i></div></div>
     </div>
   </section>
 
-  <section class="panel"><div class="panel-head"><div class="panel-title">04 // CLOUD MEMORY 24/7</div><span class="chip">RAILWAY NODE</span></div>
+  <section class="panel"><div class="panel-head"><div class="panel-title">05 // CLOUD MEMORY 24/7</div><span class="chip">RAILWAY NODE</span></div>
     <div class="cloudGrid"><div class="cloudMini"><small>Estado nube</small><b id="cloudState">CHECKING</b></div><div class="cloudMini"><small>Ticks cloud</small><b id="cloudTicks">—</b></div><div class="cloudMini"><small>Último dígito</small><b id="cloudDigit">—</b></div><div class="cloudMini"><small>Uptime</small><b id="cloudUptime">—</b></div><div class="cloudMini"><small>Shadow trades</small><b id="shadowTrades">—</b></div><div class="cloudMini"><small>Shadow wins</small><b id="shadowWins">—</b></div><div class="cloudMini"><small>Shadow matches</small><b id="shadowMatches">—</b></div><div class="cloudMini"><small>Modelos activos</small><b id="shadowModels">—</b></div><div class="cloudMini"><small>Experiencias compartidas</small><b id="sharedAccepted">—</b></div><div class="cloudMini"><small>Duplicados filtrados</small><b id="sharedDuplicates">—</b></div></div>
-  </section>
-
-  <section class="panel"><div class="panel-head"><div class="panel-title">05 // DERIV AUTH GATE</div><span class="chip">REAL PRO CONNECTION LAYER</span></div>
-    <div class="authGrid"><label>App ID<input id="app" placeholder="App ID" inputmode="numeric" autocomplete="off"></label><label>PAT<input id="pat" placeholder="PAT" type="password" autocomplete="off"></label><button id="auth" class="primary">CONECTAR DERIV</button></div>
-    <div class="authStatusBox"><span>AUTH STATUS</span><span id="authStatus">NO CONECTADO</span></div>
   </section>
 
   <section id="ownerMemoryPanel" class="panel warning ownerOnly"><div class="panel-head"><div class="panel-title">ADMIN // MEMORIA PERSISTENTE</div><span class="chip">LOCAL + CLOUD</span></div>
