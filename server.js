@@ -15,7 +15,7 @@ const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
 const VERSION = 1;
-const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3'];
+const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','collab'];
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
@@ -76,6 +76,22 @@ function freshDrift(){
     lossWindow:[]
   };
 }
+function freshCollaborative(){
+  return {
+    received:0,
+    accepted:0,
+    duplicates:0,
+    wins:0,
+    matches:0,
+    matchRate:UNIFORM,
+    lastAt:0,
+    updatedAt:0,
+    byDigit:Array.from({length:10},()=>({n:0,matches:0,last:0})),
+    contexts:{},
+    seen:{}
+  };
+}
+
 function freshShadow(){
   return {
     total:0,wins:0,matches:0,matchRate:UNIFORM,edgeVsBaseline:0,
@@ -104,6 +120,7 @@ function freshMemory(){
     delayEWMA: 1,
     lastMarketEpoch: 0,
     deepHistory: [],
+    collaborative: freshCollaborative(),
     shadow: freshShadow(),
     saves: 0
   };
@@ -126,6 +143,30 @@ function normalizeMemory(x){
     ? m.deepHistory.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-MAX_HIST)
     : [];
   m.lastMarketEpoch = safeNum(m.lastMarketEpoch,0);
+
+  const rawCol=m.collaborative && typeof m.collaborative==='object' ? m.collaborative : freshCollaborative();
+  const col={...freshCollaborative(),...rawCol};
+  col.received=Math.max(0,safeNum(col.received,0));
+  col.accepted=Math.max(0,safeNum(col.accepted,0));
+  col.duplicates=Math.max(0,safeNum(col.duplicates,0));
+  col.wins=Math.max(0,safeNum(col.wins,0));
+  col.matches=Math.max(0,safeNum(col.matches,0));
+  col.matchRate=col.accepted?col.matches/col.accepted:UNIFORM;
+  col.lastAt=Math.max(0,safeNum(col.lastAt,0));
+  col.updatedAt=Math.max(0,safeNum(col.updatedAt,0));
+  col.byDigit=Array.from({length:10},(_,d)=>{
+    const n=rawCol.byDigit?.[d]||{};
+    return {n:Math.max(0,safeNum(n.n,0)),matches:Math.max(0,safeNum(n.matches,0)),last:Math.max(0,safeNum(n.last,0))};
+  });
+  col.contexts=col.contexts && typeof col.contexts==='object' ? col.contexts : {};
+  for(const [k,n] of Object.entries(col.contexts)){
+    if(!/^\d{1,2}>\d$/.test(k)){delete col.contexts[k];continue}
+    col.contexts[k]={n:Math.max(0,safeNum(n?.n,0)),matches:Math.max(0,safeNum(n?.matches,0)),last:Math.max(0,safeNum(n?.last,0))};
+  }
+  col.seen=col.seen && typeof col.seen==='object' ? col.seen : {};
+  const seenEntries=Object.entries(col.seen).sort((a,b)=>safeNum(b[1],0)-safeNum(a[1],0)).slice(0,5000);
+  col.seen=Object.fromEntries(seenEntries);
+  m.collaborative=col;
 
   const sh = m.shadow && typeof m.shadow==='object' ? m.shadow : freshShadow();
   m.shadow = {...freshShadow(), ...sh};
@@ -291,8 +332,37 @@ function expertWeight(name){
     else if(name==='global'||name==='recent300') w*=.72;
     else if(name==='ctx1') w*=1.10;
     else if(name==='ctx3') w*=.88;
+    else if(name==='collab') w*=.92;
   }
   return clamp(w,.10,6);
+}
+
+function collaborativeDist(){
+  const col=mem.collaborative;
+  if(!col || col.accepted<1) return {p:blankP(),support:0,n:0};
+
+  const ctx=hist.slice(-2).join('');
+  const risks=Array(10).fill(UNIFORM);
+
+  for(let d=0;d<10;d++){
+    const g=col.byDigit[d]||{n:0,matches:0};
+    const globalRisk=(safeNum(g.matches,0)+18*UNIFORM)/(safeNum(g.n,0)+18);
+    const node=ctx ? col.contexts[ctx+'>'+d] : null;
+
+    if(node){
+      const localRisk=(safeNum(node.matches,0)+28*globalRisk)/(safeNum(node.n,0)+28);
+      const ev=1-Math.exp(-safeNum(node.n,0)/35);
+      risks[d]=(1-ev)*globalRisk+ev*localRisk;
+    }else{
+      risks[d]=globalRisk;
+    }
+  }
+
+  return {
+    p:normalizeDist(risks),
+    support:clamp(1-Math.exp(-col.accepted/280),0,1),
+    n:col.accepted
+  };
 }
 
 function modelViews(){
@@ -301,6 +371,8 @@ function modelViews(){
   views.push({name:'recent25',p:frequencyDist(25),support:Math.min(1,hist.length/25),base:.75});
   views.push({name:'recent100',p:frequencyDist(100),support:Math.min(1,hist.length/100),base:.90});
   views.push({name:'recent300',p:frequencyDist(300),support:Math.min(1,hist.length/300),base:.75});
+  const shared=collaborativeDist();
+  if(shared.n>0) views.push({name:'collab',p:shared.p,support:shared.support,base:.62,n:shared.n});
   for(const o of ORDERS){
     const c=contextDist(o);
     if(c) views.push({name:'ctx'+o,p:c.p,support:c.support,base:o===1?.95:o===2?1.12:1.22,n:c.n});
@@ -675,13 +747,107 @@ function driftSummary(){
 
 app.use((req,res,next)=>{
   res.setHeader('Access-Control-Allow-Origin','https://quispillocharly-gif.github.io');
-  res.setHeader('Access-Control-Allow-Methods','GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers','Content-Type');
   if(req.method==='OPTIONS') return res.sendStatus(204);
   next();
 });
 
+app.use(express.json({limit:'8kb'}));
 app.use(express.static(__dirname));
+
+function collaborativePublic(){
+  const col=mem.collaborative;
+  return {
+    received:col.received,
+    accepted:col.accepted,
+    duplicates:col.duplicates,
+    wins:col.wins,
+    matches:col.matches,
+    matchRate:col.accepted?col.matches/col.accepted:UNIFORM,
+    lastAt:col.lastAt,
+    updatedAt:col.updatedAt,
+    byDigit:col.byDigit,
+    contexts:col.contexts
+  };
+}
+
+function cleanCollaborativeSeen(){
+  const col=mem.collaborative;
+  const entries=Object.entries(col.seen);
+  if(entries.length<=5000)return;
+  entries.sort((a,b)=>safeNum(b[1],0)-safeNum(a[1],0));
+  col.seen=Object.fromEntries(entries.slice(0,5000));
+}
+
+app.post('/api/cloud/experience',(req,res)=>{
+  const b=req.body||{};
+  const col=mem.collaborative;
+  col.received++;
+
+  const signalEpoch=Math.floor(safeNum(b.signalEpoch,0));
+  const digit=Math.floor(safeNum(b.digit,-1));
+  const loss=b.loss===true||b.loss===1;
+  const risk=safeNum(b.risk,NaN);
+  const confidence=safeNum(b.confidence,NaN);
+  const elapsed=Math.floor(safeNum(b.elapsed,1));
+  const context=Array.isArray(b.context)
+    ? b.context.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-6)
+    : [];
+
+  if(!signalEpoch || digit<0 || digit>9 || !Number.isFinite(risk) || risk<0 || risk>.5 ||
+     !Number.isFinite(confidence) || confidence<0 || confidence>1 || elapsed<1 || elapsed>3 || context.length<1){
+    return res.status(400).json({ok:false,error:'invalid experience'});
+  }
+
+  // Solo acepta experiencias cercanas al mercado vivo del cloud.
+  if(lastEpoch && Math.abs(signalEpoch-lastEpoch)>90){
+    return res.status(409).json({ok:false,error:'stale experience'});
+  }
+
+  // Mismo tick + mismo dígito = una sola evidencia, aunque lo operen varias personas.
+  const dedupKey=signalEpoch+':'+digit;
+  if(col.seen[dedupKey]){
+    col.duplicates++;
+    return res.json({ok:true,accepted:false,duplicate:true,sharedAccepted:col.accepted});
+  }
+  col.seen[dedupKey]=Date.now();
+  cleanCollaborativeSeen();
+
+  col.accepted++;
+  if(loss)col.matches++; else col.wins++;
+  col.matchRate=col.matches/col.accepted;
+  col.lastAt=Date.now();
+  col.updatedAt=Date.now();
+
+  const g=col.byDigit[digit];
+  g.n++;
+  if(loss)g.matches++;
+  g.last=signalEpoch;
+
+  const ctx=context.slice(-2).join('');
+  const key=ctx+'>'+digit;
+  const node=col.contexts[key]||(col.contexts[key]={n:0,matches:0,last:0});
+  node.n++;
+  if(loss)node.matches++;
+  node.last=signalEpoch;
+
+  if(col.accepted%10===0)saveMemory();
+
+  return res.json({
+    ok:true,
+    accepted:true,
+    duplicate:false,
+    sharedAccepted:col.accepted,
+    sharedWins:col.wins,
+    sharedMatches:col.matches
+  });
+});
+
+app.get('/api/cloud/collaborative',(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({ok:true,symbol:SYMBOL,collaborative:collaborativePublic()});
+});
 
 app.get('/api/cloud/status',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
@@ -703,6 +869,15 @@ app.get('/api/cloud/status',(req,res)=>{
       performance:performanceSummary(),
       calibration:calibrationSummary(),
       drift:driftSummary()
+    },
+    collaborative:{
+      accepted:mem.collaborative.accepted,
+      received:mem.collaborative.received,
+      duplicates:mem.collaborative.duplicates,
+      wins:mem.collaborative.wins,
+      matches:mem.collaborative.matches,
+      matchRate:mem.collaborative.accepted?mem.collaborative.matches/mem.collaborative.accepted:UNIFORM,
+      lastAt:mem.collaborative.lastAt
     },
     updatedAt:mem.updatedAt
   });
@@ -760,6 +935,7 @@ app.listen(PORT,()=>{
   console.log('Persistent history restored:',hist.length,'ticks');
   console.log('Shadow trades restored:',mem.shadow.total);
   console.log('Drift events restored:',mem.shadow.drift.events);
+  console.log('Collaborative experiences restored:',mem.collaborative.accepted);
   prepareShadow();
   connectDeriv();
 });
