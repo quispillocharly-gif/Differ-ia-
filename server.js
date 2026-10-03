@@ -16,6 +16,9 @@ const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
 const VERSION = 1;
 const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3'];
+const HEDGE_ETA = 0.34;
+const CAL_BINS = 20;
+const DRIFT_MAX_WINDOW = 360;
 
 let ws = null;
 let reconnectTimer = null;
@@ -33,6 +36,7 @@ let status = 'BOOTING';
 function blankP(){ return Array(10).fill(UNIFORM); }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 function safeNum(x,d=0){ x=Number(x); return Number.isFinite(x)?x:d; }
+function mean(xs){ return xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : 0; }
 function normalizeDist(p){
   const out=Array.from({length:10},(_,i)=>Math.max(0,safeNum(p?.[i],UNIFORM)));
   const s=out.reduce((a,b)=>a+b,0)||1;
@@ -40,13 +44,46 @@ function normalizeDist(p){
 }
 function freshPerf(){
   const o={};
-  MODEL_NAMES.forEach(name=>o[name]={samples:0,logLossEWMA:Math.log(10),matchEWMA:UNIFORM,weight:1});
+  MODEL_NAMES.forEach(name=>o[name]={
+    samples:0,
+    logLossEWMA:Math.log(10),
+    matchEWMA:UNIFORM,
+    weight:1,
+    cumulativeLoss:0
+  });
   return o;
+}
+function freshCalibration(){
+  return {
+    samples:0,
+    brierEWMA:0.09,
+    predictedEWMA:UNIFORM,
+    observedEWMA:UNIFORM,
+    ece:0,
+    bins:Array.from({length:CAL_BINS},()=>({n:0,matches:0}))
+  };
+}
+function freshDrift(){
+  return {
+    events:0,
+    active:false,
+    boostRemaining:0,
+    lastAt:0,
+    lastTick:0,
+    score:0,
+    epsilon:0,
+    cut:0,
+    lossWindow:[]
+  };
 }
 function freshShadow(){
   return {
     total:0,wins:0,matches:0,matchRate:UNIFORM,edgeVsBaseline:0,
-    recent:[],performance:freshPerf(),last:null
+    recent:[],
+    performance:freshPerf(),
+    calibration:freshCalibration(),
+    drift:freshDrift(),
+    last:null
   };
 }
 function freshMemory(){
@@ -76,19 +113,23 @@ function normalizeMemory(x){
   if(!x || x.version !== VERSION) return freshMemory();
   const base = freshMemory();
   const m = {...base, ...x};
+
   m.models = m.models || base.models;
   HORIZONS.forEach(h => {
     m.models[h] = m.models[h] || {};
     ORDERS.forEach(o => m.models[h][o] = m.models[h][o] || {});
   });
+
   m.globalP = Array.isArray(m.globalP) && m.globalP.length===10 ? normalizeDist(m.globalP) : blankP();
   m.modelLoss = m.modelLoss || {};
   m.deepHistory = Array.isArray(m.deepHistory)
     ? m.deepHistory.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-MAX_HIST)
     : [];
   m.lastMarketEpoch = safeNum(m.lastMarketEpoch,0);
+
   const sh = m.shadow && typeof m.shadow==='object' ? m.shadow : freshShadow();
   m.shadow = {...freshShadow(), ...sh};
+
   m.shadow.performance = {...freshPerf(), ...(sh.performance||{})};
   MODEL_NAMES.forEach(name=>{
     const p=m.shadow.performance[name]||{};
@@ -96,9 +137,36 @@ function normalizeMemory(x){
       samples:safeNum(p.samples,0),
       logLossEWMA:safeNum(p.logLossEWMA,Math.log(10)),
       matchEWMA:clamp(safeNum(p.matchEWMA,UNIFORM),0,1),
-      weight:clamp(safeNum(p.weight,1),.20,3)
+      weight:clamp(safeNum(p.weight,1),.12,5),
+      cumulativeLoss:Math.max(0,safeNum(p.cumulativeLoss,0))
     };
   });
+
+  const c={...freshCalibration(), ...(sh.calibration||{})};
+  c.bins=Array.isArray(c.bins)&&c.bins.length===CAL_BINS
+    ? c.bins.map(b=>({n:Math.max(0,safeNum(b?.n,0)),matches:Math.max(0,safeNum(b?.matches,0))}))
+    : freshCalibration().bins;
+  c.samples=Math.max(0,safeNum(c.samples,0));
+  c.brierEWMA=clamp(safeNum(c.brierEWMA,.09),0,1);
+  c.predictedEWMA=clamp(safeNum(c.predictedEWMA,UNIFORM),0,1);
+  c.observedEWMA=clamp(safeNum(c.observedEWMA,UNIFORM),0,1);
+  c.ece=clamp(safeNum(c.ece,0),0,1);
+  m.shadow.calibration=c;
+
+  const d={...freshDrift(), ...(sh.drift||{})};
+  d.events=Math.max(0,safeNum(d.events,0));
+  d.active=!!d.active;
+  d.boostRemaining=Math.max(0,safeNum(d.boostRemaining,0));
+  d.lastAt=Math.max(0,safeNum(d.lastAt,0));
+  d.lastTick=Math.max(0,safeNum(d.lastTick,0));
+  d.score=Math.max(0,safeNum(d.score,0));
+  d.epsilon=Math.max(0,safeNum(d.epsilon,0));
+  d.cut=Math.max(0,safeNum(d.cut,0));
+  d.lossWindow=Array.isArray(d.lossWindow)
+    ? d.lossWindow.map(v=>clamp(safeNum(v,0),0,1)).slice(-DRIFT_MAX_WINDOW)
+    : [];
+  m.shadow.drift=d;
+
   m.shadow.recent = Array.isArray(m.shadow.recent) ? m.shadow.recent.slice(-SHADOW_RECENT_MAX) : [];
   return m;
 }
@@ -113,6 +181,7 @@ function loadMemory(){
     return freshMemory();
   }
 }
+
 let mem = loadMemory();
 hist = mem.deepHistory.slice(-MAX_HIST);
 lastEpoch = safeNum(mem.lastMarketEpoch,0);
@@ -138,10 +207,13 @@ function contextKey(arr,endIndex,order){
   return arr.slice(start,endIndex+1).join('');
 }
 function modelLossKey(h,o){ return h+':'+o; }
+function driftLearningBoost(){
+  return mem.shadow.drift.boostRemaining>0 ? 1.55 : 1;
+}
 function learningRate(order,n){
   const base=order===1?.035:order===2?.050:.070;
   const support=Math.min(1,Math.max(0,n)/80);
-  return base*(1-.25*support);
+  return clamp(base*(1-.25*support)*driftLearningBoost(),.01,.13);
 }
 function ensureNode(h,o,key){
   const bucket=mem.models[h][o];
@@ -156,7 +228,7 @@ function updateProb(p,target,alpha){
 
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
-    updateProb(mem.globalP,targetDigit,.018);
+    updateProb(mem.globalP,targetDigit,.018*driftLearningBoost());
     mem.globalN++;
   }
   for(const h of HORIZONS){
@@ -202,18 +274,25 @@ function contextDist(order){
   if(key===null) return null;
   const node=mem.models[1][order][key];
   if(!node) return null;
-  return {p:normalizeDist(node.p),support:1-Math.exp(-safeNum(node.n,0)/(order===1?26:order===2?16:10)),n:safeNum(node.n,0)};
+  return {
+    p:normalizeDist(node.p),
+    support:1-Math.exp(-safeNum(node.n,0)/(order===1?26:order===2?16:10)),
+    n:safeNum(node.n,0)
+  };
 }
 
-function adaptiveWeight(name){
-  const perf=mem.shadow.performance[name]||freshPerf()[name];
-  const logAdv=Math.log(10)-safeNum(perf.logLossEWMA,Math.log(10));
-  const differAdv=UNIFORM-clamp(safeNum(perf.matchEWMA,UNIFORM),0,1);
-  const evidence=1-Math.exp(-safeNum(perf.samples,0)/120);
-  const raw=Math.exp(clamp(logAdv*1.25,-.7,.7))*(1+clamp(differAdv*4,-.30,.30));
-  const w=clamp((1-evidence)*1+evidence*raw,.25,2.5);
-  perf.weight=w;
-  return w;
+function expertWeight(name){
+  const p=mem.shadow.performance[name];
+  let w=clamp(safeNum(p?.weight,1),.12,5);
+
+  if(mem.shadow.drift.boostRemaining>0){
+    if(name==='recent25') w*=1.55;
+    else if(name==='recent100') w*=1.30;
+    else if(name==='global'||name==='recent300') w*=.72;
+    else if(name==='ctx1') w*=1.10;
+    else if(name==='ctx3') w*=.88;
+  }
+  return clamp(w,.10,6);
 }
 
 function modelViews(){
@@ -229,6 +308,136 @@ function modelViews(){
   return views;
 }
 
+function calibrationBin(rawRisk){
+  return clamp(Math.floor(clamp(rawRisk,0,.199999)*100),0,CAL_BINS-1);
+}
+function calibrationECE(){
+  const c=mem.shadow.calibration;
+  let total=0,err=0;
+  c.bins.forEach((b,i)=>{
+    if(!b.n) return;
+    const center=(i+.5)/100;
+    const obs=b.matches/b.n;
+    total+=b.n;
+    err+=b.n*Math.abs(obs-center);
+  });
+  return total?err/total:0;
+}
+function calibrateRisk(rawRisk){
+  const raw=clamp(safeNum(rawRisk,UNIFORM),.005,.30);
+  const c=mem.shadow.calibration;
+  const b=c.bins[calibrationBin(raw)];
+  const prior=70;
+  const posterior=(safeNum(b.matches,0)+prior*raw)/(safeNum(b.n,0)+prior);
+  const evidence=1-Math.exp(-safeNum(b.n,0)/90);
+  const globalRatio=clamp(
+    safeNum(c.observedEWMA,UNIFORM)/Math.max(.01,safeNum(c.predictedEWMA,UNIFORM)),
+    .65,1.55
+  );
+  const globalAdjusted=raw*globalRatio;
+  const blended=(1-evidence)*globalAdjusted+evidence*posterior;
+  return clamp(blended,Math.max(.005,raw*.55),Math.min(.30,raw*1.65));
+}
+function updateCalibration(rawRisk,match){
+  const c=mem.shadow.calibration;
+  const raw=clamp(safeNum(rawRisk,UNIFORM),.005,.30);
+  const y=match?1:0;
+  const b=c.bins[calibrationBin(raw)];
+  b.n++;
+  b.matches+=y;
+  c.samples++;
+  const a=c.samples<120?.035:.012;
+  c.predictedEWMA=(1-a)*safeNum(c.predictedEWMA,UNIFORM)+a*raw;
+  c.observedEWMA=(1-a)*safeNum(c.observedEWMA,UNIFORM)+a*y;
+  c.brierEWMA=(1-a)*safeNum(c.brierEWMA,.09)+a*((raw-y)**2);
+  c.ece=calibrationECE();
+}
+
+function normalizeHedgeWeights(activeNames){
+  if(!activeNames.length) return;
+  const vals=activeNames.map(name=>clamp(safeNum(mem.shadow.performance[name]?.weight,1),.0001,100));
+  const avg=mean(vals)||1;
+  activeNames.forEach(name=>{
+    const p=mem.shadow.performance[name];
+    p.weight=clamp(p.weight/avg,.12,5);
+  });
+}
+function hedgeUpdate(pending,actual){
+  const active=[];
+  for(const mv of pending.modelVotes||[]){
+    const perf=mem.shadow.performance[mv.name];
+    const dist=(pending.modelDistributions||{})[mv.name];
+    if(!perf||!Array.isArray(dist)||dist.length!==10) continue;
+
+    const prob=clamp(safeNum(dist[actual],UNIFORM),.0001,.9999);
+    const logLoss=-Math.log(prob);
+    const normalizedLog=clamp(logLoss/(3*Math.log(10)),0,1);
+    const ownMatch=actual===mv.digit?1:0;
+    const hedgeLoss=.72*ownMatch+.28*normalizedLog;
+
+    perf.samples++;
+    perf.cumulativeLoss+=hedgeLoss;
+    const a=perf.samples<100?.045:.016;
+    perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,Math.log(10))+a*logLoss;
+    perf.matchEWMA=(1-a)*safeNum(perf.matchEWMA,UNIFORM)+a*ownMatch;
+    perf.weight=clamp(safeNum(perf.weight,1)*Math.exp(-HEDGE_ETA*hedgeLoss),.0001,100);
+    active.push(mv.name);
+  }
+  normalizeHedgeWeights(active);
+}
+
+function detectDrift(pending,actual){
+  const d=mem.shadow.drift;
+  const prob=clamp(safeNum(pending?.probabilities?.[actual],UNIFORM),.0001,.9999);
+  const normalizedLoss=clamp((-Math.log(prob))/(3*Math.log(10)),0,1);
+  d.lossWindow.push(normalizedLoss);
+  if(d.lossWindow.length>DRIFT_MAX_WINDOW) d.lossWindow.shift();
+
+  if(d.boostRemaining>0){
+    d.boostRemaining--;
+    if(d.boostRemaining===0) d.active=false;
+  }
+
+  if(d.lossWindow.length<160 || mem.shadow.total%20!==0) return;
+
+  const w=d.lossWindow;
+  let best=null;
+  const delta=.08;
+  for(let cut=60;cut<=w.length-60;cut+=20){
+    const left=w.slice(0,cut),right=w.slice(cut);
+    const diff=Math.abs(mean(left)-mean(right));
+    const eps=Math.sqrt(.5*Math.log(4/delta)*(1/left.length+1/right.length));
+    const score=diff-eps;
+    if(!best||score>best.score) best={cut,diff,eps,score};
+  }
+
+  if(!best) return;
+  d.score=Math.max(0,best.diff);
+  d.epsilon=best.eps;
+  d.cut=best.cut;
+
+  if(best.score>0 && mem.tickCount-d.lastTick>180){
+    d.events++;
+    d.active=true;
+    d.boostRemaining=260;
+    d.lastAt=Date.now();
+    d.lastTick=mem.tickCount;
+    d.lossWindow=w.slice(best.cut);
+
+    MODEL_NAMES.forEach(name=>{
+      const p=mem.shadow.performance[name];
+      p.weight=.60*safeNum(p.weight,1)+.40;
+    });
+
+    console.log('Drift detected:',{
+      tick:mem.tickCount,
+      score:Number(best.diff.toFixed(4)),
+      epsilon:Number(best.eps.toFixed(4)),
+      events:d.events
+    });
+  }
+}
+
 function ensemblePredict(){
   if(hist.length<8) return null;
   const views=modelViews();
@@ -236,69 +445,88 @@ function ensemblePredict(){
   const modelVotes=[];
 
   for(const v of views){
-    const aw=adaptiveWeight(v.name);
-    const w=v.base*(.25+.75*v.support)*aw;
+    const ew=expertWeight(v.name);
+    const w=v.base*(.25+.75*v.support)*ew;
     const own=v.p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk)[0];
-    modelVotes.push({name:v.name,digit:own.d,risk:own.risk,weight:w,support:v.support,adaptiveWeight:aw});
-    for(let d=0;d<10;d++){num[d]+=v.p[d]*w;den[d]+=w;}
+    modelVotes.push({
+      name:v.name,digit:own.d,risk:own.risk,
+      weight:w,support:v.support,expertWeight:ew
+    });
+    for(let d=0;d<10;d++){
+      num[d]+=v.p[d]*w;
+      den[d]+=w;
+    }
   }
 
   const p=normalizeDist(num.map((x,d)=>x/(den[d]||1)));
   const ranked=p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk);
   const best=ranked[0];
+  const rawRisk=best.risk;
+  const calibratedRisk=calibrateRisk(rawRisk);
 
   const risks=views.map(v=>v.p[best.d]);
-  const mean=risks.reduce((a,b)=>a+b,0)/(risks.length||1);
-  const variance=risks.reduce((s,x)=>s+(x-mean)**2,0)/(risks.length||1);
+  const m=mean(risks);
+  const variance=risks.length?risks.reduce((s,x)=>s+(x-m)**2,0)/risks.length:0;
   const disagreement=Math.sqrt(variance);
-  const support=views.reduce((s,v)=>s+v.support,0)/(views.length||1);
-  const confidence=clamp((.18+.82*support)*Math.exp(-disagreement*16),0,1);
+  const support=views.length?views.reduce((s,v)=>s+v.support,0)/views.length:0;
+  const calibrationTrust=clamp(1-mem.shadow.calibration.ece*4,.45,1);
+  const driftPenalty=mem.shadow.drift.active?.88:1;
+  const confidence=clamp(
+    (.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty,
+    0,1
+  );
 
   return {
     horizon:1,
     digit:best.d,
-    risk:best.risk,
+    risk:calibratedRisk,
+    rawRisk,
     confidence,
     probabilities:p,
     modelVotes,
+    calibrationECE:mem.shadow.calibration.ece,
+    driftActive:mem.shadow.drift.active,
     generatedAt:Date.now()
   };
-}
-
-function updateModelPerformance(pending,actual){
-  for(const mv of pending.modelVotes||[]){
-    const perf=mem.shadow.performance[mv.name]||(mem.shadow.performance[mv.name]={samples:0,logLossEWMA:Math.log(10),matchEWMA:UNIFORM,weight:1});
-    const view=(pending.modelDistributions||{})[mv.name];
-    if(!Array.isArray(view)||view.length!==10) continue;
-    const prob=clamp(safeNum(view[actual],UNIFORM),.0001,.9999);
-    const ll=-Math.log(prob);
-    const ownMatch=actual===mv.digit?1:0;
-    perf.samples++;
-    const a=perf.samples<80?.05:.018;
-    perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,Math.log(10))+a*ll;
-    perf.matchEWMA=(1-a)*safeNum(perf.matchEWMA,UNIFORM)+a*ownMatch;
-    adaptiveWeight(mv.name);
-  }
 }
 
 function evaluateShadow(actual){
   const p=shadowPending;
   if(!p) return;
+
   const match=actual===p.digit;
   const sh=mem.shadow;
   sh.total++;
   if(match) sh.matches++; else sh.wins++;
   sh.matchRate=sh.total?sh.matches/sh.total:UNIFORM;
   sh.edgeVsBaseline=UNIFORM-sh.matchRate;
-  sh.last={ts:Date.now(),candidate:p.digit,actual,match,risk:p.risk,confidence:p.confidence};
+
+  updateCalibration(p.rawRisk??p.risk,match);
+  hedgeUpdate(p,actual);
+  detectDrift(p,actual);
+
+  sh.last={
+    ts:Date.now(),
+    candidate:p.digit,
+    actual,
+    match,
+    risk:p.risk,
+    rawRisk:p.rawRisk??p.risk,
+    confidence:p.confidence,
+    driftActive:sh.drift.active
+  };
   sh.recent.push(sh.last);
   if(sh.recent.length>SHADOW_RECENT_MAX) sh.recent.shift();
-  updateModelPerformance(p,actual);
 }
 
 function prepareShadow(){
   const pred=ensemblePredict();
-  if(!pred){ shadowPending=null; lastPrediction=null; return; }
+  if(!pred){
+    shadowPending=null;
+    lastPrediction=null;
+    return;
+  }
+
   const distributions={};
   for(const v of modelViews()) distributions[v.name]=v.p.slice();
   shadowPending={...pred,modelDistributions:distributions};
@@ -318,6 +546,7 @@ function processDigit(d,epoch){
     lastEpoch=Math.max(lastEpoch,epoch);
     mem.lastMarketEpoch=lastEpoch;
   }
+
   liveTickCount++;
   lastTickAt=Date.now();
   lastDigit=d;
@@ -416,10 +645,32 @@ function performanceSummary(){
       samples:p.samples,
       weight:Number(p.weight.toFixed(3)),
       matchEWMA:Number(p.matchEWMA.toFixed(4)),
-      logLossEWMA:Number(p.logLossEWMA.toFixed(4))
+      logLossEWMA:Number(p.logLossEWMA.toFixed(4)),
+      cumulativeLoss:Number(p.cumulativeLoss.toFixed(3))
     };
   });
   return out;
+}
+function calibrationSummary(){
+  const c=mem.shadow.calibration;
+  return {
+    samples:c.samples,
+    brierEWMA:Number(c.brierEWMA.toFixed(5)),
+    predictedEWMA:Number(c.predictedEWMA.toFixed(5)),
+    observedEWMA:Number(c.observedEWMA.toFixed(5)),
+    ece:Number(c.ece.toFixed(5))
+  };
+}
+function driftSummary(){
+  const d=mem.shadow.drift;
+  return {
+    events:d.events,
+    active:d.active,
+    boostRemaining:d.boostRemaining,
+    lastAt:d.lastAt,
+    score:Number(d.score.toFixed(5)),
+    epsilon:Number(d.epsilon.toFixed(5))
+  };
 }
 
 app.use((req,res,next)=>{
@@ -448,7 +699,10 @@ app.get('/api/cloud/status',(req,res)=>{
       edgeVsBaseline:mem.shadow.edgeVsBaseline,
       last:mem.shadow.last,
       modelCount:MODEL_NAMES.length,
-      performance:performanceSummary()
+      hedgeEta:HEDGE_ETA,
+      performance:performanceSummary(),
+      calibration:calibrationSummary(),
+      drift:driftSummary()
     },
     updatedAt:mem.updatedAt
   });
@@ -456,7 +710,13 @@ app.get('/api/cloud/status',(req,res)=>{
 
 app.get('/api/cloud/prediction',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
-  res.json({ok:true,prediction:lastPrediction,shadow:mem.shadow.last});
+  res.json({
+    ok:true,
+    prediction:lastPrediction,
+    shadow:mem.shadow.last,
+    calibration:calibrationSummary(),
+    drift:driftSummary()
+  });
 });
 
 app.get('/api/cloud/shadow',(req,res)=>{
@@ -469,7 +729,9 @@ app.get('/api/cloud/shadow',(req,res)=>{
     matchRate:mem.shadow.matchRate,
     edgeVsBaseline:mem.shadow.edgeVsBaseline,
     recent:mem.shadow.recent.slice(-100),
-    performance:performanceSummary()
+    performance:performanceSummary(),
+    calibration:calibrationSummary(),
+    drift:driftSummary()
   });
 });
 
@@ -484,14 +746,20 @@ app.get('/api/cloud/snapshot',(req,res)=>{
 
 app.get('/health',(req,res)=>{
   res.status(status==='ONLINE'?200:503).json({
-    ok:status==='ONLINE',status,ticks:mem.tickCount,shadowTrades:mem.shadow.total,history:hist.length
+    ok:status==='ONLINE',
+    status,
+    ticks:mem.tickCount,
+    shadowTrades:mem.shadow.total,
+    history:hist.length,
+    driftActive:mem.shadow.drift.active
   });
 });
 
 app.listen(PORT,()=>{
-  console.log('Differ AI cloud ensemble server listening on port',PORT);
+  console.log('Differ AI cloud Hedge+Drift+Calibration server listening on port',PORT);
   console.log('Persistent history restored:',hist.length,'ticks');
   console.log('Shadow trades restored:',mem.shadow.total);
+  console.log('Drift events restored:',mem.shadow.drift.events);
   prepareShadow();
   connectDeriv();
 });
