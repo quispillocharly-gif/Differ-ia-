@@ -12,7 +12,7 @@
 .topline{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:4px 2px 10px;color:#6ca584;font-size:11px;letter-spacing:1.5px}.topRight{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}.online{color:var(--green);text-shadow:0 0 10px rgba(0,255,136,.55)}.walletBadge{position:fixed;top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));z-index:9999;display:flex;align-items:center;gap:10px;min-width:190px;max-width:240px;padding:9px 12px;border:1px solid rgba(255,208,90,.48);border-radius:16px;background:linear-gradient(180deg,rgba(255,208,90,.16),rgba(13,10,2,.94));box-shadow:0 0 0 1px rgba(255,208,90,.08),0 12px 34px rgba(0,0,0,.52),0 0 20px rgba(255,208,90,.12);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}.walletIcon{width:34px;height:34px;display:grid;place-items:center;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff0a8,#ffd05a 45%,#9a6b08 100%);color:#241700;font-size:18px;box-shadow:0 0 15px rgba(255,208,90,.35)}.walletText{min-width:0}.walletLabel{display:block;color:#b99c4f;font-size:8px;letter-spacing:1.4px}.walletAmount{display:block;color:#ffe88a;font-size:16px;font-weight:900;letter-spacing:.2px;white-space:nowrap;text-shadow:0 0 10px rgba(255,208,90,.22)}.walletDelta{display:block;margin-top:2px;color:var(--cyan);font-size:9px;font-weight:800;letter-spacing:.5px;white-space:nowrap}
 .hero,.panel,.card{position:relative;overflow:hidden;background:linear-gradient(180deg,var(--panel),rgba(2,8,5,.94));border:1px solid var(--line);box-shadow:var(--shadow)}.hero{border-radius:22px;padding:19px;margin-bottom:12px}.hero-grid{display:grid;grid-template-columns:1.6fr .8fr;gap:14px;align-items:center}.eyebrow{display:flex;align-items:center;gap:8px;color:var(--mint);font-size:11px;letter-spacing:2.5px;text-transform:uppercase}.pulseDot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.7s infinite}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,255,136,.65)}70%{box-shadow:0 0 0 10px rgba(0,255,136,0)}100%{box-shadow:0 0 0 0 rgba(0,255,136,0)}}
 h1{margin:8px 0 5px;font-size:clamp(26px,5vw,48px);line-height:.98;letter-spacing:-2px;color:var(--green);text-shadow:0 0 18px rgba(0,255,136,.28)}.subtitle{color:#92bfa5;font-size:13px;line-height:1.5;max-width:760px}.corebox{background:rgba(0,255,136,.035);border:1px solid rgba(0,255,136,.14);border-radius:16px;padding:13px}.corebox .label{font-size:10px;color:#6ba985;letter-spacing:1.7px}.corebox .value{font-size:17px;color:var(--mint);margin-top:5px}.coreline{height:1px;background:linear-gradient(90deg,transparent,var(--green),transparent);opacity:.35;margin:10px 0}.core-mini{display:grid;grid-template-columns:1fr 1fr;gap:7px;font-size:10px;color:#7fb392}.core-mini b{color:#b7ffda}
-.panel{border-radius:18px;padding:14px;margin:10px 0}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.panel-title{color:var(--mint);font-size:11px;letter-spacing:1.8px;text-transform:uppercase}.chip{font-size:10px;padding:5px 8px;border:1px solid rgba(0,255,136,.16);border-radius:999px;color:#88bda0;background:rgba(0,255,136,.035)}
+.panel{border-radius:18px;padding:14px;margin:10px 0}.analyzerPanel{border-color:rgba(53,231,255,.20);background:radial-gradient(circle at 20% 0,rgba(0,255,136,.045),transparent 32%),linear-gradient(180deg,rgba(3,15,10,.95),rgba(1,7,5,.96))}.analyzerGrid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(210px,.55fr);gap:10px}.chartBox{position:relative;min-height:235px;border:1px solid rgba(53,231,255,.14);border-radius:15px;background:linear-gradient(180deg,rgba(1,10,7,.94),rgba(0,4,3,.98));overflow:hidden}.chartBox:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 0 48%,rgba(0,255,136,.035) 50%,transparent 52%);animation:scanMarket 3s linear infinite;z-index:2}@keyframes scanMarket{0%{transform:translateY(-55%)}100%{transform:translateY(55%)}}#volChart{display:block;width:100%;height:235px}.chartHud{position:absolute;left:12px;top:10px;z-index:3;display:flex;gap:7px;align-items:center;font-size:9px;letter-spacing:1.2px;color:#79aa8e}.analysisPulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px rgba(53,231,255,.65);animation:analysisBlink .9s ease-in-out infinite alternate}@keyframes analysisBlink{to{opacity:.25;transform:scale(.75)}}.analyzerStats{display:grid;grid-template-columns:1fr;gap:8px}.analyzerMetric{border:1px solid rgba(0,255,136,.12);border-radius:13px;padding:11px;background:rgba(0,255,136,.022)}.analyzerMetric small{display:block;color:#688f79;font-size:8px;letter-spacing:1.3px;text-transform:uppercase}.analyzerMetric b{display:block;margin-top:6px;color:var(--green);font-size:17px}.analyzerMetric.hot b{color:var(--cyan)}.analyzerMetric.warn b{color:var(--warn)}.analyzerState{display:flex;align-items:center;justify-content:center;gap:8px;min-height:42px;border:1px solid rgba(53,231,255,.18);border-radius:12px;color:var(--cyan);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;background:rgba(53,231,255,.025)}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.panel-title{color:var(--mint);font-size:11px;letter-spacing:1.8px;text-transform:uppercase}.chip{font-size:10px;padding:5px 8px;border:1px solid rgba(0,255,136,.16);border-radius:999px;color:#88bda0;background:rgba(0,255,136,.035)}
 .controls{display:grid;grid-template-columns:1fr repeat(3,.8fr) 1.15fr 1.15fr;gap:9px;align-items:end}label{display:flex;flex-direction:column;gap:6px;color:#7da98e;font-size:10px;text-transform:uppercase;letter-spacing:1.2px}input,select,button{font:inherit}input,select{width:100%;min-height:44px;background:#020704;color:var(--green);border:1px solid rgba(0,255,136,.18);border-radius:11px;padding:10px 11px;outline:none}input:focus,select:focus{border-color:rgba(0,255,136,.48);box-shadow:0 0 0 3px rgba(0,255,136,.07)}
 button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);background:linear-gradient(180deg,rgba(0,255,136,.16),rgba(0,255,136,.05));color:var(--mint);padding:10px 12px;cursor:pointer;text-transform:uppercase;letter-spacing:.8px;transition:.16s}.primary{border-color:rgba(0,255,136,.45);box-shadow:0 0 18px rgba(0,255,136,.10)}.danger{color:#ffd7df;border-color:rgba(255,66,104,.36);background:linear-gradient(180deg,rgba(255,66,104,.14),rgba(255,66,104,.04))}
 .statusStrip{margin-top:10px;border:1px solid rgba(0,255,136,.13);background:rgba(0,255,136,.026);border-radius:12px;padding:9px 11px;color:#a6d5b7;font-size:11px;display:flex;justify-content:space-between;gap:10px;align-items:center}#status{color:var(--green);font-weight:800}
@@ -22,7 +22,7 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
 .authGrid{display:grid;grid-template-columns:1fr 1fr auto;gap:9px;align-items:end}.authStatusBox{margin-top:10px;display:flex;justify-content:space-between;gap:10px;align-items:center;border-top:1px solid rgba(0,255,136,.09);padding-top:10px;color:#759987;font-size:10px}#authStatus{color:var(--cyan);font-weight:800}
 .cloudGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.cloudMini{padding:10px;border:1px solid rgba(53,231,255,.12);border-radius:12px;background:rgba(53,231,255,.025)}.cloudMini small{display:block;color:#668f83;font-size:9px;text-transform:uppercase;letter-spacing:1px}.cloudMini b{display:block;margin-top:5px;color:var(--cyan);font-size:14px}.cloudOnline{color:var(--green)!important}
 .log{height:270px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#010503;border:1px solid rgba(0,255,136,.12);border-radius:13px;padding:12px;color:#a9f3c8;font-size:10px;line-height:1.55}.warning{border-color:rgba(255,208,90,.18);background:linear-gradient(180deg,rgba(255,208,90,.035),rgba(3,10,7,.94))}.warning .panel-title{color:#ffe18a}.muted{color:#789887;font-size:10px;line-height:1.45}.ownerOnly{display:none!important}.ownerOnly.ownerVisible{display:block!important}.footer{text-align:center;color:#486b56;font-size:9px;letter-spacing:1.8px;padding:10px 0 4px}
-@media(max-width:900px){.hero-grid{grid-template-columns:1fr}.controls{grid-template-columns:repeat(2,1fr)}.authGrid{grid-template-columns:1fr}.cloudGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.wrap{padding:10px}.topline{align-items:flex-start}.topline>span:first-child{display:none}.topRight{width:100%;justify-content:space-between}.walletBadge{top:max(8px,env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));min-width:174px;max-width:205px;padding:8px 10px;border-radius:15px}.walletIcon{width:30px;height:30px;font-size:16px}.walletLabel{font-size:7px}.walletAmount{font-size:17px}.walletDelta{font-size:9px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.controls{grid-template-columns:1fr 1fr}.progressGrid{grid-template-columns:1fr}.hero{padding:15px}.panel{padding:12px}}
+@media(max-width:900px){.hero-grid{grid-template-columns:1fr}.analyzerGrid{grid-template-columns:1fr}.analyzerStats{grid-template-columns:repeat(4,1fr)}.controls{grid-template-columns:repeat(2,1fr)}.authGrid{grid-template-columns:1fr}.cloudGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.wrap{padding:10px}.analyzerStats{grid-template-columns:repeat(2,1fr)}#volChart{height:210px}.chartBox{min-height:210px}.topline{align-items:flex-start}.topline>span:first-child{display:none}.topRight{width:100%;justify-content:space-between}.walletBadge{top:max(8px,env(safe-area-inset-top));right:max(8px,env(safe-area-inset-right));min-width:174px;max-width:205px;padding:8px 10px;border-radius:15px}.walletIcon{width:30px;height:30px;font-size:16px}.walletLabel{font-size:7px}.walletAmount{font-size:17px}.walletDelta{font-size:9px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.controls{grid-template-columns:1fr 1fr}.progressGrid{grid-template-columns:1fr}.hero{padding:15px}.panel{padding:12px}}
 </style>
 </head>
 <body>
@@ -33,6 +33,22 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
     <div><div class="eyebrow"><span class="pulseDot"></span> neural market terminal</div><h1>DIFFER // BLACK MATRIX</h1><div class="subtitle">Motor de aprendizaje online para DIGIT DIFFER con memoria local + nube 24/7. Interfaz renovada; núcleo de conexión y cerebro conservados.</div></div>
     <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
   </div></section>
+
+  <section class="panel analyzerPanel">
+    <div class="panel-head"><div class="panel-title">LIVE // VOLATILITY 75 ANALYZER</div><span class="chip" id="visualFeedChip">PUBLIC STREAM</span></div>
+    <div class="analyzerGrid">
+      <div class="chartBox">
+        <div class="chartHud"><span class="analysisPulse"></span><span id="analysisState">CONECTANDO STREAM R_75…</span></div>
+        <canvas id="volChart"></canvas>
+      </div>
+      <div class="analyzerStats">
+        <div class="analyzerMetric hot"><small>Precio R_75</small><b id="visualQuote">—</b></div>
+        <div class="analyzerMetric"><small>Último dígito</small><b id="visualDigit">—</b></div>
+        <div class="analyzerMetric warn"><small>Muestras visibles</small><b id="visualSamples">0</b></div>
+        <div class="analyzerState"><span class="analysisPulse"></span><span id="visualStatus">IA ANALIZANDO</span></div>
+      </div>
+    </div>
+  </section>
 
   <section class="panel"><div class="panel-head"><div class="panel-title">01 // CONTROL DE SESIÓN</div><span class="chip">AUTO EXECUTION CORE</span></div>
     <div class="controls">
@@ -101,6 +117,77 @@ button{min-height:44px;border-radius:11px;border:1px solid rgba(0,255,136,.26);b
   function resize(){var dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.floor(innerWidth*dpr);canvas.height=Math.floor(innerHeight*dpr);canvas.style.width=innerWidth+'px';canvas.style.height=innerHeight+'px';ctx.setTransform(dpr,0,0,dpr,0,0);cols=Math.ceil(innerWidth/18);drops=Array.from({length:cols},function(){return Math.random()*-50})}
   function rain(){ctx.fillStyle='rgba(1,4,3,.085)';ctx.fillRect(0,0,innerWidth,innerHeight);ctx.font='13px monospace';for(var i=0;i<drops.length;i++){var c=chars[(Math.random()*chars.length)|0],y=drops[i]*18;ctx.fillStyle=Math.random()>.96?'rgba(133,255,192,.95)':'rgba(0,255,136,.58)';ctx.fillText(c,i*18,y);if(y>innerHeight&&Math.random()>.975)drops[i]=0;drops[i]+=.55+Math.random()*.35}requestAnimationFrame(rain)}
   resize();addEventListener('resize',resize);rain();
+
+  var visualWS=null,visualRetry=null,visualPrices=[],visualPip=4;
+  function visualDigitFromQuote(v,pip){
+    var n=Number(v);if(!Number.isFinite(n))return null;
+    var s=n.toFixed(Number.isFinite(Number(pip))?Number(pip):4);
+    return Number(s[s.length-1]);
+  }
+  function drawVolChart(){
+    var cv=q('volChart');if(!cv)return;
+    var box=cv.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+    var w=Math.max(280,box.width),h=Math.max(180,box.height);
+    cv.width=Math.floor(w*dpr);cv.height=Math.floor(h*dpr);
+    var g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+    g.strokeStyle='rgba(53,231,255,.08)';g.lineWidth=1;
+    for(var gy=1;gy<5;gy++){var yy=h*gy/5;g.beginPath();g.moveTo(0,yy);g.lineTo(w,yy);g.stroke()}
+    for(var gx=1;gx<7;gx++){var xx=w*gx/7;g.beginPath();g.moveTo(xx,0);g.lineTo(xx,h);g.stroke()}
+    if(visualPrices.length<2)return;
+    var vals=visualPrices.map(function(x){return x.q}),min=Math.min.apply(null,vals),max=Math.max.apply(null,vals),span=Math.max(max-min,.00001),pad=18;
+    var pts=vals.map(function(v,i){return{x:pad+(w-pad*2)*(i/(vals.length-1)),y:pad+(h-pad*2)*(1-(v-min)/span)}});
+    var fill=g.createLinearGradient(0,0,0,h);fill.addColorStop(0,'rgba(53,231,255,.18)');fill.addColorStop(1,'rgba(0,255,136,0)');
+    g.beginPath();g.moveTo(pts[0].x,h-pad);pts.forEach(function(p){g.lineTo(p.x,p.y)});g.lineTo(pts[pts.length-1].x,h-pad);g.closePath();g.fillStyle=fill;g.fill();
+    g.beginPath();pts.forEach(function(p,i){if(i===0)g.moveTo(p.x,p.y);else g.lineTo(p.x,p.y)});g.strokeStyle='#35e7ff';g.lineWidth=1.8;g.shadowBlur=8;g.shadowColor='rgba(53,231,255,.55)';g.stroke();g.shadowBlur=0;
+    var last=pts[pts.length-1];g.beginPath();g.arc(last.x,last.y,3.2,0,Math.PI*2);g.fillStyle='#00ff88';g.shadowBlur=12;g.shadowColor='#00ff88';g.fill();g.shadowBlur=0;
+  }
+  function pushVisualQuote(quote,pip,epoch){
+    var n=Number(quote);if(!Number.isFinite(n))return;
+    visualPip=Number.isFinite(Number(pip))?Number(pip):visualPip;
+    visualPrices.push({q:n,e:Number(epoch)||Date.now()});
+    if(visualPrices.length>90)visualPrices.shift();
+    q('visualQuote').textContent=n.toFixed(visualPip);
+    var d=visualDigitFromQuote(n,visualPip);q('visualDigit').textContent=d===null?'—':'D'+d;
+    q('visualSamples').textContent=visualPrices.length;
+    q('analysisState').textContent='ANALIZANDO FLUJO R_75 · '+visualPrices.length+' TICKS';
+    q('visualStatus').textContent='IA ANALIZANDO';
+    drawVolChart();
+  }
+  function connectVisualFeed(){
+    clearTimeout(visualRetry);
+    try{if(visualWS)visualWS.close()}catch(_){}
+    q('analysisState').textContent='CONECTANDO STREAM R_75…';
+    q('visualFeedChip').textContent='CONNECTING';
+    visualWS=new WebSocket('wss://api.derivws.com/trading/v1/options/ws/public');
+    visualWS.onopen=function(){
+      q('visualFeedChip').textContent='LIVE R_75';
+      visualWS.send(JSON.stringify({ticks_history:'R_75',count:90,end:'latest',style:'ticks'}));
+    };
+    visualWS.onmessage=function(ev){
+      var m;try{m=JSON.parse(ev.data)}catch(_){return}
+      if(m.error){q('analysisState').textContent='STREAM ERROR · RECONECTANDO';return}
+      if(m.history&&Array.isArray(m.history.prices)){
+        visualPrices=[];
+        var times=Array.isArray(m.history.times)?m.history.times:[];
+        visualPip=Number(m.pip_size||4);
+        m.history.prices.forEach(function(v,i){var n=Number(v);if(Number.isFinite(n))visualPrices.push({q:n,e:Number(times[i]||0)})});
+        if(visualPrices.length>90)visualPrices=visualPrices.slice(-90);
+        if(visualPrices.length){
+          var last=visualPrices[visualPrices.length-1];pushVisualQuote(last.q,visualPip,last.e);
+          visualPrices.pop();
+          visualPrices.push(last);
+        }
+        drawVolChart();
+        visualWS.send(JSON.stringify({ticks:'R_75',subscribe:1}));
+      }else if(m.tick){
+        pushVisualQuote(m.tick.quote,m.tick.pip_size,m.tick.epoch);
+      }
+    };
+    visualWS.onerror=function(){q('visualFeedChip').textContent='RETRY';};
+    visualWS.onclose=function(){q('visualFeedChip').textContent='RECONNECT';q('analysisState').textContent='RECONECTANDO STREAM R_75…';visualRetry=setTimeout(connectVisualFeed,2500);};
+  }
+  addEventListener('resize',drawVolChart);
+  connectVisualFeed();
 
   function numberFrom(id){var t=(q(id).textContent||'').replace(/[^0-9+.-]/g,'');var n=Number(t);return Number.isFinite(n)?n:0}
   function clamp(n,a,b){return Math.max(a,Math.min(b,n))}
