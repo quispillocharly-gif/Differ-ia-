@@ -290,6 +290,20 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
       if(ownerPanel)ownerPanel.classList.add('ownerVisible');
     }
   }catch(_){};
+  var modeSelect=q('mode');
+  if(modeSelect){
+    modeSelect.addEventListener('change',function(){
+      var selected=String(modeSelect.value||'').toLowerCase();
+      var connected=String(window.currentAccountType||'').toLowerCase();
+      if(connected && connected!==selected){
+        var bal=q('accountBalance'),delta=q('balanceDelta'),start=q('balanceStart'),auth=q('authStatus');
+        if(bal)bal.textContent='—';
+        if(delta)delta.textContent='RECONECTA';
+        if(start)start.textContent='—';
+        if(auth)auth.textContent='CAMBIO A '+selected.toUpperCase()+' · PULSA CONECTAR';
+      }
+    });
+  }
   var historyToggle=q('historyToggle'),historyBody=q('historyBody');
   if(historyToggle&&historyBody){
     historyToggle.addEventListener('click',function(){
