@@ -46,6 +46,126 @@ button{position:relative;overflow:hidden;min-height:44px;border-radius:11px;bord
 .cloudGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.cloudMini{padding:10px;border:1px solid rgba(53,231,255,.12);border-radius:12px;background:rgba(53,231,255,.025)}.cloudMini small{display:block;color:#668f83;font-size:9px;text-transform:uppercase;letter-spacing:1px}.cloudMini b{display:block;margin-top:5px;color:var(--cyan);font-size:14px}.cloudOnline{color:var(--green)!important}
 .log{height:270px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#010503;border:1px solid rgba(0,255,136,.12);border-radius:13px;padding:12px;color:#a9f3c8;font-size:10px;line-height:1.55}.warning{border-color:rgba(255,208,90,.18);background:linear-gradient(180deg,rgba(255,208,90,.035),rgba(3,10,7,.94))}.warning .panel-title{color:#ffe18a}.muted{color:#789887;font-size:10px;line-height:1.45}.ownerOnly{display:none!important}.ownerOnly.ownerVisible{display:block!important}.footer{text-align:center;color:#486b56;font-size:9px;letter-spacing:1.8px;padding:10px 0 4px}
 @media(max-width:900px){.hero-grid{grid-template-columns:1fr}.analyzerGrid{grid-template-columns:1fr}.analyzerStats{grid-template-columns:repeat(4,1fr)}.controls{grid-template-columns:repeat(2,1fr)}.authCompactInner{grid-template-columns:auto 1fr}.authBrand{grid-column:1/-1}.authCompact label{grid-column:1/-1}.authCompact #auth{grid-column:1/2}.authPill{grid-column:2/3;justify-content:center}.authGrid{grid-template-columns:1fr}.cloudGrid{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.wrap{padding:10px}.analyzerStats{grid-template-columns:repeat(2,1fr)}#volChart{height:210px}.chartBox{min-height:210px}.topline{align-items:flex-start}.topline>span:first-child{display:none}.topRight{width:100%;justify-content:space-between}.walletBadge{top:max(7px,env(safe-area-inset-top));right:max(7px,env(safe-area-inset-right));width:156px;padding:5px 7px;border-radius:12px}.walletIcon{width:23px;height:23px;font-size:12px}.walletLabel{font-size:6px}.walletAmount{font-size:13px}.walletDelta{font-size:6.5px}.walletMode #mode{width:54px;min-width:54px;height:20px;min-height:20px;font-size:7px}#auth,#start,#stop,#manualBuy{font-size:10px;letter-spacing:.7px}#manualBuy{min-height:48px}.authCompact{padding:9px}.authCompactInner{gap:7px}.authBrand{min-width:0}.authOrb{width:34px;height:34px}.authBrandText span{display:none}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sessionLayout{grid-template-columns:1fr}.sessionInputs{grid-template-columns:repeat(3,1fr)}.sessionActions{grid-template-columns:1fr 1fr;align-items:center}.sessionActions button{height:50px;min-height:50px}.sessionField{padding:8px}.sessionField input{font-size:14px}.controls{grid-template-columns:1fr 1fr}.signalLayout{grid-template-columns:1fr}.signalAction #manualBuy{min-height:54px}.historyLabels{display:none}.historyRow{grid-template-columns:1fr 1fr 1fr;gap:6px}.historyRow .hTime{grid-column:1/2}.historyRow .hDigit{grid-column:2/3}.historyRow .hResult{grid-column:3/4;text-align:right}.historyRow .hProfit{grid-column:1/2}.historyRow .hMeta{grid-column:2/4;text-align:right}.progressGrid{grid-template-columns:1fr}.hero{padding:15px}.panel{padding:12px}}@media(max-width:390px){.sessionInputs{grid-template-columns:1fr}.sessionActions{grid-template-columns:1fr 1fr;align-items:center}.sessionActions button{height:48px;min-height:48px}.sessionField input{text-align:left}.sessionHint{display:none}}
+
+/* ===== NEXUS UI POLISH / RESPONSIVE LAYER ===== */
+html,body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+body{font-size:14px;line-height:1.35}
+.wrap{max-width:1160px;padding:clamp(10px,1.8vw,20px)}
+.hero{padding:clamp(16px,2.4vw,24px);margin-bottom:14px}
+.hero-grid{grid-template-columns:minmax(0,1.55fr) minmax(250px,.72fr);gap:clamp(12px,2vw,20px)}
+.eyebrow,.brandTag,.panel-title,.chip,.walletBadge,.corebox,.sessionField small,.signalLabel,.historySummary,.historyLabels,.progressLabel,.cloudMini small,.chartHud,.analyzerMetric small,.analyzerState,.statusStrip,.footer{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9px 0 6px}
+.brandTag{font-size:clamp(8px,1.1vw,10px);letter-spacing:1.7px}
+.corebox{padding:14px}
+.corebox .value{font-size:clamp(14px,1.8vw,18px)}
+.panel{padding:clamp(12px,1.8vw,18px);margin:12px 0;border-radius:17px}
+.panel-head{margin-bottom:11px;gap:10px}
+.panel-title{font-size:clamp(10px,1.2vw,12px);letter-spacing:1.45px}
+.chip{font-size:9px;padding:5px 8px;white-space:nowrap}
+.authCompact{padding:10px 12px}
+.authCompactInner{grid-template-columns:minmax(145px,.72fr) minmax(145px,1fr) minmax(145px,1fr) auto auto;gap:8px}
+.authCompact input{height:38px;min-height:38px}
+.authBrandText b{font-size:10px}.authBrandText span{font-size:8px}
+.sessionLayout{grid-template-columns:minmax(0,1fr) minmax(260px,.56fr);gap:12px}
+.sessionInputs{gap:9px}
+.sessionField{padding:10px;border-radius:14px}
+.sessionField input{height:42px;min-height:42px;font-size:16px}
+.sessionActions{gap:9px}
+.sessionActions button{height:54px;min-height:54px;border-radius:13px!important}
+.statusStrip{margin-top:11px;padding:9px 11px;font-size:10px;border-radius:10px}
+.decisionPanel{padding:clamp(13px,2vw,19px)}
+.signalLayout{grid-template-columns:minmax(0,1.6fr) minmax(220px,.58fr);gap:14px}
+.decision{min-height:82px;font-size:clamp(22px,4vw,36px);border-radius:15px}
+.reason{font-size:11px;line-height:1.45;padding:6px 8px}
+.signalAction #manualBuy{min-height:100%;padding:14px;font-size:clamp(10px,1.1vw,13px);line-height:1.25}
+.grid{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin:12px 0}
+.card{min-height:78px;padding:11px 12px;border-radius:14px}
+.card small{font-size:8px;letter-spacing:1px}
+.card b{font-size:clamp(17px,2.2vw,23px);margin-top:7px}
+.analyzerGrid{grid-template-columns:minmax(0,1.8fr) minmax(200px,.52fr);gap:10px}
+.chartBox,#volChart{height:225px;min-height:225px}
+.analyzerStats{gap:7px}.analyzerMetric{padding:10px}
+.historyHead{gap:12px}.historySummary{margin-top:3px}
+.historyRow{font-size:9px;padding:9px}
+.progressGrid{gap:9px}
+.cloudGrid{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
+.cloudMini{padding:9px 10px}
+.cloudMini b{font-size:13px}
+.log{height:220px;font-size:10px;line-height:1.5}
+.footer{padding:14px 0 6px}
+
+@media(max-width:900px){
+  .hero-grid{grid-template-columns:1fr}
+  .corebox{max-width:none}
+  .authCompactInner{grid-template-columns:1fr 1fr auto}
+  .authBrand{grid-column:1/-1}
+  .authCompact label{grid-column:auto}
+  .authCompact #auth{grid-column:auto}
+  .authPill{grid-column:auto;justify-content:center}
+  .sessionLayout{grid-template-columns:1fr}
+  .sessionActions{max-width:none}
+  .signalLayout{grid-template-columns:1fr}
+  .signalAction #manualBuy{min-height:52px}
+  .analyzerGrid{grid-template-columns:1fr}
+  .analyzerStats{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+
+@media(max-width:620px){
+  .wrap{padding:9px}
+  .topline{min-height:35px;margin-bottom:7px}
+  .hero{padding:14px;border-radius:17px}
+  h1{font-size:clamp(28px,10vw,40px);letter-spacing:-1.5px}
+  .brandSlash{margin:0 4px}
+  .brandTag{font-size:7.5px;letter-spacing:1.15px}
+  .corebox{padding:10px;border-radius:13px}
+  .core-mini{gap:6px;font-size:9px}
+  .panel{padding:11px;margin:9px 0;border-radius:15px}
+  .panel-head{align-items:flex-start;margin-bottom:9px}
+  .panel-title{font-size:10px;letter-spacing:1.15px;line-height:1.3}
+  .chip{font-size:8px;padding:4px 7px}
+  .authCompactInner{grid-template-columns:1fr 1fr;gap:7px}
+  .authBrand{grid-column:1/-1}
+  .authCompact label{grid-column:1/-1}
+  .authCompact #auth,.authPill{grid-column:auto}
+  .authCompact #auth{width:100%}
+  .authPill{min-height:38px}
+  .sessionInputs{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .sessionField{padding:7px 6px}
+  .sessionField small{display:block;margin-bottom:5px;text-align:center;font-size:7px;letter-spacing:.65px}
+  .sessionField small b{display:none}
+  .sessionField input{height:38px;min-height:38px;padding:6px 5px;font-size:14px}
+  .sessionHint{font-size:7.5px;margin-top:7px}
+  .sessionActions button{height:48px;min-height:48px;font-size:10px}
+  .statusStrip{font-size:8.5px;align-items:flex-start}
+  #status{text-align:right;max-width:68%}
+  .decision{min-height:72px;font-size:clamp(20px,7vw,29px);padding:12px 9px}
+  .reason{font-size:10px;min-height:unset}
+  .signalQuick{font-size:9px}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .card{min-height:70px;padding:9px 10px}
+  .card small{font-size:7.5px;line-height:1.2}
+  .card b{font-size:19px}
+  .analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .chartBox,#volChart{height:205px;min-height:205px}
+  .historyHead{align-items:flex-start;flex-direction:column}
+  #historyToggle{width:100%}
+  .historyRow{font-size:8.5px}
+  .progressLabel{font-size:8px}
+  .cloudGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cloudMini small{font-size:7.5px}
+  .cloudMini b{font-size:12px}
+  .log{height:170px}
+}
+
+@media(max-width:390px){
+  .sessionInputs{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .sessionField{padding:6px 4px}
+  .sessionField input{text-align:center;font-size:13px}
+  .sessionActions{grid-template-columns:1fr 1fr}
+  .sessionHint{display:flex}
+  .walletBadge{width:150px}
+}
+
 </style>
 </head>
 <body>
@@ -64,22 +184,6 @@ button{position:relative;overflow:hidden;min-height:44px;border-radius:11px;bord
       <label>PAT<input id="pat" placeholder="PAT" type="password" autocomplete="off"></label>
       <button id="auth" class="primary">CONECTAR</button>
       <div class="authPill"><span id="authStatus">NO CONECTADO</span></div>
-    </div>
-  </section>
-
-  <section class="panel analyzerPanel">
-    <div class="panel-head"><div class="panel-title">LIVE // VOLATILITY 75 ANALYZER</div><span class="chip" id="visualFeedChip">PUBLIC STREAM</span></div>
-    <div class="analyzerGrid">
-      <div class="chartBox">
-        <div class="chartHud"><span class="analysisPulse"></span><span id="analysisState">CONECTANDO STREAM R_75…</span></div>
-        <canvas id="volChart"></canvas>
-      </div>
-      <div class="analyzerStats">
-        <div class="analyzerMetric hot"><small>Precio R_75</small><b id="visualQuote">—</b></div>
-        <div class="analyzerMetric"><small>Último dígito</small><b id="visualDigit">—</b></div>
-        <div class="analyzerMetric warn"><small>Muestras visibles</small><b id="visualSamples">0</b></div>
-        <div class="analyzerState"><span class="analysisPulse"></span><span id="visualStatus">IA ANALIZANDO</span></div>
-      </div>
     </div>
   </section>
 
@@ -114,6 +218,22 @@ button{position:relative;overflow:hidden;min-height:44px;border-radius:11px;bord
       </div>
       <div class="signalAction">
         <button id="manualBuy" class="big">COMPRA MANUAL CON CANDIDATO IA</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel analyzerPanel">
+    <div class="panel-head"><div class="panel-title">LIVE // VOLATILITY 75 ANALYZER</div><span class="chip" id="visualFeedChip">PUBLIC STREAM</span></div>
+    <div class="analyzerGrid">
+      <div class="chartBox">
+        <div class="chartHud"><span class="analysisPulse"></span><span id="analysisState">CONECTANDO STREAM R_75…</span></div>
+        <canvas id="volChart"></canvas>
+      </div>
+      <div class="analyzerStats">
+        <div class="analyzerMetric hot"><small>Precio R_75</small><b id="visualQuote">—</b></div>
+        <div class="analyzerMetric"><small>Último dígito</small><b id="visualDigit">—</b></div>
+        <div class="analyzerMetric warn"><small>Muestras visibles</small><b id="visualSamples">0</b></div>
+        <div class="analyzerState"><span class="analysisPulse"></span><span id="visualStatus">IA ANALIZANDO</span></div>
       </div>
     </div>
   </section>
