@@ -330,14 +330,49 @@ function renderDecision(d){
   $('manualBuy').textContent='COMPRA MANUAL · D'+d.best.d+' · RIESGO '+fmtPct(d.best.risk);
 }
 
+function renderHistory(){
+  const list=$('historyList'),count=$('historyCount');
+  if(!list||!count)return;
+  const rows=Array.isArray(mem.recentTrades)?mem.recentTrades.slice().reverse():[];
+  count.textContent=rows.length;
+  if(!rows.length){
+    list.innerHTML='<div class="historyEmpty">Aún no hay operaciones guardadas en este navegador.</div>';
+    return;
+  }
+  const cash=String.fromCharCode(36);
+  list.innerHTML=rows.map(t=>{
+    const ts=safeNum(t.ts,0);
+    const time=ts?new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
+    const loss=!!t.loss;
+    const profit=safeNum(t.p,0);
+    const risk=fmtPct(safeNum(t.r,NaN));
+    const conf=fmtPct(safeNum(t.c,NaN));
+    const digit=Number.isInteger(Number(t.d))?'D'+Number(t.d):'—';
+    const rawMode=String(t.mode||'').toUpperCase();
+    const mode=rawMode==='REAL'?'REAL':rawMode==='DEMO'?'DEMO':'';
+    const stake=Number.isFinite(Number(t.stake))?' · '+cash+Number(t.stake).toFixed(2):'';
+    const origin=t.manual?'MANUAL':'IA';
+    return '<div class="historyRow">'
+      +'<span class="hTime">'+time+'</span>'
+      +'<span class="hDigit">'+digit+'</span>'
+      +'<span class="hResult '+(loss?'match':'win')+'">'+(loss?'MATCH':'WIN')+'</span>'
+      +'<span class="hProfit '+(profit>=0?'pos':'neg')+'">'+(profit>=0?'+':'')+cash+profit.toFixed(2)+'</span>'
+      +'<span class="hMeta">'+risk+'</span>'
+      +'<span class="hMeta">'+conf+(mode?' · '+mode:'')+stake+' · '+origin+'</span>'
+      +'</div>';
+  }).join('');
+}
+
 function renderSession(){
-  $('pnl').textContent=(session.pnl>=0?'+':'')+'$'+session.pnl.toFixed(2);
+  const cash=String.fromCharCode(36);
+  $('pnl').textContent=(session.pnl>=0?'+':'')+cash+session.pnl.toFixed(2);
   $('wins').textContent=session.wins;
   $('losses').textContent=session.losses;
   $('ops').textContent=session.ops;
   $('learnedTicks').textContent=mem.tickCount;
   $('learnedTrades').textContent=mem.tradeCount;
   $('horizon').textContent=horizonNow()+'T';
+  renderHistory();
 }
 
 function baseStake(){return Math.max(.01,safeNum($('baseStake').value,1))}
@@ -438,7 +473,7 @@ function settleTrade(profit){
   const elapsed=clamp(liveTickCounter-t.signalTick,1,3);
   mem.delayEWMA=.82*safeNum(mem.delayEWMA,1)+.18*elapsed;
   shareExperience(t,loss,elapsed);
-  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now()});
+  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now(),mode:t.mode,stake:t.stake,manual:!!t.manual});
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
   log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
