@@ -1,9 +1,28 @@
 (()=>{
   let socket=null,ready=false,currency='USD',accountId=null,accountType='demo',busy=false,pingInterval=null;
-  let proposalReq=1000,buyReq=2000;
+  let proposalReq=1000,buyReq=2000,balanceReq=4000;
+  let currentBalance=null,sessionStartBalance=null,balanceSubId=null;
   const $=x=>document.getElementById(x);
   const set=(s)=>{$('authStatus').textContent=s};
   const errMsg=(j,fallback)=>j?.errors?.[0]?.message||j?.error?.message||fallback;
+
+  function money(v){
+    return Number.isFinite(Number(v)) ? Number(v).toFixed(2) : '—';
+  }
+  function renderBalance(){
+    const bal=$('accountBalance'),start=$('balanceStart'),delta=$('balanceDelta');
+    if(bal)bal.textContent=Number.isFinite(currentBalance)?currency+' '+money(currentBalance):'—';
+    if(start)start.textContent=Number.isFinite(sessionStartBalance)?currency+' '+money(sessionStartBalance):'—';
+    if(delta){
+      const x=Number.isFinite(currentBalance)&&Number.isFinite(sessionStartBalance)?currentBalance-sessionStartBalance:null;
+      delta.textContent=Number.isFinite(x)?(x>=0?'+':'')+currency+' '+money(x):'—';
+      delta.style.color=!Number.isFinite(x)?'':(x>0?'#00ff88':x<0?'#ff7792':'#35e7ff');
+    }
+  }
+  function resetBalanceBaseline(){
+    if(Number.isFinite(currentBalance))sessionStartBalance=currentBalance;
+    renderBalance();
+  }
 
   async function api(path,opts={}){
     const pat=$('pat').value.trim(),app=$('app').value.trim();
@@ -59,6 +78,9 @@
         set(`${accountType.toUpperCase()} CONECTADO · ${accountId}`);
         busy=false;
         startKeepAlive();
+        try{
+          socket.send(JSON.stringify({balance:1,subscribe:1,req_id:++balanceReq}));
+        }catch(_){}
       };
       socket.onerror=()=>{
         ready=false;
@@ -70,6 +92,7 @@
         ready=false;
         window.demoReady=false;
         clearInterval(pingInterval);
+        balanceSubId=null;
         if($('authStatus').textContent.includes('CONECTADO'))set('DERIV DESCONECTADO');
       };
       socket.onmessage=onMessage;
@@ -84,6 +107,10 @@
   function onMessage(ev){
     let m;try{m=JSON.parse(ev.data)}catch(_){return}
     if(m.error){
+      if(m.echo_req?.balance===1){
+        const bal=$('accountBalance');if(bal)bal.textContent='NO DISPONIBLE';
+        return;
+      }
       if(pendingProposal){
         let rej=pendingProposal.reject;
         pendingProposal=null;
@@ -92,6 +119,16 @@
         window.demoTradeError?.(new Error(m.error.message||'Error Deriv'));
       }
       return;
+    }
+    if(m.msg_type==='balance'&&m.balance){
+      const b=Number(m.balance.balance);
+      if(Number.isFinite(b)){
+        currentBalance=b;
+        if(m.balance.currency)currency=m.balance.currency;
+        if(sessionStartBalance===null)sessionStartBalance=b;
+        if(m.subscription?.id)balanceSubId=m.subscription.id;
+        renderBalance();
+      }
     }
     if(m.msg_type==='proposal'&&pendingProposal){
       const p=pendingProposal;pendingProposal=null;
@@ -148,5 +185,8 @@
   });
 
   $('auth').onclick=connectDeriv;
+  $('start')?.addEventListener('click',resetBalanceBaseline);
+  window.demoBalanceReset=resetBalanceBaseline;
   window.demoReady=false;
+  renderBalance();
 })();
