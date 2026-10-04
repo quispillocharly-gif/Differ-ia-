@@ -166,10 +166,16 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
   .walletBadge{width:150px}
 }
 
+
+/* ===== TRADE EXECUTION EFFECT ===== */
+.tradeFx{position:fixed;inset:0;z-index:10050;display:grid;place-items:center;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .18s ease,visibility .18s ease;background:radial-gradient(circle at center,rgba(0,255,136,.055),transparent 38%)}
+.tradeFx.show{opacity:1;visibility:visible}.tradeFxCard{position:relative;width:min(86vw,340px);padding:18px 18px 16px;border:1px solid rgba(53,231,255,.36);border-radius:22px;background:linear-gradient(180deg,rgba(3,15,12,.97),rgba(1,7,5,.985));box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 38px rgba(53,231,255,.12);overflow:hidden;transform:scale(.88) translateY(10px);opacity:0}.tradeFx.show .tradeFxCard{animation:tradeFxIn .34s cubic-bezier(.2,.85,.25,1) forwards}.tradeFxCard:before{content:"";position:absolute;left:-20%;top:-80%;width:140%;height:70%;background:linear-gradient(90deg,transparent,rgba(53,231,255,.12),transparent);transform:rotate(-8deg);animation:tradeFxSweep 1.15s ease-in-out infinite}.tradeFxTop{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;z-index:2}.tradeFxMode{font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1.2px;color:#6f9786}.tradeFxState{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;border:1px solid rgba(53,231,255,.24);font:900 8px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;color:var(--cyan);background:rgba(53,231,255,.05)}.tradeFxDot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:tradeFxPulse .62s ease-in-out infinite alternate}.tradeFxDigit{position:relative;z-index:2;margin:12px 0 4px;text-align:center;font:950 clamp(28px,10vw,46px)/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-1.5px;color:#dffff0;text-shadow:0 0 20px rgba(0,255,136,.18)}.tradeFxDigit b{color:var(--green);text-shadow:0 0 24px rgba(0,255,136,.38)}.tradeFxMeta{position:relative;z-index:2;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;color:#86ad99;font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace}.tradeFxMeta span{padding:5px 7px;border-radius:8px;border:1px solid rgba(0,255,136,.11);background:rgba(0,255,136,.025)}.tradeFxBar{position:relative;z-index:2;height:4px;margin-top:14px;border-radius:999px;background:rgba(255,255,255,.05);overflow:hidden}.tradeFxBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green));box-shadow:0 0 12px rgba(0,255,136,.4)}.tradeFx.show.buying .tradeFxBar i{animation:tradeFxProgress .95s ease-out forwards}.tradeFx.result.win .tradeFxCard{border-color:rgba(0,255,136,.45);box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 42px rgba(0,255,136,.16)}.tradeFx.result.win .tradeFxState,.tradeFx.result.win .tradeFxDigit b{color:var(--green)}.tradeFx.result.win .tradeFxDot{background:var(--green);box-shadow:0 0 14px var(--green)}.tradeFx.result.match .tradeFxCard{border-color:rgba(255,66,104,.48);box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 42px rgba(255,66,104,.13)}.tradeFx.result.match .tradeFxState,.tradeFx.result.match .tradeFxDigit b{color:#ff7792}.tradeFx.result.match .tradeFxDot{background:#ff4268;box-shadow:0 0 14px #ff4268}.tradeFx.result .tradeFxBar i{width:100%;animation:none}@keyframes tradeFxIn{to{transform:scale(1) translateY(0);opacity:1}}@keyframes tradeFxSweep{0%{transform:translateX(-55%) rotate(-8deg)}100%{transform:translateX(55%) rotate(-8deg)}}@keyframes tradeFxPulse{to{transform:scale(.72);opacity:.45}}@keyframes tradeFxProgress{0%{width:4%}100%{width:100%}}@media(max-width:620px){.tradeFxCard{width:min(88vw,310px);padding:15px;border-radius:18px}.tradeFxDigit{font-size:34px}.tradeFxMeta{font-size:8px}}
+
 </style>
 </head>
 <body>
 <canvas id="matrixRain"></canvas><div class="scanlines"></div><div class="vignette"></div>
+<div id="tradeFx" class="tradeFx" aria-hidden="true"><div class="tradeFxCard"><div class="tradeFxTop"><span class="tradeFxMode" id="tradeFxMode">AUTO · DEMO</span><span class="tradeFxState"><i class="tradeFxDot"></i><span id="tradeFxState">EJECUTANDO</span></span></div><div class="tradeFxDigit" id="tradeFxDigit">DIFFER <b>D—</b></div><div class="tradeFxMeta"><span id="tradeFxStake">USD 0.00</span><span id="tradeFxInfo">1 TICK</span></div><div class="tradeFxBar"><i></i></div></div></div>
 <div class="wrap">
   <div class="topline"><span>NEXUS://DIFFER-AI</span><div class="topRight"><span class="online">● CLOUD ACTIVE</span><div class="walletBadge" aria-label="Saldo y tipo de cuenta"><div class="walletIcon">◈</div><div class="walletText"><div class="walletTop"><span class="walletLabel">SALDO</span><div class="walletMode"><select id="mode" aria-label="Seleccionar cuenta"><option value="DEMO">DEMO</option><option value="REAL">REAL</option></select></div></div><div class="walletBalanceRow"><b class="walletAmount" id="accountBalance">—</b><span class="walletDelta" id="balanceDelta">—</span></div></div></div></div></div>
   <section class="hero"><div class="hero-grid">
@@ -284,6 +290,31 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
 <script>
 (function(){
   var q=function(id){return document.getElementById(id)};
+  var tradeFxTimer=null;
+  window.nexusTradeEffect=function(type,data){
+    var fx=q('tradeFx'),cash=String.fromCharCode(36);if(!fx)return;
+    data=data||{};
+    clearTimeout(tradeFxTimer);
+    fx.className='tradeFx show '+(type==='result'?'result '+(data.loss?'match':'win'):'buying');
+    q('tradeFxMode').textContent=(data.manual?'MANUAL':'AUTO')+' · '+String(data.mode||'DEMO').toUpperCase();
+    q('tradeFxDigit').innerHTML='DIFFER <b>D'+(Number.isInteger(Number(data.digit))?Number(data.digit):'—')+'</b>';
+    q('tradeFxStake').textContent=cash+Number(data.stake||0).toFixed(2);
+    if(type==='result'){
+      var p=Number(data.profit||0);
+      q('tradeFxState').textContent=data.loss?'MATCH':'WIN';
+      q('tradeFxInfo').textContent=(p>=0?'+':'')+cash+p.toFixed(2);
+      tradeFxTimer=setTimeout(function(){fx.className='tradeFx';},1150);
+    }else if(type==='error'){
+      fx.className='tradeFx show result match';
+      q('tradeFxState').textContent='ERROR';
+      q('tradeFxInfo').textContent='ORDEN NO EJECUTADA';
+      tradeFxTimer=setTimeout(function(){fx.className='tradeFx';},1100);
+    }else{
+      q('tradeFxState').textContent='EJECUTANDO';
+      q('tradeFxInfo').textContent='1 TICK';
+      tradeFxTimer=setTimeout(function(){if(fx.classList.contains('buying'))fx.className='tradeFx';},1500);
+    }
+  };
   try{
     if(new URLSearchParams(location.search).get('admin')==='1'){
       var ownerPanel=q('ownerMemoryPanel');
