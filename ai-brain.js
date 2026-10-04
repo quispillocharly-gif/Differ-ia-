@@ -10,13 +10,15 @@ const UNIFORM=.10;
 const MAX_HIST=1200;
 const LOG_MAX=180;
 const CLOUD_URL='https://differ-ia-cloud-production.up.railway.app';
-const EXPERTS=['global','recent','ctx1','ctx2','ctx3','collab','cloud'];
+const EXPERTS=['global','recent','ctx1','ctx2','ctx3','motion','collab','cloud'];
 const BASELINE_LOGLOSS=Math.log(10);
 const BASELINE_BRIER=.09;
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
 let epochs=[];
+let priceHist=[];             // precios reales R_75 alineados con hist
+let motionHist=[];            // estado de movimiento conocido en cada tick
 let liveTickCounter=0;
 let autoRunning=false;
 let pendingTrade=null;
@@ -52,6 +54,7 @@ function freshMemory(){
     tradeCount:0,
     lastMarketEpoch:0,
     models,
+    motionModels:{1:{},2:{},3:{}},
     globalP:blankP(),
     globalN:0,
     modelLoss:{},
@@ -80,6 +83,8 @@ function normalizeMemory(x){
     m.models[h]=m.models[h]||{};
     ORDERS.forEach(o=>m.models[h][o]=m.models[h][o]||{});
   });
+  m.motionModels=m.motionModels&&typeof m.motionModels==='object'?m.motionModels:base.motionModels;
+  HORIZONS.forEach(h=>{m.motionModels[h]=m.motionModels[h]&&typeof m.motionModels[h]==='object'?m.motionModels[h]:{}});
   m.globalP=Array.isArray(m.globalP)&&m.globalP.length===10?m.globalP:blankP();
   m.recentTrades=Array.isArray(m.recentTrades)?m.recentTrades.slice(-60):[];
   m.recentPicks=Array.isArray(m.recentPicks)?m.recentPicks.slice(-30):[];
@@ -224,6 +229,91 @@ function updateProb(p,target,alpha){
   for(let d=0;d<10;d++)p[d]/=sum;
 }
 
+function avg(xs){return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:0}
+function std(xs){
+  if(xs.length<2)return 0;
+  const m=avg(xs);
+  return Math.sqrt(avg(xs.map(x=>(x-m)*(x-m))));
+}
+function motionSnapshot(prices=priceHist){
+  if(!Array.isArray(prices)||prices.length<8)return null;
+  const p=prices.slice(-24).map(Number).filter(Number.isFinite);
+  if(p.length<8)return null;
+  const diffs=[];
+  for(let i=1;i<p.length;i++)diffs.push(p[i]-p[i-1]);
+  const scale=Math.max(1e-8,avg(diffs.slice(-12).map(Math.abs)));
+  const slope=(n)=>{
+    if(p.length<=n)return 0;
+    return (p[p.length-1]-p[p.length-1-n])/(n*scale);
+  };
+  const s3=slope(3),s6=slope(6),s10=slope(Math.min(10,p.length-1));
+  const velocity=.55*s3+.30*s6+.15*s10;
+  const acceleration=s3-s6;
+  const absV=Math.abs(velocity);
+  const direction=velocity>.22?'UP':velocity<-.22?'DOWN':'FLAT';
+  const strength=absV>.95?'STRONG':absV>.42?'MED':'WEAK';
+  const accel=acceleration>.35?'ACCEL':acceleration<-.35?'DECEL':'STEADY';
+  const recentDiffs=diffs.slice(-12);
+  const volRatio=std(recentDiffs)/scale;
+  const volatility=volRatio>1.25?'HIGH':volRatio<.72?'LOW':'MID';
+  const signs=recentDiffs.slice(-5).map(x=>x>0?1:x<0?-1:0);
+  const prior=signs.slice(0,-1).filter(Boolean);
+  const last=signs[signs.length-1]||0;
+  const majority=prior.length?Math.sign(prior.reduce((a,b)=>a+b,0)):0;
+  const turn=last&&majority&&last!==majority?'TURN':'FLOW';
+  return {
+    direction,strength,accel,volatility,turn,
+    velocity,acceleration,volRatio,
+    key:[direction,strength,accel,volatility,turn].join('|')
+  };
+}
+function ensureMotionNode(h,key){
+  const bucket=mem.motionModels[h];
+  if(!bucket[key])bucket[key]={p:blankP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function learnMotion(targetDigit,sourceHist){
+  for(const h of HORIZONS){
+    const signalIndex=sourceHist.length-h;
+    if(signalIndex<0)continue;
+    const snap=motionHist[signalIndex];
+    if(!snap?.key)continue;
+    const lastDigit=sourceHist[signalIndex];
+    const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
+    keys.forEach((key,idx)=>{
+      const node=ensureMotionNode(h,key);
+      const alpha=(idx===0?.030:.040)*(mem.drift?.active?1.20:1);
+      updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/900)),.012,.055));
+      node.n++;
+      node.last=mem.tickCount;
+    });
+  }
+}
+function motionDistribution(h){
+  const snap=motionSnapshot();
+  if(!snap?.key||!hist.length)return null;
+  const lastDigit=hist[hist.length-1];
+  const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
+  const num=Array(10).fill(0),den=Array(10).fill(0);
+  let evidence=0,totalN=0;
+  keys.forEach((key,idx)=>{
+    const node=mem.motionModels[h]?.[key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/(idx===0?45:28));
+    const w=(idx===0?.75:1.10)*support;
+    if(w<=.01)return;
+    for(let d=0;d<10;d++){num[d]+=safeNum(node.p[d],UNIFORM)*w;den[d]+=w}
+    evidence+=support;totalN+=safeNum(node.n,0);
+  });
+  if(totalN<1)return null;
+  return {
+    p:normalizeDist(num.map((x,d)=>x/(den[d]||1))),
+    support:clamp(evidence/keys.length,0,1),
+    n:totalN,
+    state:snap
+  };
+}
+
 // Aprende P(dígito futuro | contexto actual) para horizontes 1, 2 y 3 ticks.
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
@@ -247,6 +337,7 @@ function learnDigit(targetDigit,sourceHist){
       node.last=mem.tickCount;
     }
   }
+  learnMotion(targetDigit,sourceHist);
   mem.tickCount++;
 }
 
@@ -260,6 +351,15 @@ function pruneModels(aggressive=false){
     keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
     keys.slice(limit).forEach(k=>delete bucket[k]);
   }));
+  HORIZONS.forEach(h=>{
+    const bucket=mem.motionModels[h]||{};
+    const keys=Object.keys(bucket);
+    const limit=aggressive?950:1900;
+    if(keys.length>limit){
+      keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
+      keys.slice(limit).forEach(k=>delete bucket[k]);
+    }
+  });
 }
 
 function horizonNow(){return clamp(Math.round(safeNum(mem.delayEWMA,1)),1,3)}
@@ -436,6 +536,16 @@ function predict(){
   }
   modelViews.push({name:'recent',p:rp,w:rw,n:recent.length});
 
+  // Movimiento real del precio: dirección, fuerza, aceleración, giro y volatilidad.
+  const motion=motionDistribution(h);
+  if(motion){
+    const mw=.46*motion.support*expertWeight('motion');
+    if(mw>.01){
+      for(let d=0;d<10;d++){dist[d]+=motion.p[d]*mw;denom[d]+=mw}
+      modelViews.push({name:'motion',p:motion.p.slice(),w:mw,n:motion.n,state:motion.state});
+    }
+  }
+
   // Ensemble cloud 24/7: solo participa si predijo exactamente el mismo tick.
   const cp=cloudLive.prediction;
   if(cp && Number(cp.signalEpoch)===Number(lastEpoch) && Date.now()-safeNum(cp.generatedAt,0)<3500){
@@ -501,7 +611,8 @@ function predict(){
 
   const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
   const contextCoverage=clamp(contextNodes.length/3,0,1);
-  const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
+  const motionSupport=motion?.support||0;
+  const oodScore=clamp((1-support)*.42+(1-contextCoverage)*.16+(1-motionSupport)*.08+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
   const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0)+oodScore*.0022+recoveryRatio*.0025;
   const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18+uncertaintyPenalty;
@@ -532,7 +643,7 @@ function predict(){
     reason=`ESPERA IA: riesgo ${fmtPct(best.risk)} por encima del límite adaptativo ${fmtPct(riskCeiling)}.`;
   }
 
-  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,expertViews:views};
+  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,motion:motion?.state||null,motionSupport,expertViews:views};
 }
 
 function renderDecision(d){
@@ -552,6 +663,10 @@ function renderDecision(d){
   $('health').textContent=fmtPct(d.health);
   if($('quality'))$('quality').textContent=fmtPct(d.qualityScore);
   if($('contextState'))$('contextState').textContent=d.oodScore>.74?'NUEVO':d.oodScore>.52?'MIXTO':'CONOCIDO';
+  if($('motionState')){
+    const m=d.motion;
+    $('motionState').textContent=!m?'APRENDIENDO':(m.direction==='UP'?'↑':m.direction==='DOWN'?'↓':'↔')+' '+m.strength;
+  }
   $('meter').style.width=(d.confidence*100).toFixed(0)+'%';
   if(d.action==='BUY'){
     $('decision').textContent='COMPRAR DIFFER D'+d.best.d;
@@ -755,14 +870,17 @@ function settleTrade(profit){
   }
 }
 
-function processDigit(d,epoch,isLive){
+function processDigit(d,epoch,isLive,quote){
   if(!Number.isInteger(d)||d<0||d>9)return;
   if(epoch&&epoch<=safeNum(mem.lastMarketEpoch,0) && !isLive)return;
 
   if(isLive)resolvePredictionQueue(d,liveTickCounter+1);
   learnDigit(d,hist);
   hist.push(d);epochs.push(epoch||0);
-  if(hist.length>MAX_HIST){hist.shift();epochs.shift()}
+  const q=Number(quote);
+  priceHist.push(Number.isFinite(q)?q:(priceHist.length?priceHist[priceHist.length-1]:0));
+  motionHist.push(motionSnapshot(priceHist));
+  if(hist.length>MAX_HIST){hist.shift();epochs.shift();priceHist.shift();motionHist.shift()}
   if(epoch)mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),epoch);
   if(isLive){
     liveTickCounter++;
@@ -814,6 +932,7 @@ async function syncFromCloud(){
       mem.globalP=cloud.globalP;
       mem.globalN=cloud.globalN;
       mem.modelLoss=cloud.modelLoss;
+      if(data.memory.motionModels)mem.motionModels=cloud.motionModels;
       if(data.memory.expertPerf)mem.expertPerf=cloud.expertPerf;
       if(data.memory.prequential)mem.prequential=cloud.prequential;
       if(data.memory.drift)mem.drift=cloud.drift;
@@ -824,6 +943,16 @@ async function syncFromCloud(){
       if(Array.isArray(data.recentDigits)&&data.recentDigits.length){
         hist=data.recentDigits.slice(-MAX_HIST).map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9);
         epochs=[];
+        if(Array.isArray(data.recentPrices)&&data.recentPrices.length){
+          priceHist=data.recentPrices.slice(-hist.length).map(Number).filter(Number.isFinite);
+          motionHist=[];
+          const build=[];
+          priceHist.forEach(v=>{build.push(v);motionHist.push(motionSnapshot(build))});
+          if(motionHist.length<hist.length){
+            const miss=hist.length-motionHist.length;
+            motionHist=Array(miss).fill(null).concat(motionHist);
+          }
+        }
       }
       if(Number.isFinite(Number(data.lastEpoch))){
         mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),Number(data.lastEpoch));
@@ -861,7 +990,7 @@ function connectMarket(){
         const ep=Number(times[i]||0);
         if(ep && ep<=safeNum(mem.lastMarketEpoch,0))continue;
         const d=digitFromQuote(prices[i],pip);
-        if(d!==null){processDigit(d,ep,false);added++}
+        if(d!==null){processDigit(d,ep,false,prices[i]);added++}
       }
       pruneModels(false);
       saveMemory(true);
@@ -875,7 +1004,7 @@ function connectMarket(){
       if(ep && ep===lastEpoch)return;
       lastEpoch=ep;
       const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
-      if(d!==null)processDigit(d,ep,true);
+      if(d!==null)processDigit(d,ep,true,m.tick.quote);
     }
   };
   marketWS.onerror=()=>log('MERCADO · error WebSocket público');
@@ -912,7 +1041,7 @@ $('resetMemory').onclick=()=>{
   const ok=confirm('¿Borrar toda la memoria aprendida por esta IA?');
   if(!ok)return;
   localStorage.removeItem(KEY);
-  mem=freshMemory();hist=[];epochs=[];predictionQueue=[];lastDecision=null;
+  mem=freshMemory();hist=[];epochs=[];priceHist=[];motionHist=[];predictionQueue=[];lastDecision=null;
   renderSession();renderDecision(null);
   log('MEMORIA IA BORRADA · comienza aprendizaje nuevo');
 };
