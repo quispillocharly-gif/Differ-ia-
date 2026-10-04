@@ -68,6 +68,7 @@ function freshMemory(){
     recentPicks:[],
     digitStats:Array.from({length:10},()=>({w:0,l:0})),
     digitCalibration:Array.from({length:10},()=>({n:0,matches:0,predictedSum:0})),
+    rankStats:Array.from({length:10},()=>({n:0,matches:0})),
     errorContexts:[],
     streakStats:{
       '0-2':{n:0,matches:0},
@@ -131,6 +132,10 @@ function normalizeMemory(x){
       matches:Math.max(0,Math.floor(safeNum(x?.matches,0))),
       predictedSum:Math.max(0,safeNum(x?.predictedSum,0))
     };
+  });
+  m.rankStats=Array.from({length:10},(_,i)=>{
+    const x=Array.isArray(m.rankStats)?m.rankStats[i]:null;
+    return {n:Math.max(0,Math.floor(safeNum(x?.n,0))),matches:Math.max(0,Math.floor(safeNum(x?.matches,0)))};
   });
   m.errorContexts=Array.isArray(m.errorContexts)?m.errorContexts.slice(-100).map(x=>({
     ctx:String(x?.ctx||'').slice(-3),
@@ -495,24 +500,47 @@ function contextErrorPenalty(d){
   }
   return clamp(score*.0014,0,.007);
 }
+function rankRiskAdjustment(rank){
+  const st=mem.rankStats?.[rank];
+  if(!st||safeNum(st.n,0)<35)return 0;
+  const observed=(safeNum(st.matches,0)+22*UNIFORM)/(safeNum(st.n,0)+22);
+  const evidence=clamp(1-Math.exp(-safeNum(st.n,0)/90),0,1);
+  const delta=clamp(observed-UNIFORM,-.035,.055);
+  return clamp(delta*evidence*.34,-.006,.012);
+}
 function recordPredictionOutcome(item,target){
-  if(!Number.isInteger(item?.digit)||item.digit<0||item.digit>9)return;
-  const st=mem.digitCalibration[item.digit];
-  st.n++;
-  if(target===item.digit)st.matches++;
-  st.predictedSum+=clamp(safeNum(item.risk,UNIFORM),0,.5);
-  if(target===item.digit){
+  const probs=normalizeDist(Array.isArray(item?.p)?item.p:blankP());
+
+  // Aprendizaje contrafactual completo: en cada tick sabemos el resultado de los 10 DIGITDIFF.
+  for(let d=0;d<10;d++){
+    const st=mem.digitCalibration[d];
+    st.n++;
+    if(target===d)st.matches++;
+    st.predictedSum+=clamp(safeNum(probs[d],UNIFORM),0,.5);
+  }
+
+  // Aprende si el puesto #1, #2, #3... del ranking bruto realmente evita MATCH.
+  if(Array.isArray(item?.ranking)&&item.ranking.length===10){
+    item.ranking.forEach((digit,rank)=>{
+      if(!Number.isInteger(digit)||digit<0||digit>9)return;
+      const st=mem.rankStats[rank]||(mem.rankStats[rank]={n:0,matches:0});
+      st.n++;
+      if(target===digit)st.matches++;
+    });
+  }
+
+  // El dígito que realmente salió se guarda como contexto peligroso aunque no hubiera sido elegido.
+  if(Number.isInteger(target)&&target>=0&&target<=9){
     mem.errorContexts.push({
-      ctx:String(item.context||''),
-      digit:item.digit,
+      ctx:String(item?.context||''),
+      digit:target,
       ts:Date.now(),
-      risk:clamp(safeNum(item.risk,UNIFORM),0,.5),
-      confidence:clamp(safeNum(item.confidence,0),0,1)
+      risk:clamp(safeNum(probs[target],UNIFORM),0,.5),
+      confidence:clamp(safeNum(item?.confidence,0),0,1)
     });
     if(mem.errorContexts.length>100)mem.errorContexts.shift();
   }
 }
-
 function resolvePredictionQueue(target,counter){
   if(!predictionQueue.length)return;
   const due=[],keep=[];
@@ -540,6 +568,7 @@ function schedulePrediction(decision,counter){
     risk:decision.best?.risk,
     confidence:decision.confidence,
     context:contextSignature(),
+    ranking:Array.isArray(decision.counterfactualRanking)?decision.counterfactualRanking.slice(0,10):[],
     experts:(()=>{
       const xs=(decision.expertViews||[]).map(v=>({name:v.name,p:Array.isArray(v.p)?v.p.slice():blankP()}));
       if(decision.motionEval && !xs.some(v=>v.name==='motion')){
@@ -558,14 +587,12 @@ function predict(){
   const denom=Array(10).fill(0);
   const modelViews=[];
 
-  // Base adaptativa global, ponderada por rendimiento prequential.
+  // Base global.
   const gw=.45*expertWeight('global');
-  for(let d=0;d<10;d++){
-    dist[d]+=mem.globalP[d]*gw;
-    denom[d]+=gw;
-  }
+  for(let d=0;d<10;d++){dist[d]+=mem.globalP[d]*gw;denom[d]+=gw}
   modelViews.push({name:'global',p:mem.globalP.slice(),w:gw,n:mem.globalN});
 
+  // Contextos de dígitos 1/2/3.
   for(const o of ORDERS){
     const key=contextKey(hist,hist.length-1,o);
     if(key===null)continue;
@@ -576,25 +603,19 @@ function predict(){
     const support=1-Math.exp(-node.n/(o===1?24:o===2?15:9));
     const w=reliability*support*(o===1?.8:o===2?1.05:1.20)*expertWeight('ctx'+o);
     if(w<=.01)continue;
-    for(let d=0;d<10;d++){
-      dist[d]+=node.p[d]*w;
-      denom[d]+=w;
-    }
+    for(let d=0;d<10;d++){dist[d]+=node.p[d]*w;denom[d]+=w}
     modelViews.push({name:'ctx'+o,p:node.p.slice(),w,n:node.n});
   }
 
-  // Frecuencia muy reciente: no manda, solo ayuda a detectar cambios rápidos.
+  // Frecuencia reciente.
   const recent=hist.slice(-50),counts=Array(10).fill(1.2);
   recent.forEach(d=>counts[d]++);
   const total=counts.reduce((a,b)=>a+b,0);
   const rp=counts.map(x=>x/total),rw=.28*expertWeight('recent');
-  for(let d=0;d<10;d++){
-    dist[d]+=rp[d]*rw;
-    denom[d]+=rw;
-  }
+  for(let d=0;d<10;d++){dist[d]+=rp[d]*rw;denom[d]+=rw}
   modelViews.push({name:'recent',p:rp,w:rw,n:recent.length});
 
-  // Movimiento real del precio: aprende siempre, pero no condiciona compras hasta demostrar utilidad.
+  // Movimiento: aprende siempre, solo influye cuando ya demostró utilidad.
   const motion=motionDistribution(h);
   const motionPerf=mem.expertPerf?.motion||{samples:0,skillEWMA:0,weight:1};
   const motionMature=!!motion &&
@@ -610,16 +631,13 @@ function predict(){
     }
   }
 
-  // Ensemble cloud 24/7: solo participa si predijo exactamente el mismo tick.
+  // Cloud freshness-matched.
   const cp=cloudLive.prediction;
   if(cp && Number(cp.signalEpoch)===Number(lastEpoch) && Date.now()-safeNum(cp.generatedAt,0)<3500){
     const cpp=normalizeDist(cp.probabilities);
     const freshness=clamp(1-(Date.now()-cp.generatedAt)/3500,.20,1);
     const cw=.34*(.25+.75*cp.confidence)*freshness*expertWeight('cloud')*(cp.driftActive?.78:1);
-    for(let d=0;d<10;d++){
-      dist[d]+=cpp[d]*cw;
-      denom[d]+=cw;
-    }
+    for(let d=0;d<10;d++){dist[d]+=cpp[d]*cw;denom[d]+=cw}
     modelViews.push({name:'cloud',p:cpp,w:cw,n:safeNum(mem.prequential.samples,0)});
   }
 
@@ -627,7 +645,7 @@ function predict(){
   let sum=p.reduce((a,b)=>a+b,0)||1;
   for(let d=0;d<10;d++)p[d]/=sum;
 
-  // Experiencias compartidas: aportan como un experto adicional, nunca dominan por sí solas.
+  // Experiencias compartidas.
   const shared=sharedDistribution();
   if(shared&&shared.support>0){
     const w=clamp(.24*shared.support*expertWeight('collab'),0,.34);
@@ -637,31 +655,10 @@ function predict(){
     modelViews.push({name:'collab',p:shared.p.slice(),w,n:sharedModel.accepted});
   }
 
-  // Penalización suave por fijación: no bloquea ningún dígito.
-  const recentPicks=mem.recentPicks.slice(-12);
-  const exposure=Array(10).fill(0);recentPicks.forEach(d=>exposure[d]++);
-  const maxExp=Math.max(1,...exposure);
-  const scored=p.map((rawRisk,d)=>{
-    const fixation=exposure[d]/maxExp;
-    const risk=digitCalibratedRisk(d,rawRisk);
-    const errorPenalty=contextErrorPenalty(d);
-    const adjusted=risk + fixation*.0025 + errorPenalty;
-    return {d,risk,rawRisk,adjusted,errorPenalty};
-  }).sort((a,b)=>a.adjusted-b.adjusted||a.risk-b.risk);
-
-  const best=scored[0],second=scored[1];
   const views=modelViews.filter(v=>Array.isArray(v.p)&&v.p.length===10);
   const wsum=views.reduce((s,v)=>s+Math.max(.01,safeNum(v.w,1)),0)||1;
-  const mean=views.reduce((s,v)=>s+safeNum(v.p[best.d],best.risk)*Math.max(.01,safeNum(v.w,1)),0)/wsum;
-  const variance=views.reduce((s,v)=>{
-    const w=Math.max(.01,safeNum(v.w,1)),x=safeNum(v.p[best.d],best.risk);
-    return s+w*(x-mean)*(x-mean);
-  },0)/wsum;
-  const disagreement=Math.sqrt(Math.max(0,variance));
-
   const contextNodes=modelViews.filter(v=>v.name.startsWith('ctx'));
   const support=contextNodes.length?contextNodes.reduce((s,v)=>s+Math.min(1,v.n/30),0)/contextNodes.length:0;
-  const stability=Math.exp(-disagreement*18);
   const calibrationTrust=clamp(1-Math.max(0,mem.calibrationEWMA)*4.5,.25,1);
   const entropy=-p.reduce((s,x)=>s+(x>0?x*Math.log(x):0),0)/Math.log(10);
   const sharpness=clamp((1-entropy)/.075,0,1);
@@ -670,49 +667,128 @@ function predict(){
   const preqSkill=clamp((BASELINE_BRIER-brier)/.018,-1,1);
   const skillTrust=preqSamples<35?.72:clamp(.65+.35*Math.max(0,preqSkill),.58,1);
   const driftPenalty=mem.drift?.active?.78:1;
-  const confidence=clamp((.18+.82*support)*stability*calibrationTrust*(.72+.28*sharpness)*skillTrust*driftPenalty,0,1);
-  const edge=UNIFORM-best.risk;
-
   const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
   const contextCoverage=clamp(contextNodes.length/3,0,1);
-  const motionSupport=motion?.support||0;
-  const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
   const streakInfo=streakRiskInfo(session.streak);
-  const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0)+oodScore*.0022+recoveryRatio*.0025+streakInfo.edgePenalty;
-  const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18+uncertaintyPenalty;
-  const riskCeiling=UNIFORM-requiredEdge;
   const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(mem.drift?.active?.10:0),0,1);
-  const qualityScore=clamp(confidence*.43+health*.22+(1-oodScore)*.20+sharpness*.10+Math.max(0,preqSkill)*.05,0,1);
-  const minConfidence=(mem.drift?.active?.38:.30)+recoveryRatio*.04;
-  const minQuality=.34+recoveryRatio*.04+streakInfo.qualityPenalty;
 
-  let action='WAIT',reason='La IA sigue observando: la ventaja todavía no compensa la incertidumbre.';
-  if((mem.tradeCount>=8 && health<.46) || (preqSamples>=45 && brier>BASELINE_BRIER+.018)){
+  // Primero construimos un ranking bruto para poder aprender si el "#1" realmente es mejor.
+  const recentPicks=mem.recentPicks.slice(-12);
+  const exposure=Array(10).fill(0);recentPicks.forEach(d=>exposure[d]++);
+  const maxExp=Math.max(1,...exposure);
+  const preliminary=p.map((rawRisk,d)=>{
+    const fixation=exposure[d]/maxExp;
+    const risk=digitCalibratedRisk(d,rawRisk);
+    const errorPenalty=contextErrorPenalty(d);
+    const baseAdjusted=risk+fixation*.0025+errorPenalty;
+    return {d,risk,rawRisk,fixation,errorPenalty,baseAdjusted};
+  }).sort((a,b)=>a.baseAdjusted-b.baseAdjusted||a.risk-b.risk);
+  preliminary.forEach((x,i)=>x.rawRank=i);
+  const counterfactualRanking=preliminary.map(x=>x.d);
+
+  // Ahora la IA puntúa LOS 10 candidatos. Un primero malo no detiene la búsqueda.
+  const candidates=preliminary.map(x=>{
+    const mean=views.reduce((s,v)=>s+safeNum(v.p[x.d],x.risk)*Math.max(.01,safeNum(v.w,1)),0)/wsum;
+    const variance=views.reduce((s,v)=>{
+      const w=Math.max(.01,safeNum(v.w,1)),z=safeNum(v.p[x.d],x.risk);
+      return s+w*(z-mean)*(z-mean);
+    },0)/wsum;
+    const disagreement=Math.sqrt(Math.max(0,variance));
+    const stability=Math.exp(-disagreement*18);
+    const confidence=clamp((.18+.82*support)*stability*calibrationTrust*(.72+.28*sharpness)*skillTrust*driftPenalty,0,1);
+    const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
+    const qualityScore=clamp(confidence*.43+health*.22+(1-oodScore)*.20+sharpness*.10+Math.max(0,preqSkill)*.05,0,1);
+    const rankAdjustment=rankRiskAdjustment(x.rawRank);
+    const effectiveRisk=clamp(x.baseAdjusted+rankAdjustment,.005,.30);
+    const edge=UNIFORM-effectiveRisk;
+
+    const riskValue=clamp((.11-effectiveRisk)/.04,0,1);
+    const consensus=clamp(stability,0,1);
+    const contextSafety=clamp(1-x.errorPenalty/.007,0,1);
+    const exposureSafety=clamp(1-x.fixation,0,1);
+    const rankTrust=clamp(1-Math.max(0,rankAdjustment)/.012,0,1);
+    const score=clamp(
+      riskValue*.44+
+      confidence*.18+
+      qualityScore*.14+
+      consensus*.10+
+      contextSafety*.07+
+      exposureSafety*.04+
+      rankTrust*.03,
+      0,1
+    );
+
+    const minScore=.405+(mem.drift?.active?.035:0)+recoveryRatio*.025+streakInfo.qualityPenalty*.45;
+    const minConf=(mem.drift?.active?.23:.16)+recoveryRatio*.025;
+    const usable=
+      score>=minScore &&
+      effectiveRisk<=.1025 &&
+      confidence>=minConf &&
+      oodScore<.88;
+
+    return {
+      ...x,
+      disagreement,confidence,oodScore,qualityScore,rankAdjustment,
+      effectiveRisk,edge,score,minScore,minConf,usable
+    };
+  }).sort((a,b)=>b.score-a.score||a.effectiveRisk-b.effectiveRisk);
+
+  let selected=candidates.find(x=>x.usable)||candidates[0];
+  const usableCount=candidates.filter(x=>x.usable).length;
+  const second=candidates.find(x=>x.d!==selected.d)||candidates[1]||selected;
+
+  // Solo PAUSA con deterioro severo; el resto se resuelve buscando entre los 10.
+  let action='WAIT';
+  let reason=`Revisé los 10 candidatos; ninguno alcanzó todavía el mínimo adaptable. Mejor actual D${selected.d} · score ${(selected.score*100).toFixed(0)}/100.`;
+  const severeInstability=(mem.tradeCount>=12&&health<.27)||(preqSamples>=80&&brier>BASELINE_BRIER+.035);
+  if(severeInstability){
     action='PAUSE';
-    reason='PAUSA IA: el rendimiento reciente del modelo perdió estabilidad. Continúa aprendiendo sin comprar.';
-  }else if(oodScore>.74){
-    reason='ESPERA IA: el contexto actual es poco conocido; necesito más evidencia antes de comprar.';
-  }else if(qualityScore<minQuality){
-    reason=`ESPERA IA: calidad de señal ${fmtPct(qualityScore)} todavía insuficiente para este contexto.`;
-  }else if(best.risk<riskCeiling && confidence>=minConfidence && edge>requiredEdge){
+    reason='PAUSA IA: deterioro severo del modelo. Sigo aprendiendo los 10 candidatos sin comprar.';
+  }else if(usableCount>0){
     action='BUY';
-    reason=`Compra aceptada: riesgo ${fmtPct(best.risk)}, calidad ${fmtPct(qualityScore)}, confianza ${fmtPct(confidence)} y contexto ${fmtPct(1-oodScore)}.`;
-  }else if(mem.drift?.active){
-    reason='ESPERA IA: detecté un cambio reciente en el flujo; estoy dando más peso a datos nuevos antes de comprar.';
+    const skipped=Math.max(0,selected.rawRank);
+    reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo efectivo ${fmtPct(selected.effectiveRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
   }else if(recoveryRatio>0){
-    reason='ESPERA IA: recuperación posterior a MATCH; temporalmente exijo una señal más fuerte.';
-  }else if(streakInfo.active && (qualityScore<minQuality || edge<=requiredEdge)){
-    reason=`ESPERA IA: racha de ${streakInfo.streak} wins; mis datos de esa racha muestran más MATCH de lo normal y exijo solo un poco más de calidad.`;
-  }else if(confidence<minConfidence){
-    reason='ESPERA IA: todavía hay poca evidencia coincidente entre los modelos.';
-  }else if(best.risk>=riskCeiling){
-    reason=`ESPERA IA: riesgo ${fmtPct(best.risk)} por encima del límite adaptativo ${fmtPct(riskCeiling)}.`;
+    reason=`Revisé los 10 candidatos durante recuperación; D${selected.d} quedó más cerca con score ${(selected.score*100).toFixed(0)}/100.`;
+  }else if(streakInfo.active){
+    reason=`Revisé los 10 candidatos con racha de ${streakInfo.streak} wins; ninguno superó todavía el score mínimo adaptable.`;
   }
 
-  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,motion:motion?.state||null,motionSupport,motionMature,motionEval:motion?{p:motion.p.slice()}:null,streakInfo,expertViews:views};
-}
+  // Compatibilidad con el resto del bot: best es ahora el candidato ELEGIDO por búsqueda completa.
+  const best={
+    d:selected.d,
+    risk:selected.effectiveRisk,
+    rawRisk:selected.rawRisk,
+    adjusted:selected.effectiveRisk,
+    errorPenalty:selected.errorPenalty,
+    score:selected.score,
+    rawRank:selected.rawRank
+  };
 
+  return {
+    h,p,best,second,
+    confidence:selected.confidence,
+    edge:selected.edge,
+    requiredEdge:Math.max(0,UNIFORM-.1025),
+    riskCeiling:.1025,
+    health,
+    qualityScore:selected.qualityScore,
+    oodScore:selected.oodScore,
+    action,reason,
+    disagreement:selected.disagreement,
+    support,entropy,sharpness,preqSkill,
+    motion:motion?.state||null,
+    motionSupport:motion?.support||0,
+    motionMature,
+    motionEval:motion?{p:motion.p.slice()}:null,
+    streakInfo,
+    candidates,
+    usableCount,
+    counterfactualRanking,
+    expertViews:views
+  };
+}
 function renderDecision(d){
   lastDecision=d;
   if(!d){
