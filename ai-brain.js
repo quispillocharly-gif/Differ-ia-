@@ -796,6 +796,7 @@ function renderDecision(d){
     $('decision').className='decision stateWait';
     $('reason').textContent='Aún no hay contexto suficiente.';
     $('pick').textContent='—';$('risk').textContent='—';$('confidence').textContent='—';
+    if($('candidateState'))$('candidateState').textContent='BUSCANDO 10/10';
     $('meter').style.width='0%';
     return;
   }
@@ -806,6 +807,10 @@ function renderDecision(d){
   $('health').textContent=fmtPct(d.health);
   if($('quality'))$('quality').textContent=fmtPct(d.qualityScore);
   if($('contextState'))$('contextState').textContent=d.oodScore>.74?'NUEVO':d.oodScore>.52?'MIXTO':'CONOCIDO';
+  if($('candidateState')){
+    const sc=Math.round(clamp(safeNum(d.best?.score,0),0,1)*100);
+    $('candidateState').textContent='D'+d.best.d+' · '+sc+'/100 · '+safeNum(d.usableCount,0)+'/10 OK';
+  }
   if($('motionState')){
     const m=d.motion;
     $('motionState').textContent=!m?'APRENDIENDO':(m.direction==='UP'?'↑':m.direction==='DOWN'?'↓':'↔')+' '+m.strength+(d.motionMature?' · ACTIVO':' · APRENDE');
