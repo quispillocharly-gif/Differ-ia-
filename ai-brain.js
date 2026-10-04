@@ -19,6 +19,7 @@ let hist=[];                 // dígitos en vivo/históricos
 let epochs=[];
 let priceHist=[];             // precios reales R_75 alineados con hist
 let motionHist=[];            // estado de movimiento conocido en cada tick
+let marketPip=4;              // precisión del quote para medir microdesplazamiento
 let liveTickCounter=0;
 let autoRunning=false;
 let pendingTrade=null;
@@ -269,6 +270,7 @@ function motionSnapshot(prices=priceHist){
   if(p.length<8)return null;
   const diffs=[];
   for(let i=1;i<p.length;i++)diffs.push(p[i]-p[i-1]);
+
   const scale=Math.max(1e-8,avg(diffs.slice(-12).map(Math.abs)));
   const slope=(n)=>{
     if(p.length<=n)return 0;
@@ -281,6 +283,7 @@ function motionSnapshot(prices=priceHist){
   const direction=velocity>.22?'UP':velocity<-.22?'DOWN':'FLAT';
   const strength=absV>.95?'STRONG':absV>.42?'MED':'WEAK';
   const accel=acceleration>.35?'ACCEL':acceleration<-.35?'DECEL':'STEADY';
+
   const recentDiffs=diffs.slice(-12);
   const volRatio=std(recentDiffs)/scale;
   const volatility=volRatio>1.25?'HIGH':volRatio<.72?'LOW':'MID';
@@ -289,9 +292,27 @@ function motionSnapshot(prices=priceHist){
   const last=signs[signs.length-1]||0;
   const majority=prior.length?Math.sign(prior.reduce((a,b)=>a+b,0)):0;
   const turn=last&&majority&&last!==majority?'TURN':'FLOW';
+
+  // Micro-movimiento en unidades del último decimal visible del quote.
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  const lastMoveUnits=Math.round((p[p.length-1]-p[p.length-2])/unit);
+  const moves3=diffs.slice(-3).map(x=>Math.round(x/unit));
+  const mean3=avg(moves3);
+  const absUnits=Math.abs(lastMoveUnits);
+  const microForce=absUnits<=1?'TINY':absUnits<=3?'SMALL':absUnits<=8?'MED':absUnits<=20?'LARGE':'JUMP';
+  const microDir=lastMoveUnits>0?'UP':lastMoveUnits<0?'DOWN':'FLAT';
+  const residue=((lastMoveUnits%10)+10)%10;
+  const trendUnits=Math.round(mean3);
+  const trendBand=trendUnits>=5?'UPFAST':trendUnits>=1?'UPSLOW':trendUnits<=-5?'DOWNFAST':trendUnits<=-1?'DOWNSLOW':'STABLE';
+  const quoteText=p[p.length-1].toFixed(pip);
+  const currentDigit=Number(quoteText[quoteText.length-1]);
+  const microKey=[currentDigit,microDir,microForce,'R'+residue,trendBand].join('|');
+
   return {
     direction,strength,accel,volatility,turn,
     velocity,acceleration,volRatio,
+    currentDigit,lastMoveUnits,microForce,microDir,residue,trendUnits,trendBand,microKey,
     key:[direction,strength,accel,volatility,turn].join('|')
   };
 }
@@ -307,10 +328,14 @@ function learnMotion(targetDigit,sourceHist){
     const snap=motionHist[signalIndex];
     if(!snap?.key)continue;
     const lastDigit=sourceHist[signalIndex];
-    const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
-    keys.forEach((key,idx)=>{
-      const node=ensureMotionNode(h,key);
-      const alpha=(idx===0?.030:.040)*(mem.drift?.active?1.20:1);
+    const keys=[
+      {key:'M:'+snap.key,base:.030},
+      {key:'MD:'+snap.key+'>D'+lastDigit,base:.040},
+      {key:snap.microKey?'MICRO:'+snap.microKey:null,base:.044}
+    ].filter(x=>x.key);
+    keys.forEach((entry)=>{
+      const node=ensureMotionNode(h,entry.key);
+      const alpha=entry.base*(mem.drift?.active?1.20:1);
       updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/900)),.012,.055));
       node.n++;
       node.last=mem.tickCount;
@@ -321,14 +346,18 @@ function motionDistribution(h){
   const snap=motionSnapshot();
   if(!snap?.key||!hist.length)return null;
   const lastDigit=hist[hist.length-1];
-  const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
+  const keys=[
+    {key:'M:'+snap.key,need:45,base:.70},
+    {key:'MD:'+snap.key+'>D'+lastDigit,need:28,base:1.00},
+    {key:snap.microKey?'MICRO:'+snap.microKey:null,need:24,base:1.18}
+  ].filter(x=>x.key);
   const num=Array(10).fill(0),den=Array(10).fill(0);
   let evidence=0,totalN=0;
-  keys.forEach((key,idx)=>{
-    const node=mem.motionModels[h]?.[key];
+  keys.forEach((entry)=>{
+    const node=mem.motionModels[h]?.[entry.key];
     if(!node)return;
-    const support=1-Math.exp(-safeNum(node.n,0)/(idx===0?45:28));
-    const w=(idx===0?.75:1.10)*support;
+    const support=1-Math.exp(-safeNum(node.n,0)/entry.need);
+    const w=entry.base*support;
     if(w<=.01)return;
     for(let d=0;d<10;d++){num[d]+=safeNum(node.p[d],UNIFORM)*w;den[d]+=w}
     evidence+=support;totalN+=safeNum(node.n,0);
@@ -813,7 +842,7 @@ function renderDecision(d){
   }
   if($('motionState')){
     const m=d.motion;
-    $('motionState').textContent=!m?'APRENDIENDO':(m.direction==='UP'?'↑':m.direction==='DOWN'?'↓':'↔')+' '+m.strength+(d.motionMature?' · ACTIVO':' · APRENDE');
+    $('motionState').textContent=!m?'APRENDIENDO':(m.microDir==='UP'?'↑':m.microDir==='DOWN'?'↓':'↔')+' '+m.microForce+' · '+(m.lastMoveUnits>0?'+':'')+m.lastMoveUnits+'U'+(d.motionMature?' · ACTIVO':' · APRENDE');
   }
   $('meter').style.width=(d.confidence*100).toFixed(0)+'%';
   if(d.action==='BUY'){
@@ -1145,6 +1174,7 @@ function connectMarket(){
       const prices=m.history.prices;
       const times=Array.isArray(m.history.times)?m.history.times:[];
       const pip=Number(m.pip_size||4);
+      if(Number.isFinite(pip))marketPip=pip;
       let added=0;
       for(let i=0;i<prices.length;i++){
         const ep=Number(times[i]||0);
@@ -1163,6 +1193,7 @@ function connectMarket(){
       const ep=Number(m.tick.epoch||0);
       if(ep && ep===lastEpoch)return;
       lastEpoch=ep;
+      if(Number.isFinite(Number(m.tick.pip_size)))marketPip=Number(m.tick.pip_size);
       const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
       if(d!==null)processDigit(d,ep,true,m.tick.quote);
     }
