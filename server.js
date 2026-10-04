@@ -30,6 +30,7 @@ let saveTimer = null;
 let hist = [];
 let priceHist = [];
 let motionHist = [];
+let marketPip = 4;
 let lastEpoch = 0;
 let liveTickCount = 0;
 let startedAt = Date.now();
@@ -357,7 +358,23 @@ function motionSnapshot(prices=priceHist){
   const last=signs[signs.length-1]||0;
   const majority=prior.length?Math.sign(prior.reduce((a,b)=>a+b,0)):0;
   const turn=last&&majority&&last!==majority?'TURN':'FLOW';
-  return {direction,strength,accel,volatility,turn,velocity,acceleration,volRatio,key:[direction,strength,accel,volatility,turn].join('|')};
+
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  const lastMoveUnits=Math.round((p[p.length-1]-p[p.length-2])/unit);
+  const moves3=diffs.slice(-3).map(x=>Math.round(x/unit));
+  const mean3=mean(moves3);
+  const absUnits=Math.abs(lastMoveUnits);
+  const microForce=absUnits<=1?'TINY':absUnits<=3?'SMALL':absUnits<=8?'MED':absUnits<=20?'LARGE':'JUMP';
+  const microDir=lastMoveUnits>0?'UP':lastMoveUnits<0?'DOWN':'FLAT';
+  const residue=((lastMoveUnits%10)+10)%10;
+  const trendUnits=Math.round(mean3);
+  const trendBand=trendUnits>=5?'UPFAST':trendUnits>=1?'UPSLOW':trendUnits<=-5?'DOWNFAST':trendUnits<=-1?'DOWNSLOW':'STABLE';
+  const quoteText=p[p.length-1].toFixed(pip);
+  const currentDigit=Number(quoteText[quoteText.length-1]);
+  const microKey=[currentDigit,microDir,microForce,'R'+residue,trendBand].join('|');
+
+  return {direction,strength,accel,volatility,turn,velocity,acceleration,volRatio,currentDigit,lastMoveUnits,microForce,microDir,residue,trendUnits,trendBand,microKey,key:[direction,strength,accel,volatility,turn].join('|')};
 }
 function ensureMotionNode(h,key){
   const bucket=mem.motionModels[h];
@@ -371,10 +388,14 @@ function learnMotion(targetDigit,sourceHist){
     const snap=motionHist[signalIndex];
     if(!snap?.key)continue;
     const lastDigit=sourceHist[signalIndex];
-    const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
-    keys.forEach((key,idx)=>{
-      const node=ensureMotionNode(h,key);
-      const alpha=(idx===0?.030:.040)*driftLearningBoost();
+    const keys=[
+      {key:'M:'+snap.key,base:.030},
+      {key:'MD:'+snap.key+'>D'+lastDigit,base:.040},
+      {key:snap.microKey?'MICRO:'+snap.microKey:null,base:.044}
+    ].filter(x=>x.key);
+    keys.forEach((entry)=>{
+      const node=ensureMotionNode(h,entry.key);
+      const alpha=entry.base*driftLearningBoost();
       updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/900)),.012,.070));
       node.n++;
       node.last=mem.tickCount;
@@ -385,14 +406,18 @@ function motionDist(){
   const snap=motionSnapshot();
   if(!snap?.key||!hist.length)return null;
   const lastDigit=hist[hist.length-1];
-  const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
+  const keys=[
+    {key:'M:'+snap.key,need:45,base:.70},
+    {key:'MD:'+snap.key+'>D'+lastDigit,need:28,base:1.00},
+    {key:snap.microKey?'MICRO:'+snap.microKey:null,need:24,base:1.18}
+  ].filter(x=>x.key);
   const num=Array(10).fill(0),den=Array(10).fill(0);
   let evidence=0,totalN=0;
-  keys.forEach((key,idx)=>{
-    const node=mem.motionModels[1]?.[key];
+  keys.forEach((entry)=>{
+    const node=mem.motionModels[1]?.[entry.key];
     if(!node)return;
-    const support=1-Math.exp(-safeNum(node.n,0)/(idx===0?45:28));
-    const w=(idx===0?.75:1.10)*support;
+    const support=1-Math.exp(-safeNum(node.n,0)/entry.need);
+    const w=entry.base*support;
     if(w<=.01)return;
     for(let d=0;d<10;d++){num[d]+=safeNum(node.p[d],UNIFORM)*w;den[d]+=w}
     evidence+=support;totalN+=safeNum(node.n,0);
@@ -956,6 +981,7 @@ function connectDeriv(){
       const prices=m.history.prices;
       const times=Array.isArray(m.history.times)?m.history.times:[];
       const pip=Number(m.pip_size||4);
+      if(Number.isFinite(pip))marketPip=pip;
 
       for(let i=0;i<prices.length;i++){
         const ep=Number(times[i]||0);
@@ -972,6 +998,7 @@ function connectDeriv(){
     if(m.tick){
       const ep=Number(m.tick.epoch||0);
       if(ep&&ep<=lastEpoch) return;
+      if(Number.isFinite(Number(m.tick.pip_size)))marketPip=Number(m.tick.pip_size);
       const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
       if(d!==null) processDigit(d,ep,m.tick.quote);
     }
