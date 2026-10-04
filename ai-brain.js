@@ -552,11 +552,14 @@ function enterTrade(decision,manual=false){
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
   log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)}`);
   renderSession();
+  window.nexusTradeEffect?.('buy',{digit,stake,mode,manual});
   window.sendDemoTrade(digit,stake).catch(tradeError);
 }
 
 function tradeError(e){
+  const failed=pendingTrade;
   log('ERROR DERIV · '+(e?.message||e));
+  if(failed)window.nexusTradeEffect?.('error',failed);
   pendingTrade=null;
   $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
 }
@@ -651,6 +654,7 @@ function settleTrade(profit){
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
   log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
+  window.nexusTradeEffect?.('result',{...t,loss:!!loss,profit});
   pendingTrade=null;
   saveMemory(true);
   renderSession();
