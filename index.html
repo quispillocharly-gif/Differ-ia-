@@ -172,6 +172,7 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
 .tradeFx.show{opacity:1;visibility:visible}.tradeFxCard{position:relative;width:min(86vw,340px);padding:18px 18px 16px;border:1px solid rgba(53,231,255,.36);border-radius:22px;background:linear-gradient(180deg,rgba(3,15,12,.97),rgba(1,7,5,.985));box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 38px rgba(53,231,255,.12);overflow:hidden;transform:scale(.88) translateY(10px);opacity:0}.tradeFx.show .tradeFxCard{animation:tradeFxIn .34s cubic-bezier(.2,.85,.25,1) forwards}.tradeFxCard:before{content:"";position:absolute;left:-20%;top:-80%;width:140%;height:70%;background:linear-gradient(90deg,transparent,rgba(53,231,255,.12),transparent);transform:rotate(-8deg);animation:tradeFxSweep 1.15s ease-in-out infinite}.tradeFxTop{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;z-index:2}.tradeFxMode{font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1.2px;color:#6f9786}.tradeFxState{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;border:1px solid rgba(53,231,255,.24);font:900 8px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;color:var(--cyan);background:rgba(53,231,255,.05)}.tradeFxDot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:tradeFxPulse .62s ease-in-out infinite alternate}.tradeFxDigit{position:relative;z-index:2;margin:12px 0 4px;text-align:center;font:950 clamp(28px,10vw,46px)/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-1.5px;color:#dffff0;text-shadow:0 0 20px rgba(0,255,136,.18)}.tradeFxDigit b{color:var(--green);text-shadow:0 0 24px rgba(0,255,136,.38)}.tradeFxMeta{position:relative;z-index:2;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;color:#86ad99;font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace}.tradeFxMeta span{padding:5px 7px;border-radius:8px;border:1px solid rgba(0,255,136,.11);background:rgba(0,255,136,.025)}.tradeFxBar{position:relative;z-index:2;height:4px;margin-top:14px;border-radius:999px;background:rgba(255,255,255,.05);overflow:hidden}.tradeFxBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green));box-shadow:0 0 12px rgba(0,255,136,.4)}.tradeFx.show.buying .tradeFxBar i{animation:tradeFxProgress .95s ease-out forwards}.tradeFx.result.win .tradeFxCard{border-color:rgba(0,255,136,.45);box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 42px rgba(0,255,136,.16)}.tradeFx.result.win .tradeFxState,.tradeFx.result.win .tradeFxDigit b{color:var(--green)}.tradeFx.result.win .tradeFxDot{background:var(--green);box-shadow:0 0 14px var(--green)}.tradeFx.result.match .tradeFxCard{border-color:rgba(255,66,104,.48);box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 42px rgba(255,66,104,.13)}.tradeFx.result.match .tradeFxState,.tradeFx.result.match .tradeFxDigit b{color:#ff7792}.tradeFx.result.match .tradeFxDot{background:#ff4268;box-shadow:0 0 14px #ff4268}.tradeFx.result .tradeFxBar i{width:100%;animation:none}@keyframes tradeFxIn{to{transform:scale(1) translateY(0);opacity:1}}@keyframes tradeFxSweep{0%{transform:translateX(-55%) rotate(-8deg)}100%{transform:translateX(55%) rotate(-8deg)}}@keyframes tradeFxPulse{to{transform:scale(.72);opacity:.45}}@keyframes tradeFxProgress{0%{width:4%}100%{width:100%}}@media(max-width:620px){.tradeFxCard{width:min(88vw,310px);padding:15px;border-radius:18px}.tradeFxDigit{font-size:34px}.tradeFxMeta{font-size:8px}}
 
 </style>
+<!-- outcome-sound-v2 -->
 </head>
 <body>
 <canvas id="matrixRain"></canvas><div class="scanlines"></div><div class="vignette"></div>
@@ -344,13 +345,16 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     unlockNexusAudio();
     if(!nexusAudio||!nexusAudioReady)return;
     if(kind==='win'){
-      nexusTone(880,0,.18,.07,'triangle');
-      nexusTone(1175,.085,.20,.065,'triangle');
-      nexusTone(1568,.17,.24,.055,'sine');
-      nexusTone(2093,.245,.16,.035,'sine');
+      // Confirmación tipo transacción aprobada: click digital + doble chime limpio.
+      nexusTone(523,0,.075,.028,'square');
+      nexusTone(784,.045,.16,.052,'sine');
+      nexusTone(1047,.135,.22,.060,'triangle');
+      nexusTone(1319,.225,.24,.040,'sine');
     }else if(kind==='loss'){
-      nexusTone(330,0,.24,.035,'sine');
-      nexusTone(260,.18,.30,.028,'sine');
+      // Aviso suave descendente, breve y sin sobresalto.
+      nexusTone(440,0,.18,.032,'triangle');
+      nexusTone(349,.14,.23,.029,'sine');
+      nexusTone(294,.30,.25,.023,'sine');
     }
   };
 
