@@ -893,7 +893,8 @@ function processDigit(d,epoch,quote){
   const q=Number(quote);
   priceHist.push(Number.isFinite(q)?q:(priceHist.length?priceHist[priceHist.length-1]:0));
   motionHist.push(motionSnapshot(priceHist));
-  if(hist.length>MAX_HIST){hist.shift();priceHist.shift();motionHist.shift()}
+  if(hist.length>MAX_HIST){hist.shift();motionHist.shift()}
+  if(priceHist.length>MAX_HIST)priceHist.shift();
 
   if(epoch){
     lastEpoch=Math.max(lastEpoch,epoch);
