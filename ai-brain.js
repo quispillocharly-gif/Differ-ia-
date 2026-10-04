@@ -10,6 +10,9 @@ const UNIFORM=.10;
 const MAX_HIST=1200;
 const LOG_MAX=180;
 const CLOUD_URL='https://differ-ia-cloud-production.up.railway.app';
+const EXPERTS=['global','recent','ctx1','ctx2','ctx3','collab'];
+const BASELINE_LOGLOSS=Math.log(10);
+const BASELINE_BRIER=.09;
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -23,8 +26,17 @@ let recentLogs=[];
 let nextStake=null;
 let sharedModel={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
 let sharedSyncTimer=null,sharedLogged=false;
+let predictionQueue=[];
 
 function blankP(){return Array(10).fill(UNIFORM)}
+function freshExpertPerf(){
+  const out={};
+  EXPERTS.forEach(name=>out[name]={samples:0,logLossEWMA:BASELINE_LOGLOSS,skillEWMA:0,weight:1});
+  return out;
+}
+function freshDrift(){
+  return {samples:0,fast:BASELINE_BRIER,slow:BASELINE_BRIER,active:false,remaining:0,events:0,lastAt:0};
+}
 function freshMemory(){
   const models={};
   HORIZONS.forEach(h=>{
@@ -42,6 +54,9 @@ function freshMemory(){
     globalP:blankP(),
     globalN:0,
     modelLoss:{},
+    expertPerf:freshExpertPerf(),
+    prequential:{samples:0,brierEWMA:BASELINE_BRIER,logLossEWMA:BASELINE_LOGLOSS},
+    drift:freshDrift(),
     lossEWMA:.10,
     calibrationEWMA:0,
     delayEWMA:1,
@@ -66,6 +81,33 @@ function normalizeMemory(x){
   m.recentPicks=Array.isArray(m.recentPicks)?m.recentPicks.slice(-30):[];
   m.digitStats=Array.isArray(m.digitStats)&&m.digitStats.length===10?m.digitStats:base.digitStats;
   m.modelLoss=m.modelLoss||{};
+  const perf=freshExpertPerf();
+  const oldPerf=m.expertPerf&&typeof m.expertPerf==='object'?m.expertPerf:{};
+  EXPERTS.forEach(name=>{
+    const p=oldPerf[name]||{};
+    perf[name]={
+      samples:Math.max(0,safeNum(p.samples,0)),
+      logLossEWMA:clamp(safeNum(p.logLossEWMA,BASELINE_LOGLOSS),.05,8),
+      skillEWMA:clamp(safeNum(p.skillEWMA,0),-2,2),
+      weight:clamp(safeNum(p.weight,1),.35,2.8)
+    };
+  });
+  m.expertPerf=perf;
+  const pq=m.prequential||{};
+  m.prequential={
+    samples:Math.max(0,safeNum(pq.samples,0)),
+    brierEWMA:clamp(safeNum(pq.brierEWMA,BASELINE_BRIER),0,1),
+    logLossEWMA:clamp(safeNum(pq.logLossEWMA,BASELINE_LOGLOSS),.05,8)
+  };
+  const dr={...freshDrift(),...(m.drift||{})};
+  dr.samples=Math.max(0,safeNum(dr.samples,0));
+  dr.fast=clamp(safeNum(dr.fast,BASELINE_BRIER),0,1);
+  dr.slow=clamp(safeNum(dr.slow,BASELINE_BRIER),0,1);
+  dr.active=!!dr.active;
+  dr.remaining=Math.max(0,Math.floor(safeNum(dr.remaining,0)));
+  dr.events=Math.max(0,Math.floor(safeNum(dr.events,0)));
+  dr.lastAt=Math.max(0,safeNum(dr.lastAt,0));
+  m.drift=dr;
   return m;
 }
 
@@ -147,7 +189,8 @@ function modelLossKey(h,o){return h+':'+o}
 function learningRate(order,n){
   const base=order===1?.035:order===2?.050:.070;
   const support=Math.min(1,Math.max(0,n)/80);
-  return base*(1-.25*support);
+  const driftBoost=mem.drift?.active?1.30:1;
+  return clamp(base*(1-.25*support)*driftBoost,.012,.11);
 }
 function ensureNode(h,o,key){
   const bucket=mem.models[h][o];
@@ -200,6 +243,87 @@ function pruneModels(aggressive=false){
 
 function horizonNow(){return clamp(Math.round(safeNum(mem.delayEWMA,1)),1,3)}
 
+function normalizeDist(p){
+  const out=Array.from({length:10},(_,i)=>Math.max(.000001,safeNum(p?.[i],UNIFORM)));
+  const sum=out.reduce((a,b)=>a+b,0)||1;
+  return out.map(x=>x/sum);
+}
+function expertWeight(name){
+  const p=mem.expertPerf?.[name];
+  let w=clamp(safeNum(p?.weight,1),.35,2.8);
+  if(mem.drift?.active){
+    if(name==='recent')w*=1.35;
+    else if(name==='ctx1')w*=1.15;
+    else if(name==='ctx3')w*=.82;
+    else if(name==='global')w*=.78;
+    else if(name==='collab')w*=.92;
+  }
+  return clamp(w,.25,3.2);
+}
+function brierScore(p,target){
+  let s=0;
+  for(let d=0;d<10;d++){
+    const y=d===target?1:0,err=safeNum(p?.[d],UNIFORM)-y;
+    s+=err*err;
+  }
+  return s/10;
+}
+function updateExpertPerformance(name,p,target){
+  if(!EXPERTS.includes(name)||!Array.isArray(p)||p.length!==10)return;
+  const perf=mem.expertPerf[name]||(mem.expertPerf[name]={samples:0,logLossEWMA:BASELINE_LOGLOSS,skillEWMA:0,weight:1});
+  const prob=clamp(safeNum(p[target],UNIFORM),.0001,.9999);
+  const loss=-Math.log(prob);
+  const skill=BASELINE_LOGLOSS-loss;
+  perf.samples++;
+  perf.logLossEWMA=.97*safeNum(perf.logLossEWMA,BASELINE_LOGLOSS)+.03*loss;
+  perf.skillEWMA=.96*safeNum(perf.skillEWMA,0)+.04*skill;
+  perf.weight=clamp(Math.exp(clamp(perf.skillEWMA,-.75,.75)*1.25),.35,2.8);
+}
+function updateDrift(score){
+  const d=mem.drift;
+  d.samples++;
+  d.fast=.86*safeNum(d.fast,BASELINE_BRIER)+.14*score;
+  d.slow=.985*safeNum(d.slow,BASELINE_BRIER)+.015*score;
+  if(d.remaining>0)d.remaining--;
+  if(d.samples>=45 && d.fast>d.slow+.0105 && d.remaining===0){
+    d.events++;
+    d.active=true;
+    d.remaining=70;
+    d.lastAt=Date.now();
+    log('IA · cambio de régimen detectado: priorizo memoria reciente y aumento cautela');
+  }else if(d.remaining===0 && d.fast<=d.slow+.004){
+    d.active=false;
+  }else if(d.remaining===0){
+    d.active=false;
+  }
+}
+function resolvePredictionQueue(target,counter){
+  if(!predictionQueue.length)return;
+  const due=[],keep=[];
+  predictionQueue.forEach(item=>(item.due<=counter?due:keep).push(item));
+  predictionQueue=keep.slice(-18);
+  due.forEach(item=>{
+    const p=normalizeDist(item.p);
+    const prob=clamp(p[target],.0001,.9999);
+    const logLoss=-Math.log(prob);
+    const brier=brierScore(p,target);
+    mem.prequential.samples++;
+    mem.prequential.brierEWMA=.97*safeNum(mem.prequential.brierEWMA,BASELINE_BRIER)+.03*brier;
+    mem.prequential.logLossEWMA=.97*safeNum(mem.prequential.logLossEWMA,BASELINE_LOGLOSS)+.03*logLoss;
+    (item.experts||[]).forEach(v=>updateExpertPerformance(v.name,v.p,target));
+    updateDrift(brier);
+  });
+}
+function schedulePrediction(decision,counter){
+  if(!decision||!Array.isArray(decision.p))return;
+  predictionQueue.push({
+    due:counter+clamp(Math.round(safeNum(decision.h,1)),1,3),
+    p:decision.p.slice(),
+    experts:(decision.expertViews||[]).map(v=>({name:v.name,p:Array.isArray(v.p)?v.p.slice():blankP()}))
+  });
+  if(predictionQueue.length>18)predictionQueue=predictionQueue.slice(-18);
+}
+
 function predict(){
   if(hist.length<8)return null;
   const h=horizonNow();
@@ -207,12 +331,13 @@ function predict(){
   const denom=Array(10).fill(0);
   const modelViews=[];
 
-  // Base adaptativa global.
+  // Base adaptativa global, ponderada por rendimiento prequential.
+  const gw=.45*expertWeight('global');
   for(let d=0;d<10;d++){
-    dist[d]+=mem.globalP[d]*.45;
-    denom[d]+=.45;
+    dist[d]+=mem.globalP[d]*gw;
+    denom[d]+=gw;
   }
-  modelViews.push({name:'global',p:mem.globalP.slice(),w:.45,n:mem.globalN});
+  modelViews.push({name:'global',p:mem.globalP.slice(),w:gw,n:mem.globalN});
 
   for(const o of ORDERS){
     const key=contextKey(hist,hist.length-1,o);
@@ -222,7 +347,7 @@ function predict(){
     const err=safeNum(mem.modelLoss[modelLossKey(h,o)],Math.log(10));
     const reliability=1/(.35+err);
     const support=1-Math.exp(-node.n/(o===1?24:o===2?15:9));
-    const w=reliability*support*(o===1?.8:o===2?1.05:1.20);
+    const w=reliability*support*(o===1?.8:o===2?1.05:1.20)*expertWeight('ctx'+o);
     if(w<=.01)continue;
     for(let d=0;d<10;d++){
       dist[d]+=node.p[d]*w;
@@ -235,7 +360,7 @@ function predict(){
   const recent=hist.slice(-50),counts=Array(10).fill(1.2);
   recent.forEach(d=>counts[d]++);
   const total=counts.reduce((a,b)=>a+b,0);
-  const rp=counts.map(x=>x/total),rw=.28;
+  const rp=counts.map(x=>x/total),rw=.28*expertWeight('recent');
   for(let d=0;d<10;d++){
     dist[d]+=rp[d]*rw;
     denom[d]+=rw;
@@ -249,7 +374,7 @@ function predict(){
   // Experiencias compartidas: aportan como un experto adicional, nunca dominan por sí solas.
   const shared=sharedDistribution();
   if(shared&&shared.support>0){
-    const w=.24*shared.support;
+    const w=clamp(.24*shared.support*expertWeight('collab'),0,.34);
     for(let d=0;d<10;d++)p[d]=(1-w)*p[d]+w*shared.p[d];
     sum=p.reduce((a,b)=>a+b,0)||1;
     for(let d=0;d<10;d++)p[d]/=sum;
@@ -267,37 +392,52 @@ function predict(){
   }).sort((a,b)=>a.adjusted-b.adjusted||a.risk-b.risk);
 
   const best=scored[0],second=scored[1];
-  const perModel=modelViews.filter(v=>v.name!=='global').map(v=>v.p[best.d]);
-  const mean=perModel.length?perModel.reduce((a,b)=>a+b,0)/perModel.length:best.risk;
-  const variance=perModel.length?perModel.reduce((s,x)=>s+(x-mean)**2,0)/perModel.length:0;
-  const disagreement=Math.sqrt(variance);
+  const views=modelViews.filter(v=>Array.isArray(v.p)&&v.p.length===10);
+  const wsum=views.reduce((s,v)=>s+Math.max(.01,safeNum(v.w,1)),0)||1;
+  const mean=views.reduce((s,v)=>s+safeNum(v.p[best.d],best.risk)*Math.max(.01,safeNum(v.w,1)),0)/wsum;
+  const variance=views.reduce((s,v)=>{
+    const w=Math.max(.01,safeNum(v.w,1)),x=safeNum(v.p[best.d],best.risk);
+    return s+w*(x-mean)*(x-mean);
+  },0)/wsum;
+  const disagreement=Math.sqrt(Math.max(0,variance));
 
   const contextNodes=modelViews.filter(v=>v.name.startsWith('ctx'));
   const support=contextNodes.length?contextNodes.reduce((s,v)=>s+Math.min(1,v.n/30),0)/contextNodes.length:0;
-  const stability=Math.exp(-disagreement*16);
+  const stability=Math.exp(-disagreement*18);
   const calibrationTrust=clamp(1-Math.max(0,mem.calibrationEWMA)*4.5,.25,1);
-  const confidence=clamp((.20+.80*support)*stability*calibrationTrust,0,1);
+  const entropy=-p.reduce((s,x)=>s+(x>0?x*Math.log(x):0),0)/Math.log(10);
+  const sharpness=clamp((1-entropy)/.075,0,1);
+  const preqSamples=safeNum(mem.prequential.samples,0);
+  const brier=safeNum(mem.prequential.brierEWMA,BASELINE_BRIER);
+  const preqSkill=clamp((BASELINE_BRIER-brier)/.018,-1,1);
+  const skillTrust=preqSamples<35?.72:clamp(.65+.35*Math.max(0,preqSkill),.58,1);
+  const driftPenalty=mem.drift?.active?.78:1;
+  const confidence=clamp((.18+.82*support)*stability*calibrationTrust*(.72+.28*sharpness)*skillTrust*driftPenalty,0,1);
   const edge=UNIFORM-best.risk;
 
   const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
-  const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18;
+  const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0);
+  const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18+uncertaintyPenalty;
   const riskCeiling=UNIFORM-requiredEdge;
-  const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2,0,1);
+  const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(mem.drift?.active?.10:0),0,1);
+  const minConfidence=mem.drift?.active?.38:.30;
 
   let action='WAIT',reason='La IA sigue observando: la ventaja todavía no compensa la incertidumbre.';
-  if(mem.tradeCount>=8 && health<.46){
+  if((mem.tradeCount>=8 && health<.46) || (preqSamples>=45 && brier>BASELINE_BRIER+.018)){
     action='PAUSE';
-    reason='PAUSA IA: las pérdidas recientes están por encima de lo que el modelo esperaba. Sigue aprendiendo sin comprar.';
-  }else if(best.risk<riskCeiling && confidence>=.30 && edge>requiredEdge){
+    reason='PAUSA IA: el rendimiento reciente del modelo perdió estabilidad. Continúa aprendiendo sin comprar.';
+  }else if(best.risk<riskCeiling && confidence>=minConfidence && edge>requiredEdge){
     action='BUY';
-    reason=`Compra aceptada: riesgo ${fmtPct(best.risk)}, ventaja ${(edge*100).toFixed(2)} pts y confianza ${fmtPct(confidence)}.`;
-  }else if(confidence<.30){
-    reason='ESPERA IA: todavía hay poca evidencia coincidente para este contexto.';
+    reason=`Compra aceptada: riesgo ${fmtPct(best.risk)}, ventaja ${(edge*100).toFixed(2)} pts, confianza ${fmtPct(confidence)} y desacuerdo ${fmtPct(disagreement)}.`;
+  }else if(mem.drift?.active){
+    reason='ESPERA IA: detecté un cambio reciente en el flujo; estoy dando más peso a datos nuevos antes de comprar.';
+  }else if(confidence<minConfidence){
+    reason='ESPERA IA: todavía hay poca evidencia coincidente entre los modelos.';
   }else if(best.risk>=riskCeiling){
     reason=`ESPERA IA: riesgo ${fmtPct(best.risk)} por encima del límite adaptativo ${fmtPct(riskCeiling)}.`;
   }
 
-  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,action,reason,disagreement,support};
+  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,action,reason,disagreement,support,entropy,sharpness,preqSkill,expertViews:views};
 }
 
 function renderDecision(d){
@@ -496,6 +636,7 @@ function processDigit(d,epoch,isLive){
   if(!Number.isInteger(d)||d<0||d>9)return;
   if(epoch&&epoch<=safeNum(mem.lastMarketEpoch,0) && !isLive)return;
 
+  if(isLive)resolvePredictionQueue(d,liveTickCounter+1);
   learnDigit(d,hist);
   hist.push(d);epochs.push(epoch||0);
   if(hist.length>MAX_HIST){hist.shift();epochs.shift()}
@@ -512,6 +653,7 @@ function processDigit(d,epoch,isLive){
   renderSession();
 
   const decision=predict();
+  schedulePrediction(decision,liveTickCounter);
   renderDecision(decision);
 
   if(autoRunning && !pendingTrade && decision?.action==='BUY'){
@@ -538,13 +680,19 @@ async function syncFromCloud(){
     const cloud=normalizeMemory(data.memory);
     const localTicks=safeNum(mem.tickCount,0);
     const cloudTicks=safeNum(cloud.tickCount,0);
+    const localEpoch=safeNum(mem.lastMarketEpoch,0);
+    const cloudEpoch=Math.max(safeNum(cloud.lastMarketEpoch,0),safeNum(data.lastEpoch,0));
+    const cloudIsFresher=cloudEpoch>localEpoch+1 || (cloudEpoch>=localEpoch && cloudTicks>localTicks);
 
-    if(cloudTicks>localTicks){
+    if(cloudIsFresher){
       // Solo reemplaza el aprendizaje predictivo. Conserva estadísticas de trading locales.
       mem.models=cloud.models;
       mem.globalP=cloud.globalP;
       mem.globalN=cloud.globalN;
       mem.modelLoss=cloud.modelLoss;
+      if(cloud.expertPerf)mem.expertPerf=cloud.expertPerf;
+      if(cloud.prequential)mem.prequential=cloud.prequential;
+      if(cloud.drift)mem.drift=cloud.drift;
       mem.tickCount=cloudTicks;
       mem.createdAt=Math.min(safeNum(mem.createdAt,Date.now()),safeNum(cloud.createdAt,Date.now()));
       mem.updatedAt=Math.max(safeNum(mem.updatedAt,0),safeNum(cloud.updatedAt,0));
@@ -640,7 +788,7 @@ $('resetMemory').onclick=()=>{
   const ok=confirm('¿Borrar toda la memoria aprendida por esta IA?');
   if(!ok)return;
   localStorage.removeItem(KEY);
-  mem=freshMemory();hist=[];epochs=[];lastDecision=null;
+  mem=freshMemory();hist=[];epochs=[];predictionQueue=[];lastDecision=null;
   renderSession();renderDecision(null);
   log('MEMORIA IA BORRADA · comienza aprendizaje nuevo');
 };
