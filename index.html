@@ -171,6 +171,77 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
 .tradeFx{position:fixed;inset:0;z-index:10050;display:grid;place-items:center;pointer-events:none;opacity:0;visibility:hidden;transition:opacity .18s ease,visibility .18s ease;background:radial-gradient(circle at center,rgba(0,255,136,.055),transparent 38%)}
 .tradeFx.show{opacity:1;visibility:visible}.tradeFxCard{position:relative;width:min(86vw,340px);padding:18px 18px 16px;border:1px solid rgba(53,231,255,.36);border-radius:22px;background:linear-gradient(180deg,rgba(3,15,12,.97),rgba(1,7,5,.985));box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 38px rgba(53,231,255,.12);overflow:hidden;transform:scale(.88) translateY(10px);opacity:0}.tradeFx.show .tradeFxCard{animation:tradeFxIn .34s cubic-bezier(.2,.85,.25,1) forwards}.tradeFxCard:before{content:"";position:absolute;left:-20%;top:-80%;width:140%;height:70%;background:linear-gradient(90deg,transparent,rgba(53,231,255,.12),transparent);transform:rotate(-8deg);animation:tradeFxSweep 1.15s ease-in-out infinite}.tradeFxTop{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;z-index:2}.tradeFxMode{font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1.2px;color:#6f9786}.tradeFxState{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;border:1px solid rgba(53,231,255,.24);font:900 8px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;color:var(--cyan);background:rgba(53,231,255,.05)}.tradeFxDot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:tradeFxPulse .62s ease-in-out infinite alternate}.tradeFxDigit{position:relative;z-index:2;margin:12px 0 4px;text-align:center;font:950 clamp(28px,10vw,46px)/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-1.5px;color:#dffff0;text-shadow:0 0 20px rgba(0,255,136,.18)}.tradeFxDigit b{color:var(--green);text-shadow:0 0 24px rgba(0,255,136,.38)}.tradeFxMeta{position:relative;z-index:2;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;color:#86ad99;font:800 9px ui-monospace,SFMono-Regular,Menlo,monospace}.tradeFxMeta span{padding:5px 7px;border-radius:8px;border:1px solid rgba(0,255,136,.11);background:rgba(0,255,136,.025)}.tradeFxBar{position:relative;z-index:2;height:4px;margin-top:14px;border-radius:999px;background:rgba(255,255,255,.05);overflow:hidden}.tradeFxBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green));box-shadow:0 0 12px rgba(0,255,136,.4)}.tradeFx.show.buying .tradeFxBar i{animation:tradeFxProgress .95s ease-out forwards}.tradeFx.result.win .tradeFxCard{border-color:rgba(0,255,136,.45);box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 42px rgba(0,255,136,.16)}.tradeFx.result.win .tradeFxState,.tradeFx.result.win .tradeFxDigit b{color:var(--green)}.tradeFx.result.win .tradeFxDot{background:var(--green);box-shadow:0 0 14px var(--green)}.tradeFx.result.match .tradeFxCard{border-color:rgba(255,66,104,.48);box-shadow:0 20px 60px rgba(0,0,0,.56),0 0 42px rgba(255,66,104,.13)}.tradeFx.result.match .tradeFxState,.tradeFx.result.match .tradeFxDigit b{color:#ff7792}.tradeFx.result.match .tradeFxDot{background:#ff4268;box-shadow:0 0 14px #ff4268}.tradeFx.result .tradeFxBar i{width:100%;animation:none}@keyframes tradeFxIn{to{transform:scale(1) translateY(0);opacity:1}}@keyframes tradeFxSweep{0%{transform:translateX(-55%) rotate(-8deg)}100%{transform:translateX(55%) rotate(-8deg)}}@keyframes tradeFxPulse{to{transform:scale(.72);opacity:.45}}@keyframes tradeFxProgress{0%{width:4%}100%{width:100%}}@media(max-width:620px){.tradeFxCard{width:min(88vw,310px);padding:15px;border-radius:18px}.tradeFxDigit{font-size:34px}.tradeFxMeta{font-size:8px}}
 
+
+/* ===== NEXUS MOBILE APP SHELL ===== */
+.appToolbar{display:flex;justify-content:space-between;align-items:center;gap:9px;margin:9px 0 11px;padding:6px;border:1px solid rgba(53,231,255,.12);border-radius:14px;background:rgba(2,10,7,.82);box-shadow:inset 0 0 16px rgba(53,231,255,.025)}
+.viewSwitch{display:flex;gap:4px;padding:3px;border-radius:10px;background:#010503;border:1px solid rgba(0,255,136,.10)}
+.viewSwitch button,.soundToggle,.miniTool{min-height:30px;padding:6px 10px;border-radius:8px;font-size:8px;font-weight:900;letter-spacing:.9px}
+.viewSwitch button{border-color:transparent;background:transparent;color:#648a77;box-shadow:none}
+.viewSwitch button.active{color:#caffdf;border-color:rgba(0,255,136,.25);background:rgba(0,255,136,.10);box-shadow:0 0 12px rgba(0,255,136,.07)}
+.soundToggle{margin-left:auto;border-color:rgba(53,231,255,.20);background:rgba(53,231,255,.05);color:#a9f4ff}
+.soundToggle.muted{color:#789087;opacity:.72}
+.panelTools{display:flex;align-items:center;gap:7px}
+.miniTool{min-height:26px;padding:4px 8px;border-radius:999px;border-color:rgba(53,231,255,.18);background:rgba(53,231,255,.04);color:#82ddea}
+.signalMini{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.signalMini span{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:48px;padding:6px;border-radius:10px;border:1px solid rgba(53,231,255,.10);background:rgba(53,231,255,.025)}
+.signalMini small{color:#607e70;font:700 7px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.75px}
+.signalMini b{margin-top:4px;color:#caffdf;font-size:10px}
+.bottomNav{position:fixed;left:50%;bottom:max(8px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:10020;display:none;width:min(94vw,520px);grid-template-columns:repeat(4,1fr);gap:3px;padding:5px;border:1px solid rgba(0,255,136,.20);border-radius:17px;background:rgba(2,10,7,.94);box-shadow:0 15px 45px rgba(0,0,0,.55),0 0 24px rgba(0,255,136,.07);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.bottomNav button{min-height:48px;padding:5px 4px;border:0;border-radius:12px;background:transparent;box-shadow:none;color:#678b77;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.bottomNav button span{font-size:15px;line-height:1}.bottomNav button b{font-size:7px;letter-spacing:.65px}
+.bottomNav button.active{color:#9fffc8;background:rgba(0,255,136,.08)}
+body.simpleMode .proOnly{display:none!important}
+body.simpleMode #ownerMemoryPanel{display:none!important}
+body.simpleMode .footer{opacity:.55}
+body.proMode .proOnly{display:block}
+body.proMode #learningMetrics{display:grid}
+#cloudPanel.navReveal{display:block!important}
+.chartCollapsed .analyzerStats{display:none}
+.chartCollapsed .chartBox,.chartCollapsed #volChart{height:165px;min-height:165px}
+@media(max-width:620px){
+  body{padding-bottom:74px}
+  .bottomNav{display:grid}
+  .appToolbar{position:sticky;top:4px;z-index:150;margin:5px 0 8px;padding:5px;background:rgba(1,7,5,.90);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  .hero{padding:11px 12px;margin-bottom:7px}
+  .hero-grid{gap:7px}
+  .eyebrow{font-size:8px;letter-spacing:1.5px}
+  h1{font-size:27px;margin:6px 0 3px}
+  .brandTag{font-size:6.5px;margin-top:5px}
+  .corebox{padding:8px}.corebox .label{font-size:7px}.corebox .value{font-size:12px}.core-mini{font-size:7.5px}
+  #connectPanel{padding:8px 9px}
+  .authCompactInner{gap:5px}.authBrand{display:none}.authCompact label{font-size:7px}
+  .authCompact input{height:34px;min-height:34px;font-size:10px}
+  .authCompact #auth,.authPill{min-height:34px}
+  #sessionPanel{padding:10px}
+  #sessionPanel .panel-head{margin-bottom:7px}
+  .sessionField{padding:6px 5px}.sessionField input{height:36px;min-height:36px;font-size:13px}
+  .sessionActions{gap:6px}.sessionActions button{height:44px;min-height:44px;font-size:9px}
+  .sessionHint{display:none}
+  .statusStrip{margin-top:7px;padding:7px 8px}
+  #signalPanel{padding:10px}
+  #signalPanel .panel-head{margin-bottom:7px}
+  .decision{min-height:58px;font-size:25px;padding:10px 8px}
+  .reason{font-size:9px;line-height:1.35;padding:5px;min-height:0}
+  .signalMini{gap:4px}.signalMini span{min-height:42px;padding:4px}.signalMini b{font-size:9px}
+  .signalQuick{display:none}.meterWrap{display:none}
+  .signalAction #manualBuy{min-height:46px;font-size:9px;padding:10px 8px}
+  #analyzerPanel{padding:9px}
+  #analyzerPanel .panel-head{margin-bottom:7px}
+  .chartCollapsed .chartBox,.chartCollapsed #volChart{height:150px;min-height:150px}
+  .chartBox,#volChart{height:185px;min-height:185px}
+  .chartHud{font-size:7px;left:8px;top:7px}
+  .analyzerStats{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+  .analyzerMetric{padding:6px}.analyzerMetric small{font-size:6px}.analyzerMetric b{font-size:11px}
+  .analyzerState{min-height:34px;font-size:7px}
+  .grid{margin:7px 0;gap:5px}
+  .card{min-height:58px;padding:7px 8px}.card small{font-size:6.7px}.card b{font-size:16px;margin-top:5px}
+  #historyPanel,#objectivePanel,#cloudPanel,#systemLogPanel{scroll-margin-top:54px}
+  .historyPanel{padding:10px}.historyHead{gap:6px}.historySummary{font-size:7px}
+  .progressBox{padding:8px}.progressLabel{font-size:7px}
+  .cloudGrid{gap:5px}.cloudMini{padding:7px}.cloudMini small{font-size:6.5px}.cloudMini b{font-size:10px}
+  .footer{padding-bottom:8px}
+}
+
 </style>
 <!-- outcome-sound-v2 -->
 </head>
@@ -184,7 +255,15 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
   </div></section>
 
-  <section class="panel authCompact">
+  <div class="appToolbar" id="appToolbar">
+    <div class="viewSwitch" role="group" aria-label="Modo de interfaz">
+      <button type="button" id="simpleView" class="active">SIMPLE</button>
+      <button type="button" id="proView">PRO</button>
+    </div>
+    <button type="button" id="soundToggle" class="soundToggle" aria-label="Activar o desactivar sonidos">🔊 SONIDO</button>
+  </div>
+
+  <section id="connectPanel" class="panel authCompact appSection">
     <div class="authCompactInner">
       <div class="authBrand"><div class="authOrb">⚡</div><div class="authBrandText"><b>CONECTAR DERIV</b><span>Acceso seguro a tu cuenta</span></div></div>
       <label>App ID<input id="app" placeholder="App ID" inputmode="numeric" autocomplete="off"></label>
@@ -194,7 +273,7 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     </div>
   </section>
 
-  <section class="panel sessionPanel">
+  <section id="sessionPanel" class="panel sessionPanel appSection">
     <div class="panel-head"><div class="panel-title">02 // CONTROL DE SESIÓN</div><span class="chip">CONFIGURACIÓN RÁPIDA</span></div>
     <div class="sessionLayout">
       <div>
@@ -213,13 +292,19 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     <div class="statusStrip"><span>ESTADO DE SESIÓN</span><span id="status">CARGANDO IA…</span></div>
   </section>
 
-  <section class="panel decisionPanel">
+  <section id="signalPanel" class="panel decisionPanel appSection">
     <div class="panel-head"><div class="panel-title">03 // SEÑAL PRINCIPAL</div><span class="chip" id="decisionChip">LIVE ANALYSIS</span></div>
     <div class="signalLayout">
       <div class="signalMain">
         <div class="signalLabel">DECISIÓN ACTUAL DE LA IA</div>
         <div id="decision" class="decision stateWait">APRENDIENDO</div>
         <div id="reason" class="reason">Cargando memoria, sincronizando nube y observando contexto.</div>
+        <div class="signalMini">
+          <span><small>RIESGO</small><b id="signalRiskMini">—</b></span>
+          <span><small>CONFIANZA</small><b id="signalConfidenceMini">—</b></span>
+          <span><small>CALIDAD</small><b id="signalQualityMini">—</b></span>
+          <span><small>CONTEXTO</small><b id="signalContextMini">—</b></span>
+        </div>
         <div class="signalQuick"><span class="signalLabel">CONFIANZA DE SEÑAL</span><b id="confidenceText">0%</b></div>
         <div class="meterWrap"><div class="meter"><i id="meter"></i></div><div></div></div>
       </div>
@@ -229,8 +314,8 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     </div>
   </section>
 
-  <section class="panel analyzerPanel">
-    <div class="panel-head"><div class="panel-title">LIVE // VOLATILITY 75 ANALYZER</div><span class="chip" id="visualFeedChip">PUBLIC STREAM</span></div>
+  <section id="analyzerPanel" class="panel analyzerPanel appSection">
+    <div class="panel-head"><div class="panel-title">LIVE // VOLATILITY 75 ANALYZER</div><div class="panelTools"><button type="button" id="chartToggle" class="miniTool">AMPLIAR</button><span class="chip" id="visualFeedChip">PUBLIC STREAM</span></div></div>
     <div class="analyzerGrid">
       <div class="chartBox">
         <div class="chartHud"><span class="analysisPulse"></span><span id="analysisState">CONECTANDO STREAM R_75…</span></div>
@@ -251,7 +336,7 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     <div class="card"><small>Confianza IA</small><b id="confidence">—</b></div><div class="card hot"><small>Calidad de señal</small><b id="quality">—</b></div><div class="card"><small>Contexto IA</small><b id="contextState">—</b></div>
   </div>
 
-  <section class="panel historyPanel">
+  <section id="historyPanel" class="panel historyPanel appSection">
     <div class="historyHead">
       <div><div class="panel-title">HISTORIAL // MIS OPERACIONES</div><div class="historySummary">Guardado en este dispositivo <span class="historyCount" id="historyCount">0</span></div></div>
       <button id="historyToggle" type="button">◉ VER HISTORIAL</button>
@@ -262,18 +347,18 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     </div>
   </section>
 
-  <div class="grid">
+  <div id="learningMetrics" class="grid proOnly">
     <div class="card"><small>Ticks aprendidos</small><b id="learnedTicks">0</b></div><div class="card"><small>Trades aprendidos</small><b id="learnedTrades">0</b></div><div class="card"><small>Horizonte adaptativo</small><b id="horizon">1T</b></div><div class="card hot"><small>Salud del modelo</small><b id="health">—</b></div>
   </div>
 
-  <section class="panel"><div class="panel-head"><div class="panel-title">04 // OBJETIVO DE SESIÓN</div><span class="chip">TP / SL MONITOR</span></div>
+  <section id="objectivePanel" class="panel appSection"><div class="panel-head"><div class="panel-title">04 // OBJETIVO DE SESIÓN</div><span class="chip">TP / SL MONITOR</span></div>
     <div class="progressGrid">
       <div class="progressBox"><div class="progressLabel"><span>Progreso hacia TP</span><span id="tpText">0%</span></div><div class="bar"><i id="tpFill"></i></div></div>
       <div class="progressBox"><div class="progressLabel"><span>Uso de Stop Loss</span><span id="slText">0%</span></div><div class="bar"><i id="slFill"></i></div></div>
     </div>
   </section>
 
-  <section class="panel"><div class="panel-head"><div class="panel-title">05 // CLOUD MEMORY 24/7</div><span class="chip">RAILWAY NODE</span></div>
+  <section id="cloudPanel" class="panel appSection proOnly"><div class="panel-head"><div class="panel-title">05 // CLOUD MEMORY 24/7</div><span class="chip">RAILWAY NODE</span></div>
     <div class="cloudGrid"><div class="cloudMini"><small>Estado nube</small><b id="cloudState">CHECKING</b></div><div class="cloudMini"><small>Ticks cloud</small><b id="cloudTicks">—</b></div><div class="cloudMini"><small>Último dígito</small><b id="cloudDigit">—</b></div><div class="cloudMini"><small>Uptime</small><b id="cloudUptime">—</b></div><div class="cloudMini"><small>Shadow trades</small><b id="shadowTrades">—</b></div><div class="cloudMini"><small>Shadow wins</small><b id="shadowWins">—</b></div><div class="cloudMini"><small>Shadow matches</small><b id="shadowMatches">—</b></div><div class="cloudMini"><small>Modelos activos</small><b id="shadowModels">—</b></div><div class="cloudMini"><small>Experiencias compartidas</small><b id="sharedAccepted">—</b></div><div class="cloudMini"><small>Duplicados filtrados</small><b id="sharedDuplicates">—</b></div><div class="cloudMini"><small>Champion cloud</small><b id="cloudChampion">—</b></div><div class="cloudMini"><small>Mejor challenger</small><b id="cloudChallenger">—</b></div><div class="cloudMini"><small>Promociones</small><b id="cloudPromotions">0</b></div></div>
   </section>
 
@@ -282,15 +367,66 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     <button id="resetMemory" class="danger" style="margin-top:10px">BORRAR MEMORIA IA LOCAL</button>
   </section>
 
-  <section class="panel"><div class="panel-head"><div class="panel-title">06 // SYSTEM LOG</div><span class="chip">LIVE TRACE</span></div><div id="log" class="log"></div></section>
+  <section id="systemLogPanel" class="panel proOnly"><div class="panel-head"><div class="panel-title">06 // SYSTEM LOG</div><span class="chip">LIVE TRACE</span></div><div id="log" class="log"></div></section>
   <div class="footer">NEXUS DIFFER AI // VOLATILITY TERMINAL</div>
 </div>
+
+<nav class="bottomNav" id="bottomNav" aria-label="Navegación rápida">
+  <button type="button" data-target="sessionPanel" class="active"><span>⌂</span><b>INICIO</b></button>
+  <button type="button" data-target="signalPanel"><span>◈</span><b>IA</b></button>
+  <button type="button" data-target="historyPanel"><span>≡</span><b>HISTORIAL</b></button>
+  <button type="button" data-target="cloudPanel" data-pro="1"><span>☁</span><b>NUBE</b></button>
+</nav>
 
 <script src="demo.js?v=real-pro-balance-v1"></script>
 <script src="ai-brain.js?v=intelligence-v4-adaptive-sound"></script>
 <script>
 (function(){
   var q=function(id){return document.getElementById(id)};
+  var nexusView=localStorage.getItem('NEXUS_VIEW_MODE')||'simple';
+  var nexusSoundEnabled=localStorage.getItem('NEXUS_SOUND')!=='off';
+  function setNexusView(mode){
+    nexusView=mode==='pro'?'pro':'simple';
+    document.body.classList.toggle('simpleMode',nexusView==='simple');
+    document.body.classList.toggle('proMode',nexusView==='pro');
+    var s=q('simpleView'),p=q('proView');
+    if(s)s.classList.toggle('active',nexusView==='simple');
+    if(p)p.classList.toggle('active',nexusView==='pro');
+    localStorage.setItem('NEXUS_VIEW_MODE',nexusView);
+  }
+  function updateSoundButton(){
+    var b=q('soundToggle');if(!b)return;
+    b.classList.toggle('muted',!nexusSoundEnabled);
+    b.textContent=nexusSoundEnabled?'🔊 SONIDO':'🔇 SILENCIO';
+  }
+  setNexusView(nexusView);updateSoundButton();
+  q('simpleView')?.addEventListener('click',function(){setNexusView('simple')});
+  q('proView')?.addEventListener('click',function(){setNexusView('pro')});
+  q('soundToggle')?.addEventListener('click',function(){
+    nexusSoundEnabled=!nexusSoundEnabled;
+    localStorage.setItem('NEXUS_SOUND',nexusSoundEnabled?'on':'off');
+    updateSoundButton();
+    if(nexusSoundEnabled)unlockNexusAudio();
+  });
+  q('chartToggle')?.addEventListener('click',function(){
+    var p=q('analyzerPanel');if(!p)return;
+    var collapsed=p.classList.toggle('chartCollapsed');
+    q('chartToggle').textContent=collapsed?'AMPLIAR':'COMPACTAR';
+    setTimeout(function(){try{drawVolChart()}catch(_){}},40);
+  });
+  if(innerWidth<=620){q('analyzerPanel')?.classList.add('chartCollapsed')}
+  document.querySelectorAll('#bottomNav button').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      document.querySelectorAll('#bottomNav button').forEach(function(x){x.classList.remove('active')});
+      btn.classList.add('active');
+      if(btn.dataset.pro==='1'&&nexusView==='simple'){
+        setNexusView('pro');
+        q('cloudPanel')?.classList.add('navReveal');
+      }
+      var target=q(btn.dataset.target);
+      if(target)target.scrollIntoView({behavior:'smooth',block:'start'});
+    });
+  });
   var tradeFxTimer=null;
   window.nexusTradeEffect=function(type,data){
     var fx=q('tradeFx'),cash=String.fromCharCode(36);if(!fx)return;
@@ -342,6 +478,7 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     o.start(nexusAudio.currentTime+start);o.stop(nexusAudio.currentTime+start+duration+.03);
   }
   window.nexusOutcomeSound=function(kind){
+    if(!nexusSoundEnabled)return;
     unlockNexusAudio();
     if(!nexusAudio||!nexusAudioReady)return;
     if(kind==='win'){
@@ -468,6 +605,10 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
     var tpPct=clamp(Math.max(0,pnl)/tp*100,0,100),slPct=clamp(Math.max(0,-pnl)/sl*100,0,100);
     q('tpFill').style.width=tpPct.toFixed(1)+'%';q('tpText').textContent=tpPct.toFixed(0)+'%';q('slFill').style.width=slPct.toFixed(1)+'%';q('slText').textContent=slPct.toFixed(0)+'%';
     var conf=q('confidence').textContent||'—';q('confidenceText').textContent=conf==='—'?'0%':conf;
+    if(q('signalRiskMini'))q('signalRiskMini').textContent=q('risk').textContent||'—';
+    if(q('signalConfidenceMini'))q('signalConfidenceMini').textContent=conf;
+    if(q('signalQualityMini'))q('signalQualityMini').textContent=q('quality').textContent||'—';
+    if(q('signalContextMini'))q('signalContextMini').textContent=q('contextState').textContent||'—';
     var auth=(q('authStatus').textContent||'').toUpperCase();var connected=auth.indexOf('CONECTADO')>=0&&auth.indexOf('NO CONECTADO')<0&&auth.indexOf('DESCONECTADO')<0;q('derivBadge').textContent=connected?'ONLINE':'OFFLINE';q('derivBadge').style.color=connected?'#00ff88':'#ff7792';
     var st=(q('status').textContent||'').toUpperCase();q('coreMode').textContent=st.indexOf('AUTO IA ACTIVO')>=0?'AUTO EXECUTION':st.indexOf('PAUSA')>=0?'SAFE PAUSE':'OBSERVING MARKET';
     var dec=(q('decision').textContent||'').toUpperCase();q('decisionChip').textContent=dec.indexOf('COMPRAR')>=0?'SIGNAL LOCKED':dec.indexOf('PAUSA')>=0?'RISK HOLD':'LIVE ANALYSIS';
