@@ -880,7 +880,8 @@ function processDigit(d,epoch,isLive,quote){
   const q=Number(quote);
   priceHist.push(Number.isFinite(q)?q:(priceHist.length?priceHist[priceHist.length-1]:0));
   motionHist.push(motionSnapshot(priceHist));
-  if(hist.length>MAX_HIST){hist.shift();epochs.shift();priceHist.shift();motionHist.shift()}
+  if(hist.length>MAX_HIST){hist.shift();epochs.shift();motionHist.shift()}
+  if(priceHist.length>MAX_HIST)priceHist.shift();
   if(epoch)mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),epoch);
   if(isLive){
     liveTickCounter++;
@@ -952,6 +953,9 @@ async function syncFromCloud(){
             const miss=hist.length-motionHist.length;
             motionHist=Array(miss).fill(null).concat(motionHist);
           }
+        }else{
+          priceHist=[];
+          motionHist=Array(hist.length).fill(null);
         }
       }
       if(Number.isFinite(Number(data.lastEpoch))){
