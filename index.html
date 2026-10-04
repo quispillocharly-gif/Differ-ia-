@@ -242,6 +242,33 @@ body.proMode #learningMetrics{display:grid}
   .footer{padding-bottom:8px}
 }
 
+
+/* ===== SIMPLE / PRO MODE FIX ===== */
+.viewStatus{flex:1;text-align:center;color:#6f9786;font:800 8px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:1px;white-space:nowrap}
+.proQuickPanel{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:7px 0 10px;padding:7px;border:1px solid rgba(53,231,255,.20);border-radius:14px;background:linear-gradient(180deg,rgba(53,231,255,.045),rgba(0,255,136,.025));box-shadow:0 0 18px rgba(53,231,255,.04)}
+.proQuickPanel div{min-height:49px;padding:7px 6px;border:1px solid rgba(53,231,255,.10);border-radius:10px;background:rgba(0,0,0,.16);display:flex;flex-direction:column;align-items:center;justify-content:center}
+.proQuickPanel small{color:#658b79;font:700 7px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.75px}
+.proQuickPanel b{margin-top:4px;color:#8fffd0;font-size:11px}
+body.simpleMode #proQuickPanel{display:none!important}
+body.proMode #proQuickPanel{display:grid!important}
+body.simpleMode #cloudPanel,
+body.simpleMode #systemLogPanel,
+body.simpleMode #learningMetrics{display:none!important}
+body.proMode #cloudPanel,
+body.proMode #systemLogPanel{display:block!important}
+body.proMode #learningMetrics{display:grid!important}
+body.proMode .viewStatus{color:#35e7ff;text-shadow:0 0 10px rgba(53,231,255,.25)}
+body.simpleMode .viewStatus{color:#85ffc0}
+.viewSwitch button.active{transform:none!important;filter:brightness(1.15);outline:1px solid rgba(0,255,136,.16)}
+#proView.active{color:#b8f7ff!important;border-color:rgba(53,231,255,.38)!important;background:rgba(53,231,255,.12)!important;box-shadow:0 0 15px rgba(53,231,255,.10)!important}
+@media(max-width:620px){
+  .appToolbar{grid-template-columns:auto 1fr auto}
+  .viewStatus{font-size:7px;letter-spacing:.6px}
+  .proQuickPanel{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:5px;margin:5px 0 8px}
+  .proQuickPanel div{min-height:43px;padding:5px 3px}
+  .proQuickPanel small{font-size:6px}.proQuickPanel b{font-size:9px}
+}
+
 </style>
 <!-- outcome-sound-v2 -->
 </head>
@@ -260,7 +287,15 @@ body.proMode #learningMetrics{display:grid}
       <button type="button" id="simpleView" class="active">SIMPLE</button>
       <button type="button" id="proView">PRO</button>
     </div>
+    <span class="viewStatus" id="viewStatus">VISTA SIMPLE</span>
     <button type="button" id="soundToggle" class="soundToggle" aria-label="Activar o desactivar sonidos">🔊 SONIDO</button>
+  </div>
+
+  <div id="proQuickPanel" class="proQuickPanel proOnly" aria-live="polite">
+    <div><small>SALUD IA</small><b id="proHealthMini">—</b></div>
+    <div><small>TICKS IA</small><b id="proTicksMini">0</b></div>
+    <div><small>CHAMPION</small><b id="proChampionMini">—</b></div>
+    <div><small>CHALLENGER</small><b id="proChallengerMini">—</b></div>
   </div>
 
   <section id="connectPanel" class="panel authCompact appSection">
@@ -387,12 +422,13 @@ body.proMode #learningMetrics{display:grid}
   var nexusSoundEnabled=localStorage.getItem('NEXUS_SOUND')!=='off';
   function setNexusView(mode){
     nexusView=mode==='pro'?'pro':'simple';
-    document.body.classList.toggle('simpleMode',nexusView==='simple');
-    document.body.classList.toggle('proMode',nexusView==='pro');
-    var s=q('simpleView'),p=q('proView');
+    document.body.classList.remove('simpleMode','proMode');
+    document.body.classList.add(nexusView==='pro'?'proMode':'simpleMode');
+    var s=q('simpleView'),p=q('proView'),v=q('viewStatus');
     if(s)s.classList.toggle('active',nexusView==='simple');
     if(p)p.classList.toggle('active',nexusView==='pro');
-    localStorage.setItem('NEXUS_VIEW_MODE',nexusView);
+    if(v)v.textContent=nexusView==='pro'?'VISTA PRO ACTIVA':'VISTA SIMPLE';
+    try{localStorage.setItem('NEXUS_VIEW_MODE',nexusView)}catch(_){}
   }
   function updateSoundButton(){
     var b=q('soundToggle');if(!b)return;
@@ -400,31 +436,30 @@ body.proMode #learningMetrics{display:grid}
     b.textContent=nexusSoundEnabled?'🔊 SONIDO':'🔇 SILENCIO';
   }
   setNexusView(nexusView);updateSoundButton();
-  q('simpleView')?.addEventListener('click',function(){setNexusView('simple')});
-  q('proView')?.addEventListener('click',function(){setNexusView('pro')});
-  q('soundToggle')?.addEventListener('click',function(){
+  var simpleBtn=q('simpleView'),proBtn=q('proView'),soundBtn=q('soundToggle'),chartBtn=q('chartToggle');
+  if(simpleBtn)simpleBtn.addEventListener('click',function(){setNexusView('simple')});
+  if(proBtn)proBtn.addEventListener('click',function(){setNexusView('pro')});
+  if(soundBtn)soundBtn.addEventListener('click',function(){
     nexusSoundEnabled=!nexusSoundEnabled;
-    localStorage.setItem('NEXUS_SOUND',nexusSoundEnabled?'on':'off');
+    try{localStorage.setItem('NEXUS_SOUND',nexusSoundEnabled?'on':'off')}catch(_){}
     updateSoundButton();
     if(nexusSoundEnabled)unlockNexusAudio();
   });
-  q('chartToggle')?.addEventListener('click',function(){
+  if(chartBtn)chartBtn.addEventListener('click',function(){
     var p=q('analyzerPanel');if(!p)return;
     var collapsed=p.classList.toggle('chartCollapsed');
-    q('chartToggle').textContent=collapsed?'AMPLIAR':'COMPACTAR';
+    chartBtn.textContent=collapsed?'AMPLIAR':'COMPACTAR';
     setTimeout(function(){try{drawVolChart()}catch(_){}},40);
   });
-  if(innerWidth<=620){q('analyzerPanel')?.classList.add('chartCollapsed')}
-  document.querySelectorAll('#bottomNav button').forEach(function(btn){
+  var analyzerForMode=q('analyzerPanel');
+  if(window.innerWidth<=620&&analyzerForMode)analyzerForMode.classList.add('chartCollapsed');
+  Array.prototype.forEach.call(document.querySelectorAll('#bottomNav button'),function(btn){
     btn.addEventListener('click',function(){
-      document.querySelectorAll('#bottomNav button').forEach(function(x){x.classList.remove('active')});
+      Array.prototype.forEach.call(document.querySelectorAll('#bottomNav button'),function(x){x.classList.remove('active')});
       btn.classList.add('active');
-      if(btn.dataset.pro==='1'&&nexusView==='simple'){
-        setNexusView('pro');
-        q('cloudPanel')?.classList.add('navReveal');
-      }
-      var target=q(btn.dataset.target);
-      if(target)target.scrollIntoView({behavior:'smooth',block:'start'});
+      if(btn.getAttribute('data-pro')==='1'&&nexusView==='simple')setNexusView('pro');
+      var target=q(btn.getAttribute('data-target'));
+      if(target&&target.scrollIntoView)target.scrollIntoView({behavior:'smooth',block:'start'});
     });
   });
   var tradeFxTimer=null;
@@ -609,6 +644,8 @@ body.proMode #learningMetrics{display:grid}
     if(q('signalConfidenceMini'))q('signalConfidenceMini').textContent=conf;
     if(q('signalQualityMini'))q('signalQualityMini').textContent=q('quality').textContent||'—';
     if(q('signalContextMini'))q('signalContextMini').textContent=q('contextState').textContent||'—';
+    if(q('proHealthMini'))q('proHealthMini').textContent=q('health').textContent||'—';
+    if(q('proTicksMini'))q('proTicksMini').textContent=q('learnedTicks').textContent||'0';
     var auth=(q('authStatus').textContent||'').toUpperCase();var connected=auth.indexOf('CONECTADO')>=0&&auth.indexOf('NO CONECTADO')<0&&auth.indexOf('DESCONECTADO')<0;q('derivBadge').textContent=connected?'ONLINE':'OFFLINE';q('derivBadge').style.color=connected?'#00ff88':'#ff7792';
     var st=(q('status').textContent||'').toUpperCase();q('coreMode').textContent=st.indexOf('AUTO IA ACTIVO')>=0?'AUTO EXECUTION':st.indexOf('PAUSA')>=0?'SAFE PAUSE':'OBSERVING MARKET';
     var dec=(q('decision').textContent||'').toUpperCase();q('decisionChip').textContent=dec.indexOf('COMPRAR')>=0?'SIGNAL LOCKED':dec.indexOf('PAUSA')>=0?'RISK HOLD':'LIVE ANALYSIS';
@@ -622,7 +659,7 @@ body.proMode #learningMetrics{display:grid}
       var d=await r.json(),online=d.status==='ONLINE';
       q('cloudState').textContent=online?'ONLINE':'SYNCING';q('cloudState').style.color=online?'#00ff88':'#ffd05a';q('cloudBadge').textContent=online?'ONLINE':'SYNCING';q('cloudBadge').style.color=online?'#00ff88':'#ffd05a';q('memBadge').textContent='CLOUD';
       q('cloudTicks').textContent=Number(d.tickCount||0).toLocaleString();q('cloudDigit').textContent=Number.isInteger(d.lastDigit)?'D'+d.lastDigit:'—';
-      var sh=d.shadow||{};q('shadowTrades').textContent=Number(sh.total||0).toLocaleString();q('shadowWins').textContent=Number(sh.wins||0).toLocaleString();q('shadowMatches').textContent=Number(sh.matches||0).toLocaleString();q('shadowModels').textContent=Number(sh.modelCount||0);var co=d.collaborative||{};q('sharedAccepted').textContent=Number(co.accepted||0).toLocaleString();q('sharedDuplicates').textContent=Number(co.duplicates||0).toLocaleString();var tr=sh.tournament||{};var pretty=function(x){return String(x||'—').replace('recentFocus','RECENT').replace('contextFocus','CONTEXT').replace('robust','ROBUST').replace('base','BASE')};q('cloudChampion').textContent=pretty(tr.champion);q('cloudChallenger').textContent=pretty(tr.bestChallenger);q('cloudPromotions').textContent=Number(tr.promotions||0);
+      var sh=d.shadow||{};q('shadowTrades').textContent=Number(sh.total||0).toLocaleString();q('shadowWins').textContent=Number(sh.wins||0).toLocaleString();q('shadowMatches').textContent=Number(sh.matches||0).toLocaleString();q('shadowModels').textContent=Number(sh.modelCount||0);var co=d.collaborative||{};q('sharedAccepted').textContent=Number(co.accepted||0).toLocaleString();q('sharedDuplicates').textContent=Number(co.duplicates||0).toLocaleString();var tr=sh.tournament||{};var pretty=function(x){return String(x||'—').replace('recentFocus','RECENT').replace('contextFocus','CONTEXT').replace('robust','ROBUST').replace('base','BASE')};q('cloudChampion').textContent=pretty(tr.champion);q('cloudChallenger').textContent=pretty(tr.bestChallenger);q('cloudPromotions').textContent=Number(tr.promotions||0);if(q('proChampionMini'))q('proChampionMini').textContent=pretty(tr.champion);if(q('proChallengerMini'))q('proChallengerMini').textContent=pretty(tr.bestChallenger);
       var s=Number(d.uptimeSeconds||0),h=Math.floor(s/3600),m=Math.floor((s%3600)/60);q('cloudUptime').textContent=h+'h '+m+'m';
     }catch(e){q('cloudState').textContent='OFFLINE';q('cloudState').style.color='#ff7792';q('cloudBadge').textContent='OFFLINE';q('cloudBadge').style.color='#ff7792'}
   }
