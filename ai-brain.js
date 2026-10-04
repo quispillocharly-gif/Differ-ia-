@@ -145,6 +145,16 @@ function normalizeMemory(x){
     const x=ss[k]||{};
     m.streakStats[k]={n:Math.max(0,Math.floor(safeNum(x.n,0))),matches:Math.max(0,Math.floor(safeNum(x.matches,0)))};
   });
+  const streakSamples=Object.values(m.streakStats).reduce((s,x)=>s+safeNum(x.n,0),0);
+  if(streakSamples===0 && Array.isArray(m.recentTrades) && m.recentTrades.length){
+    let run=0;
+    m.recentTrades.forEach(t=>{
+      const key=run<=2?'0-2':run<=5?'3-5':run<=8?'6-8':run<=11?'9-11':'12+';
+      const st=m.streakStats[key];
+      st.n++;
+      if(t?.loss){st.matches++;run=0}else run++;
+    });
+  }
   const rec=m.recovery||{};
   m.recovery={remaining:Math.max(0,Math.floor(safeNum(rec.remaining,0))),lastMatchAt:Math.max(0,safeNum(rec.lastMatchAt,0))};
   return m;
