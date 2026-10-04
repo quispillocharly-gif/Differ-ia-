@@ -19,6 +19,10 @@ const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
+const TOURNAMENT_NAMES = ['base','recentFocus','contextFocus','robust'];
+const TOURNAMENT_MIN_SAMPLES = 2000;
+const TOURNAMENT_RECENT = 600;
+const TOURNAMENT_COOLDOWN_TICKS = 1800;
 
 let ws = null;
 let reconnectTimer = null;
@@ -92,6 +96,25 @@ function freshCollaborative(){
   };
 }
 
+function freshTournamentStat(){
+  return {
+    samples:0,wins:0,matches:0,matchRate:UNIFORM,
+    brierEWMA:.09,logLossEWMA:Math.log(10),
+    recent:[]
+  };
+}
+function freshTournament(){
+  const candidates={};
+  TOURNAMENT_NAMES.forEach(name=>candidates[name]=freshTournamentStat());
+  return {
+    champion:'base',
+    promotions:0,
+    lastPromotionAt:0,
+    lastPromotionTick:0,
+    candidates
+  };
+}
+
 function freshShadow(){
   return {
     total:0,wins:0,matches:0,matchRate:UNIFORM,edgeVsBaseline:0,
@@ -99,6 +122,7 @@ function freshShadow(){
     performance:freshPerf(),
     calibration:freshCalibration(),
     drift:freshDrift(),
+    tournament:freshTournament(),
     last:null
   };
 }
@@ -207,6 +231,27 @@ function normalizeMemory(x){
     ? d.lossWindow.map(v=>clamp(safeNum(v,0),0,1)).slice(-DRIFT_MAX_WINDOW)
     : [];
   m.shadow.drift=d;
+
+  const rawTournament=sh.tournament&&typeof sh.tournament==='object'?sh.tournament:freshTournament();
+  const tournament={...freshTournament(),...rawTournament};
+  tournament.champion=TOURNAMENT_NAMES.includes(tournament.champion)?tournament.champion:'base';
+  tournament.promotions=Math.max(0,Math.floor(safeNum(tournament.promotions,0)));
+  tournament.lastPromotionAt=Math.max(0,safeNum(tournament.lastPromotionAt,0));
+  tournament.lastPromotionTick=Math.max(0,safeNum(tournament.lastPromotionTick,0));
+  tournament.candidates={};
+  TOURNAMENT_NAMES.forEach(name=>{
+    const raw=rawTournament.candidates?.[name]||{};
+    const st={...freshTournamentStat(),...raw};
+    st.samples=Math.max(0,Math.floor(safeNum(st.samples,0)));
+    st.wins=Math.max(0,Math.floor(safeNum(st.wins,0)));
+    st.matches=Math.max(0,Math.floor(safeNum(st.matches,0)));
+    st.matchRate=st.samples?st.matches/st.samples:UNIFORM;
+    st.brierEWMA=clamp(safeNum(st.brierEWMA,.09),0,1);
+    st.logLossEWMA=clamp(safeNum(st.logLossEWMA,Math.log(10)),.01,12);
+    st.recent=Array.isArray(st.recent)?st.recent.map(x=>x?1:0).slice(-TOURNAMENT_RECENT):[];
+    tournament.candidates[name]=st;
+  });
+  m.shadow.tournament=tournament;
 
   m.shadow.recent = Array.isArray(m.shadow.recent) ? m.shadow.recent.slice(-SHADOW_RECENT_MAX) : [];
   return m;
@@ -510,32 +555,22 @@ function detectDrift(pending,actual){
   }
 }
 
-function ensemblePredict(){
-  if(hist.length<8) return null;
-  const views=modelViews();
+function blendViews(views,multiplier){
   const num=Array(10).fill(0),den=Array(10).fill(0);
-  const modelVotes=[];
-
   for(const v of views){
     const ew=expertWeight(v.name);
-    const w=v.base*(.25+.75*v.support)*ew;
-    const own=v.p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk)[0];
-    modelVotes.push({
-      name:v.name,digit:own.d,risk:own.risk,
-      weight:w,support:v.support,expertWeight:ew
-    });
+    const mult=typeof multiplier==='function'?clamp(safeNum(multiplier(v),1),.08,3.5):1;
+    const w=v.base*(.25+.75*v.support)*ew*mult;
     for(let d=0;d<10;d++){
       num[d]+=v.p[d]*w;
       den[d]+=w;
     }
   }
-
-  const p=normalizeDist(num.map((x,d)=>x/(den[d]||1)));
+  return normalizeDist(num.map((x,d)=>x/(den[d]||1)));
+}
+function predictionFromDist(name,p,views){
   const ranked=p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk);
   const best=ranked[0];
-  const rawRisk=best.risk;
-  const calibratedRisk=calibrateRisk(rawRisk);
-
   const risks=views.map(v=>v.p[best.d]);
   const m=mean(risks);
   const variance=risks.length?risks.reduce((s,x)=>s+(x-m)**2,0)/risks.length:0;
@@ -543,22 +578,160 @@ function ensemblePredict(){
   const support=views.length?views.reduce((s,v)=>s+v.support,0)/views.length:0;
   const calibrationTrust=clamp(1-mem.shadow.calibration.ece*4,.45,1);
   const driftPenalty=mem.shadow.drift.active?.88:1;
-  const confidence=clamp(
-    (.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty,
-    0,1
-  );
+  const confidence=clamp((.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty,0,1);
+  return {
+    name,
+    probabilities:p,
+    digit:best.d,
+    rawRisk:best.risk,
+    risk:calibrateRisk(best.risk),
+    confidence,
+    disagreement
+  };
+}
+function tournamentPredictions(views,baseP){
+  const out={};
+  out.base=predictionFromDist('base',baseP,views);
+
+  const recentP=blendViews(views,v=>{
+    if(v.name==='recent25')return 2.15;
+    if(v.name==='recent100')return 1.55;
+    if(v.name==='ctx1')return 1.45;
+    if(v.name==='global'||v.name==='recent300')return .55;
+    if(v.name==='ctx3')return .75;
+    return 1;
+  });
+  out.recentFocus=predictionFromDist('recentFocus',recentP,views);
+
+  const contextP=blendViews(views,v=>{
+    if(v.name==='ctx2')return 1.75;
+    if(v.name==='ctx3')return 2.10;
+    if(v.name==='collab')return 1.25;
+    if(v.name==='recent25')return .65;
+    if(v.name==='global')return .75;
+    return 1;
+  });
+  out.contextFocus=predictionFromDist('contextFocus',contextP,views);
+
+  const avg=baseP;
+  const robustRaw=avg.map((x,d)=>{
+    const vals=views.map(v=>safeNum(v.p[d],UNIFORM)).sort((a,b)=>a-b);
+    const upper=vals.length?vals[Math.min(vals.length-1,Math.floor(vals.length*.75))]:UNIFORM;
+    return .62*x+.38*upper;
+  });
+  out.robust=predictionFromDist('robust',normalizeDist(robustRaw),views);
+  return out;
+}
+function tournamentRecentRate(stat){
+  if(!stat?.recent?.length)return UNIFORM;
+  return stat.recent.reduce((a,b)=>a+b,0)/stat.recent.length;
+}
+function tournamentScore(stat){
+  const recent=tournamentRecentRate(stat);
+  return .68*recent+.32*safeNum(stat?.brierEWMA,.09);
+}
+function updateTournament(candidateSet,actual){
+  const t=mem.shadow.tournament;
+  if(!candidateSet||!t)return;
+  TOURNAMENT_NAMES.forEach(name=>{
+    const pred=candidateSet[name],st=t.candidates[name];
+    if(!pred||!st||!Array.isArray(pred.probabilities))return;
+    const match=actual===pred.digit?1:0;
+    const prob=clamp(safeNum(pred.probabilities[actual],UNIFORM),.0001,.9999);
+    const brier=pred.probabilities.reduce((sum,x,d)=>{
+      const y=d===actual?1:0,err=safeNum(x,UNIFORM)-y;
+      return sum+err*err;
+    },0)/10;
+    const logLoss=-Math.log(prob);
+    st.samples++;
+    st.matches+=match;
+    st.wins+=match?0:1;
+    st.matchRate=st.matches/st.samples;
+    const a=st.samples<180?.035:.012;
+    st.brierEWMA=(1-a)*safeNum(st.brierEWMA,.09)+a*brier;
+    st.logLossEWMA=(1-a)*safeNum(st.logLossEWMA,Math.log(10))+a*logLoss;
+    st.recent.push(match);
+    if(st.recent.length>TOURNAMENT_RECENT)st.recent.shift();
+  });
+
+  const current=t.candidates[t.champion];
+  if(!current||current.samples<TOURNAMENT_MIN_SAMPLES)return;
+  if(mem.tickCount-safeNum(t.lastPromotionTick,0)<TOURNAMENT_COOLDOWN_TICKS)return;
+
+  let bestName=t.champion,bestScore=tournamentScore(current);
+  for(const name of TOURNAMENT_NAMES){
+    if(name===t.champion)continue;
+    const st=t.candidates[name];
+    if(!st||st.samples<TOURNAMENT_MIN_SAMPLES||st.recent.length<TOURNAMENT_RECENT)return;
+    const score=tournamentScore(st);
+    const recentGain=tournamentRecentRate(current)-tournamentRecentRate(st);
+    const brierOkay=st.brierEWMA<=current.brierEWMA+.0015;
+    const logOkay=st.logLossEWMA<=current.logLossEWMA+.025;
+    if(recentGain>=.006 && brierOkay && logOkay && score<bestScore-.003){
+      bestName=name;bestScore=score;
+    }
+  }
+  if(bestName!==t.champion){
+    console.log('Champion promoted:',{from:t.champion,to:bestName,tick:mem.tickCount});
+    t.champion=bestName;
+    t.promotions++;
+    t.lastPromotionAt=Date.now();
+    t.lastPromotionTick=mem.tickCount;
+  }
+}
+function tournamentSummary(){
+  const t=mem.shadow.tournament;
+  const candidates={};
+  TOURNAMENT_NAMES.forEach(name=>{
+    const s=t.candidates[name];
+    candidates[name]={
+      samples:s.samples,
+      matchRate:Number(s.matchRate.toFixed(5)),
+      recentMatchRate:Number(tournamentRecentRate(s).toFixed(5)),
+      brierEWMA:Number(s.brierEWMA.toFixed(5)),
+      logLossEWMA:Number(s.logLossEWMA.toFixed(4)),
+      score:Number(tournamentScore(s).toFixed(5))
+    };
+  });
+  const ranked=TOURNAMENT_NAMES.slice().sort((a,b)=>tournamentScore(t.candidates[a])-tournamentScore(t.candidates[b]));
+  return {
+    champion:t.champion,
+    bestChallenger:ranked.find(x=>x!==t.champion)||t.champion,
+    promotions:t.promotions,
+    minSamples:TOURNAMENT_MIN_SAMPLES,
+    candidates
+  };
+}
+
+function ensemblePredict(){
+  if(hist.length<8) return null;
+  const views=modelViews();
+  const modelVotes=[];
+  for(const v of views){
+    const ew=expertWeight(v.name);
+    const w=v.base*(.25+.75*v.support)*ew;
+    const own=v.p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk)[0];
+    modelVotes.push({name:v.name,digit:own.d,risk:own.risk,weight:w,support:v.support,expertWeight:ew});
+  }
+
+  const baseP=blendViews(views,()=>1);
+  const candidateSet=tournamentPredictions(views,baseP);
+  const championName=mem.shadow.tournament?.champion||'base';
+  const champion=candidateSet[championName]||candidateSet.base;
 
   return {
     horizon:1,
     signalEpoch:lastEpoch,
-    digit:best.d,
-    risk:calibratedRisk,
-    rawRisk,
-    confidence,
-    probabilities:p,
+    digit:champion.digit,
+    risk:champion.risk,
+    rawRisk:champion.rawRisk,
+    confidence:champion.confidence,
+    probabilities:champion.probabilities,
     modelVotes,
     calibrationECE:mem.shadow.calibration.ece,
     driftActive:mem.shadow.drift.active,
+    champion:championName,
+    candidateSet,
     generatedAt:Date.now()
   };
 }
@@ -577,6 +750,7 @@ function evaluateShadow(actual){
   updateCalibration(p.rawRisk??p.risk,match);
   hedgeUpdate(p,actual);
   detectDrift(p,actual);
+  updateTournament(p.candidateSet,actual);
 
   sh.last={
     ts:Date.now(),
@@ -603,7 +777,8 @@ function prepareShadow(){
   const distributions={};
   for(const v of modelViews()) distributions[v.name]=v.p.slice();
   shadowPending={...pred,modelDistributions:distributions};
-  lastPrediction=pred;
+  const {candidateSet,...publicPrediction}=pred;
+  lastPrediction=publicPrediction;
 }
 
 function processDigit(d,epoch){
@@ -869,7 +1044,8 @@ app.get('/api/cloud/status',(req,res)=>{
       hedgeEta:HEDGE_ETA,
       performance:performanceSummary(),
       calibration:calibrationSummary(),
-      drift:driftSummary()
+      drift:driftSummary(),
+      tournament:tournamentSummary()
     },
     collaborative:{
       accepted:mem.collaborative.accepted,
@@ -891,7 +1067,8 @@ app.get('/api/cloud/prediction',(req,res)=>{
     prediction:lastPrediction,
     shadow:mem.shadow.last,
     calibration:calibrationSummary(),
-    drift:driftSummary()
+    drift:driftSummary(),
+    tournament:tournamentSummary()
   });
 });
 
@@ -907,7 +1084,8 @@ app.get('/api/cloud/shadow',(req,res)=>{
     recent:mem.shadow.recent.slice(-100),
     performance:performanceSummary(),
     calibration:calibrationSummary(),
-    drift:driftSummary()
+    drift:driftSummary(),
+    tournament:tournamentSummary()
   });
 });
 
