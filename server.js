@@ -15,7 +15,7 @@ const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
 const VERSION = 1;
-const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','collab'];
+const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','collab'];
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
@@ -28,6 +28,8 @@ let ws = null;
 let reconnectTimer = null;
 let saveTimer = null;
 let hist = [];
+let priceHist = [];
+let motionHist = [];
 let lastEpoch = 0;
 let liveTickCount = 0;
 let startedAt = Date.now();
@@ -138,12 +140,14 @@ function freshMemory(){
     updatedAt: Date.now(),
     tickCount: 0,
     models,
+    motionModels:{1:{},2:{},3:{}},
     globalP: blankP(),
     globalN: 0,
     modelLoss: {},
     delayEWMA: 1,
     lastMarketEpoch: 0,
     deepHistory: [],
+    deepPrices: [],
     collaborative: freshCollaborative(),
     shadow: freshShadow(),
     saves: 0
@@ -160,11 +164,16 @@ function normalizeMemory(x){
     m.models[h] = m.models[h] || {};
     ORDERS.forEach(o => m.models[h][o] = m.models[h][o] || {});
   });
+  m.motionModels=m.motionModels&&typeof m.motionModels==='object'?m.motionModels:base.motionModels;
+  HORIZONS.forEach(h=>{m.motionModels[h]=m.motionModels[h]&&typeof m.motionModels[h]==='object'?m.motionModels[h]:{}});
 
   m.globalP = Array.isArray(m.globalP) && m.globalP.length===10 ? normalizeDist(m.globalP) : blankP();
   m.modelLoss = m.modelLoss || {};
   m.deepHistory = Array.isArray(m.deepHistory)
     ? m.deepHistory.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-MAX_HIST)
+    : [];
+  m.deepPrices = Array.isArray(m.deepPrices)
+    ? m.deepPrices.map(Number).filter(Number.isFinite).slice(-MAX_HIST)
     : [];
   m.lastMarketEpoch = safeNum(m.lastMarketEpoch,0);
 
@@ -270,6 +279,13 @@ function loadMemory(){
 
 let mem = loadMemory();
 hist = mem.deepHistory.slice(-MAX_HIST);
+priceHist = mem.deepPrices.slice(-MAX_HIST);
+motionHist=[];
+{
+  const build=[];
+  priceHist.forEach(v=>{build.push(v);motionHist.push(motionSnapshot(build))});
+  if(motionHist.length<hist.length)motionHist=Array(hist.length-motionHist.length).fill(null).concat(motionHist);
+}
 lastEpoch = safeNum(mem.lastMarketEpoch,0);
 
 function saveMemory(){
@@ -278,6 +294,7 @@ function saveMemory(){
     mem.updatedAt=Date.now();
     mem.saves=(mem.saves||0)+1;
     mem.deepHistory=hist.slice(-MAX_HIST);
+    mem.deepPrices=priceHist.slice(-MAX_HIST);
     mem.lastMarketEpoch=lastEpoch;
     const tmp=MEMORY_FILE+'.tmp';
     fs.writeFileSync(tmp,JSON.stringify(mem));
@@ -312,6 +329,78 @@ function updateProb(p,target,alpha){
   for(let d=0;d<10;d++) p[d]/=sum;
 }
 
+function motionStd(xs){
+  if(xs.length<2)return 0;
+  const m=mean(xs);
+  return Math.sqrt(mean(xs.map(x=>(x-m)*(x-m))));
+}
+function motionSnapshot(prices=priceHist){
+  if(!Array.isArray(prices)||prices.length<8)return null;
+  const p=prices.slice(-24).map(Number).filter(Number.isFinite);
+  if(p.length<8)return null;
+  const diffs=[];
+  for(let i=1;i<p.length;i++)diffs.push(p[i]-p[i-1]);
+  const scale=Math.max(1e-8,mean(diffs.slice(-12).map(Math.abs)));
+  const slope=n=>p.length<=n?0:(p[p.length-1]-p[p.length-1-n])/(n*scale);
+  const s3=slope(3),s6=slope(6),s10=slope(Math.min(10,p.length-1));
+  const velocity=.55*s3+.30*s6+.15*s10;
+  const acceleration=s3-s6;
+  const absV=Math.abs(velocity);
+  const direction=velocity>.22?'UP':velocity<-.22?'DOWN':'FLAT';
+  const strength=absV>.95?'STRONG':absV>.42?'MED':'WEAK';
+  const accel=acceleration>.35?'ACCEL':acceleration<-.35?'DECEL':'STEADY';
+  const recentDiffs=diffs.slice(-12);
+  const volRatio=motionStd(recentDiffs)/scale;
+  const volatility=volRatio>1.25?'HIGH':volRatio<.72?'LOW':'MID';
+  const signs=recentDiffs.slice(-5).map(x=>x>0?1:x<0?-1:0);
+  const prior=signs.slice(0,-1).filter(Boolean);
+  const last=signs[signs.length-1]||0;
+  const majority=prior.length?Math.sign(prior.reduce((a,b)=>a+b,0)):0;
+  const turn=last&&majority&&last!==majority?'TURN':'FLOW';
+  return {direction,strength,accel,volatility,turn,velocity,acceleration,volRatio,key:[direction,strength,accel,volatility,turn].join('|')};
+}
+function ensureMotionNode(h,key){
+  const bucket=mem.motionModels[h];
+  if(!bucket[key])bucket[key]={p:blankP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function learnMotion(targetDigit,sourceHist){
+  for(const h of HORIZONS){
+    const signalIndex=sourceHist.length-h;
+    if(signalIndex<0)continue;
+    const snap=motionHist[signalIndex];
+    if(!snap?.key)continue;
+    const lastDigit=sourceHist[signalIndex];
+    const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
+    keys.forEach((key,idx)=>{
+      const node=ensureMotionNode(h,key);
+      const alpha=(idx===0?.030:.040)*driftLearningBoost();
+      updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/900)),.012,.070));
+      node.n++;
+      node.last=mem.tickCount;
+    });
+  }
+}
+function motionDist(){
+  const snap=motionSnapshot();
+  if(!snap?.key||!hist.length)return null;
+  const lastDigit=hist[hist.length-1];
+  const keys=['M:'+snap.key,'MD:'+snap.key+'>D'+lastDigit];
+  const num=Array(10).fill(0),den=Array(10).fill(0);
+  let evidence=0,totalN=0;
+  keys.forEach((key,idx)=>{
+    const node=mem.motionModels[1]?.[key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/(idx===0?45:28));
+    const w=(idx===0?.75:1.10)*support;
+    if(w<=.01)return;
+    for(let d=0;d<10;d++){num[d]+=safeNum(node.p[d],UNIFORM)*w;den[d]+=w}
+    evidence+=support;totalN+=safeNum(node.n,0);
+  });
+  if(totalN<1)return null;
+  return {p:normalizeDist(num.map((x,d)=>x/(den[d]||1))),support:clamp(evidence/keys.length,0,1),n:totalN,state:snap};
+}
+
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
     updateProb(mem.globalP,targetDigit,.018*driftLearningBoost());
@@ -333,6 +422,7 @@ function learnDigit(targetDigit,sourceHist){
       node.last=mem.tickCount;
     }
   }
+  learnMotion(targetDigit,sourceHist);
   mem.tickCount++;
 }
 
@@ -346,6 +436,14 @@ function pruneModels(){
     keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
     keys.slice(limit).forEach(k=>delete bucket[k]);
   }));
+  HORIZONS.forEach(h=>{
+    const bucket=mem.motionModels[h]||{};
+    const keys=Object.keys(bucket);
+    if(keys.length>2200){
+      keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
+      keys.slice(2200).forEach(k=>delete bucket[k]);
+    }
+  });
 }
 
 function frequencyDist(windowSize){
@@ -377,6 +475,7 @@ function expertWeight(name){
     else if(name==='global'||name==='recent300') w*=.72;
     else if(name==='ctx1') w*=1.10;
     else if(name==='ctx3') w*=.88;
+    else if(name==='motion') w*=1.08;
     else if(name==='collab') w*=.92;
   }
   return clamp(w,.10,6);
@@ -422,6 +521,8 @@ function modelViews(){
     const c=contextDist(o);
     if(c) views.push({name:'ctx'+o,p:c.p,support:c.support,base:o===1?.95:o===2?1.12:1.22,n:c.n});
   }
+  const motion=motionDist();
+  if(motion)views.push({name:'motion',p:motion.p,support:motion.support,base:.68,n:motion.n,state:motion.state});
   return views;
 }
 
@@ -731,6 +832,7 @@ function ensemblePredict(){
     calibrationECE:mem.shadow.calibration.ece,
     driftActive:mem.shadow.drift.active,
     champion:championName,
+    motion:motionSnapshot(),
     candidateSet,
     generatedAt:Date.now()
   };
@@ -781,14 +883,17 @@ function prepareShadow(){
   lastPrediction=publicPrediction;
 }
 
-function processDigit(d,epoch){
+function processDigit(d,epoch,quote){
   if(!Number.isInteger(d)||d<0||d>9) return;
 
   evaluateShadow(d);
 
   learnDigit(d,hist);
   hist.push(d);
-  if(hist.length>MAX_HIST) hist.shift();
+  const q=Number(quote);
+  priceHist.push(Number.isFinite(q)?q:(priceHist.length?priceHist[priceHist.length-1]:0));
+  motionHist.push(motionSnapshot(priceHist));
+  if(hist.length>MAX_HIST){hist.shift();priceHist.shift();motionHist.shift()}
 
   if(epoch){
     lastEpoch=Math.max(lastEpoch,epoch);
@@ -844,7 +949,7 @@ function connectDeriv(){
         const ep=Number(times[i]||0);
         if(ep&&ep<=safeNum(mem.lastMarketEpoch,0)) continue;
         const d=digitFromQuote(prices[i],pip);
-        if(d!==null) processDigit(d,ep);
+        if(d!==null) processDigit(d,ep,prices[i]);
       }
 
       saveMemory();
@@ -856,7 +961,7 @@ function connectDeriv(){
       const ep=Number(m.tick.epoch||0);
       if(ep&&ep<=lastEpoch) return;
       const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
-      if(d!==null) processDigit(d,ep);
+      if(d!==null) processDigit(d,ep,m.tick.quote);
     }
   });
 
@@ -878,6 +983,7 @@ function browserMemory(){
     updatedAt:mem.updatedAt,
     tickCount:mem.tickCount,
     models:mem.models,
+    motionModels:mem.motionModels,
     globalP:mem.globalP,
     globalN:mem.globalN,
     modelLoss:mem.modelLoss,
@@ -1033,6 +1139,7 @@ app.get('/api/cloud/status',(req,res)=>{
     tickCount:mem.tickCount,
     deepHistorySize:hist.length,
     liveTickCount,lastTickAt,lastDigit,lastPrediction,
+    motion:motionSnapshot(),
     shadow:{
       total:mem.shadow.total,
       wins:mem.shadow.wins,
@@ -1094,6 +1201,7 @@ app.get('/api/cloud/snapshot',(req,res)=>{
   res.json({
     ok:true,status,symbol:SYMBOL,lastEpoch,lastTickAt,lastDigit,
     recentDigits:hist.slice(-120),
+    recentPrices:priceHist.slice(-120),
     memory:browserMemory()
   });
 });
