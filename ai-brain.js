@@ -10,7 +10,7 @@ const UNIFORM=.10;
 const MAX_HIST=1200;
 const LOG_MAX=180;
 const CLOUD_URL='https://differ-ia-cloud-production.up.railway.app';
-const EXPERTS=['global','recent','ctx1','ctx2','ctx3','collab'];
+const EXPERTS=['global','recent','ctx1','ctx2','ctx3','collab','cloud'];
 const BASELINE_LOGLOSS=Math.log(10);
 const BASELINE_BRIER=.09;
 
@@ -25,8 +25,9 @@ let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
 let sharedModel={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
-let sharedSyncTimer=null,sharedLogged=false;
+let sharedSyncTimer=null,sharedLogged=false,cloudPredictionTimer=null;
 let predictionQueue=[];
+let cloudLive={prediction:null,updatedAt:0};
 
 function blankP(){return Array(10).fill(UNIFORM)}
 function freshExpertPerf(){
@@ -367,6 +368,19 @@ function predict(){
   }
   modelViews.push({name:'recent',p:rp,w:rw,n:recent.length});
 
+  // Ensemble cloud 24/7: solo participa si predijo exactamente el mismo tick.
+  const cp=cloudLive.prediction;
+  if(cp && Number(cp.signalEpoch)===Number(lastEpoch) && Date.now()-safeNum(cp.generatedAt,0)<3500){
+    const cpp=normalizeDist(cp.probabilities);
+    const freshness=clamp(1-(Date.now()-cp.generatedAt)/3500,.20,1);
+    const cw=.34*(.25+.75*cp.confidence)*freshness*expertWeight('cloud')*(cp.driftActive?.78:1);
+    for(let d=0;d<10;d++){
+      dist[d]+=cpp[d]*cw;
+      denom[d]+=cw;
+    }
+    modelViews.push({name:'cloud',p:cpp,w:cw,n:safeNum(mem.prequential.samples,0)});
+  }
+
   const p=dist.map((x,d)=>x/(denom[d]||1));
   let sum=p.reduce((a,b)=>a+b,0)||1;
   for(let d=0;d<10;d++)p[d]/=sum;
@@ -547,6 +561,26 @@ function tradeError(e){
   $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
 }
 
+async function syncCloudPrediction(){
+  try{
+    const r=await fetch(CLOUD_URL+'/api/cloud/prediction?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const data=await r.json(),p=data?.prediction;
+    if(!data?.ok||!p||!Array.isArray(p.probabilities)||p.probabilities.length!==10)return;
+    const signalEpoch=Math.floor(safeNum(p.signalEpoch,0));
+    const generatedAt=safeNum(p.generatedAt,0);
+    if(!signalEpoch||!generatedAt)return;
+    cloudLive={prediction:{
+      ...p,
+      probabilities:normalizeDist(p.probabilities),
+      signalEpoch,
+      generatedAt,
+      confidence:clamp(safeNum(p.confidence,0),0,1),
+      driftActive:!!p.driftActive
+    },updatedAt:Date.now()};
+  }catch(_){}
+}
+
 async function syncCollaborative(){
   try{
     const r=await fetch(CLOUD_URL+'/api/cloud/collaborative?ts='+Date.now(),{cache:'no-store'});
@@ -690,9 +724,9 @@ async function syncFromCloud(){
       mem.globalP=cloud.globalP;
       mem.globalN=cloud.globalN;
       mem.modelLoss=cloud.modelLoss;
-      if(cloud.expertPerf)mem.expertPerf=cloud.expertPerf;
-      if(cloud.prequential)mem.prequential=cloud.prequential;
-      if(cloud.drift)mem.drift=cloud.drift;
+      if(data.memory.expertPerf)mem.expertPerf=cloud.expertPerf;
+      if(data.memory.prequential)mem.prequential=cloud.prequential;
+      if(data.memory.drift)mem.drift=cloud.drift;
       mem.tickCount=cloudTicks;
       mem.createdAt=Math.min(safeNum(mem.createdAt,Date.now()),safeNum(cloud.createdAt,Date.now()));
       mem.updatedAt=Math.max(safeNum(mem.updatedAt,0),safeNum(cloud.updatedAt,0));
@@ -799,9 +833,11 @@ window.demoTradeError=tradeError;
 renderSession();
 renderDecision(null);
 log(`IA cargada · memoria: ${mem.tickCount} ticks y ${mem.tradeCount} operaciones aprendidas`);
-syncFromCloud().then(syncCollaborative).finally(()=>{
+syncFromCloud().then(()=>Promise.all([syncCollaborative(),syncCloudPrediction()])).finally(()=>{
   clearInterval(sharedSyncTimer);
+  clearInterval(cloudPredictionTimer);
   sharedSyncTimer=setInterval(syncCollaborative,30000);
+  cloudPredictionTimer=setInterval(syncCloudPrediction,1600);
   connectMarket();
 });
 })();
