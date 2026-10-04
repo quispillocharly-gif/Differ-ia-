@@ -64,6 +64,9 @@ function freshMemory(){
     recentTrades:[],
     recentPicks:[],
     digitStats:Array.from({length:10},()=>({w:0,l:0})),
+    digitCalibration:Array.from({length:10},()=>({n:0,matches:0,predictedSum:0})),
+    errorContexts:[],
+    recovery:{remaining:0,lastMatchAt:0},
     saves:0
   };
 }
@@ -109,6 +112,23 @@ function normalizeMemory(x){
   dr.events=Math.max(0,Math.floor(safeNum(dr.events,0)));
   dr.lastAt=Math.max(0,safeNum(dr.lastAt,0));
   m.drift=dr;
+  m.digitCalibration=Array.from({length:10},(_,d)=>{
+    const x=Array.isArray(m.digitCalibration)?m.digitCalibration[d]:null;
+    return {
+      n:Math.max(0,Math.floor(safeNum(x?.n,0))),
+      matches:Math.max(0,Math.floor(safeNum(x?.matches,0))),
+      predictedSum:Math.max(0,safeNum(x?.predictedSum,0))
+    };
+  });
+  m.errorContexts=Array.isArray(m.errorContexts)?m.errorContexts.slice(-100).map(x=>({
+    ctx:String(x?.ctx||'').slice(-3),
+    digit:Math.max(0,Math.min(9,Math.floor(safeNum(x?.digit,0)))),
+    ts:Math.max(0,safeNum(x?.ts,0)),
+    risk:clamp(safeNum(x?.risk,UNIFORM),0,.5),
+    confidence:clamp(safeNum(x?.confidence,0),0,1)
+  })):[];
+  const rec=m.recovery||{};
+  m.recovery={remaining:Math.max(0,Math.floor(safeNum(rec.remaining,0))),lastMatchAt:Math.max(0,safeNum(rec.lastMatchAt,0))};
   return m;
 }
 
@@ -298,6 +318,49 @@ function updateDrift(score){
     d.active=false;
   }
 }
+function contextSignature(arr=hist){
+  return arr.slice(-3).join('');
+}
+function digitCalibratedRisk(d,risk){
+  const raw=clamp(safeNum(risk,UNIFORM),.005,.30);
+  const st=mem.digitCalibration?.[d];
+  if(!st||st.n<20)return raw;
+  const predAvg=safeNum(st.predictedSum,0)/Math.max(1,st.n);
+  const observed=(safeNum(st.matches,0)+18*UNIFORM)/(safeNum(st.n,0)+18);
+  const bias=clamp(observed-predAvg,-.018,.028);
+  const evidence=1-Math.exp(-st.n/90);
+  return clamp(raw+bias*evidence,Math.max(.005,raw*.72),Math.min(.30,raw*1.38));
+}
+function contextErrorPenalty(d){
+  const ctx=contextSignature();
+  if(!ctx||!Array.isArray(mem.errorContexts))return 0;
+  const now=Date.now();
+  let score=0;
+  for(const x of mem.errorContexts){
+    if(x.digit!==d||x.ctx!==ctx)continue;
+    const ageDays=(now-safeNum(x.ts,now))/86400000;
+    score+=Math.exp(-Math.max(0,ageDays)/3);
+  }
+  return clamp(score*.0014,0,.007);
+}
+function recordPredictionOutcome(item,target){
+  if(!Number.isInteger(item?.digit)||item.digit<0||item.digit>9)return;
+  const st=mem.digitCalibration[item.digit];
+  st.n++;
+  if(target===item.digit)st.matches++;
+  st.predictedSum+=clamp(safeNum(item.risk,UNIFORM),0,.5);
+  if(target===item.digit){
+    mem.errorContexts.push({
+      ctx:String(item.context||''),
+      digit:item.digit,
+      ts:Date.now(),
+      risk:clamp(safeNum(item.risk,UNIFORM),0,.5),
+      confidence:clamp(safeNum(item.confidence,0),0,1)
+    });
+    if(mem.errorContexts.length>100)mem.errorContexts.shift();
+  }
+}
+
 function resolvePredictionQueue(target,counter){
   if(!predictionQueue.length)return;
   const due=[],keep=[];
@@ -312,6 +375,7 @@ function resolvePredictionQueue(target,counter){
     mem.prequential.brierEWMA=.97*safeNum(mem.prequential.brierEWMA,BASELINE_BRIER)+.03*brier;
     mem.prequential.logLossEWMA=.97*safeNum(mem.prequential.logLossEWMA,BASELINE_LOGLOSS)+.03*logLoss;
     (item.experts||[]).forEach(v=>updateExpertPerformance(v.name,v.p,target));
+    recordPredictionOutcome(item,target);
     updateDrift(brier);
   });
 }
@@ -320,6 +384,10 @@ function schedulePrediction(decision,counter){
   predictionQueue.push({
     due:counter+clamp(Math.round(safeNum(decision.h,1)),1,3),
     p:decision.p.slice(),
+    digit:decision.best?.d,
+    risk:decision.best?.risk,
+    confidence:decision.confidence,
+    context:contextSignature(),
     experts:(decision.expertViews||[]).map(v=>({name:v.name,p:Array.isArray(v.p)?v.p.slice():blankP()}))
   });
   if(predictionQueue.length>18)predictionQueue=predictionQueue.slice(-18);
@@ -399,10 +467,12 @@ function predict(){
   const recentPicks=mem.recentPicks.slice(-12);
   const exposure=Array(10).fill(0);recentPicks.forEach(d=>exposure[d]++);
   const maxExp=Math.max(1,...exposure);
-  const scored=p.map((risk,d)=>{
+  const scored=p.map((rawRisk,d)=>{
     const fixation=exposure[d]/maxExp;
-    const adjusted=risk + fixation*.0025;
-    return {d,risk,adjusted};
+    const risk=digitCalibratedRisk(d,rawRisk);
+    const errorPenalty=contextErrorPenalty(d);
+    const adjusted=risk + fixation*.0025 + errorPenalty;
+    return {d,risk,rawRisk,adjusted,errorPenalty};
   }).sort((a,b)=>a.adjusted-b.adjusted||a.risk-b.risk);
 
   const best=scored[0],second=scored[1];
@@ -430,28 +500,39 @@ function predict(){
   const edge=UNIFORM-best.risk;
 
   const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
-  const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0);
+  const contextCoverage=clamp(contextNodes.length/3,0,1);
+  const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
+  const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
+  const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0)+oodScore*.0022+recoveryRatio*.0025;
   const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18+uncertaintyPenalty;
   const riskCeiling=UNIFORM-requiredEdge;
   const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(mem.drift?.active?.10:0),0,1);
-  const minConfidence=mem.drift?.active?.38:.30;
+  const qualityScore=clamp(confidence*.43+health*.22+(1-oodScore)*.20+sharpness*.10+Math.max(0,preqSkill)*.05,0,1);
+  const minConfidence=(mem.drift?.active?.38:.30)+recoveryRatio*.04;
+  const minQuality=.34+recoveryRatio*.04;
 
   let action='WAIT',reason='La IA sigue observando: la ventaja todavía no compensa la incertidumbre.';
   if((mem.tradeCount>=8 && health<.46) || (preqSamples>=45 && brier>BASELINE_BRIER+.018)){
     action='PAUSE';
     reason='PAUSA IA: el rendimiento reciente del modelo perdió estabilidad. Continúa aprendiendo sin comprar.';
+  }else if(oodScore>.74){
+    reason='ESPERA IA: el contexto actual es poco conocido; necesito más evidencia antes de comprar.';
+  }else if(qualityScore<minQuality){
+    reason=`ESPERA IA: calidad de señal ${fmtPct(qualityScore)} todavía insuficiente para este contexto.`;
   }else if(best.risk<riskCeiling && confidence>=minConfidence && edge>requiredEdge){
     action='BUY';
-    reason=`Compra aceptada: riesgo ${fmtPct(best.risk)}, ventaja ${(edge*100).toFixed(2)} pts, confianza ${fmtPct(confidence)} y desacuerdo ${fmtPct(disagreement)}.`;
+    reason=`Compra aceptada: riesgo ${fmtPct(best.risk)}, calidad ${fmtPct(qualityScore)}, confianza ${fmtPct(confidence)} y contexto ${fmtPct(1-oodScore)}.`;
   }else if(mem.drift?.active){
     reason='ESPERA IA: detecté un cambio reciente en el flujo; estoy dando más peso a datos nuevos antes de comprar.';
+  }else if(recoveryRatio>0){
+    reason='ESPERA IA: recuperación posterior a MATCH; temporalmente exijo una señal más fuerte.';
   }else if(confidence<minConfidence){
     reason='ESPERA IA: todavía hay poca evidencia coincidente entre los modelos.';
   }else if(best.risk>=riskCeiling){
     reason=`ESPERA IA: riesgo ${fmtPct(best.risk)} por encima del límite adaptativo ${fmtPct(riskCeiling)}.`;
   }
 
-  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,action,reason,disagreement,support,entropy,sharpness,preqSkill,expertViews:views};
+  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,expertViews:views};
 }
 
 function renderDecision(d){
@@ -469,6 +550,8 @@ function renderDecision(d){
   $('confidence').textContent=fmtPct(d.confidence);
   $('horizon').textContent=d.h+'T';
   $('health').textContent=fmtPct(d.health);
+  if($('quality'))$('quality').textContent=fmtPct(d.qualityScore);
+  if($('contextState'))$('contextState').textContent=d.oodScore>.74?'NUEVO':d.oodScore>.52?'MIXTO':'CONOCIDO';
   $('meter').style.width=(d.confidence*100).toFixed(0)+'%';
   if(d.action==='BUY'){
     $('decision').textContent='COMPRAR DIFFER D'+d.best.d;
@@ -637,6 +720,7 @@ function settleTrade(profit){
   if(loss){
     session.losses++;mem.digitStats[t.digit].l++;
     nextStake=baseStake();
+    mem.recovery={remaining:12,lastMatchAt:Date.now()};
   }else{
     session.wins++;mem.digitStats[t.digit].w++;
     nextStake=Math.max(baseStake(),t.stake+Math.max(0,profit));
@@ -681,6 +765,7 @@ function processDigit(d,epoch,isLive){
   if(epoch)mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),epoch);
   if(isLive){
     liveTickCounter++;
+    if(mem.recovery?.remaining>0)mem.recovery.remaining--;
     $('tick').textContent='D'+d;
   }
 
