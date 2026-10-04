@@ -22,7 +22,7 @@ let motionHist=[];            // estado de movimiento conocido en cada tick
 let liveTickCounter=0;
 let autoRunning=false;
 let pendingTrade=null;
-let session={pnl:0,wins:0,losses:0,ops:0};
+let session={pnl:0,wins:0,losses:0,ops:0,streak:0,maxStreak:0};
 let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
@@ -69,6 +69,13 @@ function freshMemory(){
     digitStats:Array.from({length:10},()=>({w:0,l:0})),
     digitCalibration:Array.from({length:10},()=>({n:0,matches:0,predictedSum:0})),
     errorContexts:[],
+    streakStats:{
+      '0-2':{n:0,matches:0},
+      '3-5':{n:0,matches:0},
+      '6-8':{n:0,matches:0},
+      '9-11':{n:0,matches:0},
+      '12+':{n:0,matches:0}
+    },
     recovery:{remaining:0,lastMatchAt:0},
     saves:0
   };
@@ -132,6 +139,12 @@ function normalizeMemory(x){
     risk:clamp(safeNum(x?.risk,UNIFORM),0,.5),
     confidence:clamp(safeNum(x?.confidence,0),0,1)
   })):[];
+  const sb=base.streakStats,ss=m.streakStats&&typeof m.streakStats==='object'?m.streakStats:{};
+  m.streakStats={};
+  Object.keys(sb).forEach(k=>{
+    const x=ss[k]||{};
+    m.streakStats[k]={n:Math.max(0,Math.floor(safeNum(x.n,0))),matches:Math.max(0,Math.floor(safeNum(x.matches,0)))};
+  });
   const rec=m.recovery||{};
   m.recovery={remaining:Math.max(0,Math.floor(safeNum(rec.remaining,0))),lastMatchAt:Math.max(0,safeNum(rec.lastMatchAt,0))};
   return m;
@@ -421,6 +434,35 @@ function updateDrift(score){
 function contextSignature(arr=hist){
   return arr.slice(-3).join('');
 }
+function streakBucket(n){
+  n=Math.max(0,Math.floor(safeNum(n,0)));
+  if(n<=2)return '0-2';
+  if(n<=5)return '3-5';
+  if(n<=8)return '6-8';
+  if(n<=11)return '9-11';
+  return '12+';
+}
+function updateStreakStats(streakBefore,loss){
+  const key=streakBucket(streakBefore);
+  const st=mem.streakStats[key]||(mem.streakStats[key]={n:0,matches:0});
+  st.n++;
+  if(loss)st.matches++;
+}
+function streakRiskInfo(streak=session.streak){
+  const key=streakBucket(streak);
+  const st=mem.streakStats?.[key]||{n:0,matches:0};
+  let totalN=0,totalM=0;
+  Object.values(mem.streakStats||{}).forEach(x=>{totalN+=safeNum(x.n,0);totalM+=safeNum(x.matches,0)});
+  const baseline=(totalM+45*UNIFORM)/(totalN+45);
+  const local=(safeNum(st.matches,0)+30*baseline)/(safeNum(st.n,0)+30);
+  const evidence=clamp(1-Math.exp(-safeNum(st.n,0)/24),0,1);
+  const excess=clamp(local-baseline,0,.08);
+  const active=safeNum(st.n,0)>=14 && excess>.012;
+  // Suave: nunca bloquea por racha; solo exige un poco más si los datos lo justifican.
+  const edgePenalty=active?clamp(excess*evidence*.16,0,.0028):0;
+  const qualityPenalty=active?clamp(excess*evidence*.75,0,.025):0;
+  return {key,n:safeNum(st.n,0),matches:safeNum(st.matches,0),baseline,rate:local,evidence,excess,active,edgePenalty,qualityPenalty,streak:Math.max(0,Math.floor(safeNum(streak,0)))};
+}
 function digitCalibratedRisk(d,risk){
   const raw=clamp(safeNum(risk,UNIFORM),.005,.30);
   const st=mem.digitCalibration?.[d];
@@ -626,13 +668,14 @@ function predict(){
   const motionSupport=motion?.support||0;
   const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
-  const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0)+oodScore*.0022+recoveryRatio*.0025;
+  const streakInfo=streakRiskInfo(session.streak);
+  const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0)+oodScore*.0022+recoveryRatio*.0025+streakInfo.edgePenalty;
   const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18+uncertaintyPenalty;
   const riskCeiling=UNIFORM-requiredEdge;
   const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(mem.drift?.active?.10:0),0,1);
   const qualityScore=clamp(confidence*.43+health*.22+(1-oodScore)*.20+sharpness*.10+Math.max(0,preqSkill)*.05,0,1);
   const minConfidence=(mem.drift?.active?.38:.30)+recoveryRatio*.04;
-  const minQuality=.34+recoveryRatio*.04;
+  const minQuality=.34+recoveryRatio*.04+streakInfo.qualityPenalty;
 
   let action='WAIT',reason='La IA sigue observando: la ventaja todavía no compensa la incertidumbre.';
   if((mem.tradeCount>=8 && health<.46) || (preqSamples>=45 && brier>BASELINE_BRIER+.018)){
@@ -649,13 +692,15 @@ function predict(){
     reason='ESPERA IA: detecté un cambio reciente en el flujo; estoy dando más peso a datos nuevos antes de comprar.';
   }else if(recoveryRatio>0){
     reason='ESPERA IA: recuperación posterior a MATCH; temporalmente exijo una señal más fuerte.';
+  }else if(streakInfo.active && (qualityScore<minQuality || edge<=requiredEdge)){
+    reason=`ESPERA IA: racha de ${streakInfo.streak} wins; mis datos de esa racha muestran más MATCH de lo normal y exijo solo un poco más de calidad.`;
   }else if(confidence<minConfidence){
     reason='ESPERA IA: todavía hay poca evidencia coincidente entre los modelos.';
   }else if(best.risk>=riskCeiling){
     reason=`ESPERA IA: riesgo ${fmtPct(best.risk)} por encima del límite adaptativo ${fmtPct(riskCeiling)}.`;
   }
 
-  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,motion:motion?.state||null,motionSupport,motionMature,motionEval:motion?{p:motion.p.slice()}:null,expertViews:views};
+  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,motion:motion?.state||null,motionSupport,motionMature,motionEval:motion?{p:motion.p.slice()}:null,streakInfo,expertViews:views};
 }
 
 function renderDecision(d){
@@ -733,6 +778,10 @@ function renderSession(){
   $('wins').textContent=session.wins;
   $('losses').textContent=session.losses;
   $('ops').textContent=session.ops;
+  if($('streakState')){
+    const si=streakRiskInfo(session.streak);
+    $('streakState').textContent=session.streak+' WIN'+(session.streak===1?'':'S')+(si.active?' · CAUTELA':' · NORMAL');
+  }
   $('learnedTicks').textContent=mem.tickCount;
   $('learnedTrades').textContent=mem.tradeCount;
   $('horizon').textContent=horizonNow()+'T';
@@ -756,7 +805,7 @@ function canTradeMode(){
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
-  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,manual};
+  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),manual};
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
@@ -844,12 +893,16 @@ function settleTrade(profit){
 
   const loss=profit<=0?1:0;
   session.pnl+=profit;
+  updateStreakStats(t.streakBefore,loss);
   if(loss){
     session.losses++;mem.digitStats[t.digit].l++;
+    session.streak=0;
     nextStake=baseStake();
     mem.recovery={remaining:12,lastMatchAt:Date.now()};
   }else{
     session.wins++;mem.digitStats[t.digit].w++;
+    session.streak=Math.max(0,Math.floor(safeNum(t.streakBefore,session.streak)))+1;
+    session.maxStreak=Math.max(safeNum(session.maxStreak,0),session.streak);
     nextStake=Math.max(baseStake(),t.stake+Math.max(0,profit));
   }
 
@@ -861,7 +914,7 @@ function settleTrade(profit){
   const elapsed=clamp(liveTickCounter-t.signalTick,1,3);
   mem.delayEWMA=.82*safeNum(mem.delayEWMA,1)+.18*elapsed;
   shareExperience(t,loss,elapsed);
-  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,ts:Date.now(),mode:t.mode,stake:t.stake,manual:!!t.manual});
+  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,streakBefore:t.streakBefore,ts:Date.now(),mode:t.mode,stake:t.stake,manual:!!t.manual});
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
   log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
@@ -1032,7 +1085,7 @@ function connectMarket(){
 
 $('start').onclick=()=>{
   if(!canTradeMode())return;
-  session={pnl:0,wins:0,losses:0,ops:0};
+  session={pnl:0,wins:0,losses:0,ops:0,streak:0,maxStreak:0};
   nextStake=baseStake();
   pendingTrade=null;
   autoRunning=true;
