@@ -522,7 +522,18 @@ function modelViews(){
     if(c) views.push({name:'ctx'+o,p:c.p,support:c.support,base:o===1?.95:o===2?1.12:1.22,n:c.n});
   }
   const motion=motionDist();
-  if(motion)views.push({name:'motion',p:motion.p,support:motion.support,base:.68,n:motion.n,state:motion.state});
+  if(motion){
+    // Se evalúa en shadow desde el primer tick, pero no altera el ensemble hasta probar utilidad.
+    const mp=mem.shadow.performance.motion||{samples:0,matchEWMA:UNIFORM,logLossEWMA:Math.log(10)};
+    const ready=
+      safeNum(motion.n,0)>=400 &&
+      safeNum(mp.samples,0)>=250 &&
+      safeNum(mp.matchEWMA,UNIFORM)<UNIFORM-.0015 &&
+      safeNum(mp.logLossEWMA,Math.log(10))<=Math.log(10)+.03;
+    const maturity=clamp((safeNum(mp.samples,0)-250)/1200,0,1);
+    const base=ready ? (.16+.26*maturity) : 0;
+    views.push({name:'motion',p:motion.p,support:motion.support,base,n:motion.n,state:motion.state,ready});
+  }
   return views;
 }
 
