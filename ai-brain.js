@@ -488,7 +488,13 @@ function schedulePrediction(decision,counter){
     risk:decision.best?.risk,
     confidence:decision.confidence,
     context:contextSignature(),
-    experts:(decision.expertViews||[]).map(v=>({name:v.name,p:Array.isArray(v.p)?v.p.slice():blankP()}))
+    experts:(()=>{
+      const xs=(decision.expertViews||[]).map(v=>({name:v.name,p:Array.isArray(v.p)?v.p.slice():blankP()}));
+      if(decision.motionEval && !xs.some(v=>v.name==='motion')){
+        xs.push({name:'motion',p:Array.isArray(decision.motionEval.p)?decision.motionEval.p.slice():blankP()});
+      }
+      return xs;
+    })()
   });
   if(predictionQueue.length>18)predictionQueue=predictionQueue.slice(-18);
 }
@@ -536,10 +542,16 @@ function predict(){
   }
   modelViews.push({name:'recent',p:rp,w:rw,n:recent.length});
 
-  // Movimiento real del precio: dirección, fuerza, aceleración, giro y volatilidad.
+  // Movimiento real del precio: aprende siempre, pero no condiciona compras hasta demostrar utilidad.
   const motion=motionDistribution(h);
-  if(motion){
-    const mw=.46*motion.support*expertWeight('motion');
+  const motionPerf=mem.expertPerf?.motion||{samples:0,skillEWMA:0,weight:1};
+  const motionMature=!!motion &&
+    safeNum(motion.n,0)>=180 &&
+    safeNum(motionPerf.samples,0)>=120 &&
+    safeNum(motionPerf.skillEWMA,0)>.005;
+  if(motionMature){
+    const maturity=clamp((safeNum(motionPerf.samples,0)-120)/500,0,1);
+    const mw=(.10+.20*maturity)*motion.support*expertWeight('motion');
     if(mw>.01){
       for(let d=0;d<10;d++){dist[d]+=motion.p[d]*mw;denom[d]+=mw}
       modelViews.push({name:'motion',p:motion.p.slice(),w:mw,n:motion.n,state:motion.state});
@@ -612,7 +624,7 @@ function predict(){
   const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
   const contextCoverage=clamp(contextNodes.length/3,0,1);
   const motionSupport=motion?.support||0;
-  const oodScore=clamp((1-support)*.42+(1-contextCoverage)*.16+(1-motionSupport)*.08+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
+  const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
   const uncertaintyPenalty=disagreement*.18+(1-sharpness)*.0015+(mem.drift?.active?.0045:0)+oodScore*.0022+recoveryRatio*.0025;
   const requiredEdge=.0035+(1-confidence)*.012+recentLoss*.18+uncertaintyPenalty;
@@ -643,7 +655,7 @@ function predict(){
     reason=`ESPERA IA: riesgo ${fmtPct(best.risk)} por encima del límite adaptativo ${fmtPct(riskCeiling)}.`;
   }
 
-  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,motion:motion?.state||null,motionSupport,expertViews:views};
+  return {h,p,best,second,confidence,edge,requiredEdge,riskCeiling,health,qualityScore,oodScore,action,reason,disagreement,support,entropy,sharpness,preqSkill,motion:motion?.state||null,motionSupport,motionMature,motionEval:motion?{p:motion.p.slice()}:null,expertViews:views};
 }
 
 function renderDecision(d){
@@ -665,7 +677,7 @@ function renderDecision(d){
   if($('contextState'))$('contextState').textContent=d.oodScore>.74?'NUEVO':d.oodScore>.52?'MIXTO':'CONOCIDO';
   if($('motionState')){
     const m=d.motion;
-    $('motionState').textContent=!m?'APRENDIENDO':(m.direction==='UP'?'↑':m.direction==='DOWN'?'↓':'↔')+' '+m.strength;
+    $('motionState').textContent=!m?'APRENDIENDO':(m.direction==='UP'?'↑':m.direction==='DOWN'?'↓':'↔')+' '+m.strength+(d.motionMature?' · ACTIVO':' · APRENDE');
   }
   $('meter').style.width=(d.confidence*100).toFixed(0)+'%';
   if(d.action==='BUY'){
