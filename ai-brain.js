@@ -738,6 +738,7 @@ function settleTrade(profit){
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
   log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
+  window.nexusOutcomeSound?.(loss?'loss':'win');
   window.nexusTradeEffect?.('result',{...t,loss:!!loss,profit});
   pendingTrade=null;
   saveMemory(true);
