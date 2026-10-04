@@ -550,6 +550,7 @@ function ensemblePredict(){
 
   return {
     horizon:1,
+    signalEpoch:lastEpoch,
     digit:best.d,
     risk:calibratedRisk,
     rawRisk,
