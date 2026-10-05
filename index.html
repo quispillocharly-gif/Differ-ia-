@@ -368,7 +368,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
   <div class="grid">
     <div class="card"><small>Balance inicio sesión</small><b id="balanceStart">—</b></div><div class="card hot"><small>PNL sesión</small><b id="pnl">$0.00</b></div><div class="card"><small>Wins</small><b id="wins">0</b></div><div class="card dangerCard"><small>Match</small><b id="losses">0</b></div>
     <div class="card"><small>Operaciones</small><b id="ops">0</b></div><div class="card"><small>Último tick</small><b id="tick">—</b></div><div class="card hot"><small>Candidato IA</small><b id="pick">—</b></div><div class="card warn"><small>Riesgo predicho</small><b id="risk">—</b></div>
-    <div class="card"><small>Confianza IA</small><b id="confidence">—</b></div><div class="card hot"><small>Calidad de señal</small><b id="quality">—</b></div><div class="card"><small>Contexto IA</small><b id="contextState">—</b></div><div class="card hot"><small>Fuerza micro IA</small><b id="motionState">APRENDIENDO</b></div><div class="card warn"><small>Racha IA</small><b id="streakState">0 WINS · NORMAL</b></div><div class="card hot"><small>Búsqueda 10 dígitos</small><b id="candidateState">BUSCANDO 10/10</b></div>
+    <div class="card"><small>Confianza IA</small><b id="confidence">—</b></div><div class="card hot"><small>Calidad de señal</small><b id="quality">—</b></div><div class="card"><small>Contexto IA</small><b id="contextState">—</b></div><div class="card hot"><small>Fuerza micro IA</small><b id="motionState">APRENDIENDO</b></div><div class="card warn"><small>Racha IA</small><b id="streakState">0 WINS · NORMAL</b></div><div class="card hot"><small>Búsqueda 10 dígitos</small><b id="candidateState">BUSCANDO 10/10</b></div><div class="card"><small>Cerebro Cloud</small><b id="masterState">SINCRONIZANDO</b></div>
   </div>
 
   <section id="historyPanel" class="panel historyPanel appSection">
@@ -398,7 +398,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
   </section>
 
   <section id="ownerMemoryPanel" class="panel warning ownerOnly"><div class="panel-head"><div class="panel-title">ADMIN // MEMORIA PERSISTENTE</div><span class="chip">LOCAL + CLOUD</span></div>
-    <div class="muted">Cerrar la página no borra la memoria local. Railway sigue aprendiendo ticks en la nube 24/7. Al volver, el navegador sincroniza el modelo cloud si tiene más aprendizaje.</div>
+    <div class="muted">Railway es el cerebro maestro compartido. Todos los dispositivos reciben sus modelos, calibración, ranking, contextos de MATCH y aprendizaje de movimiento. La memoria local queda como respaldo y para datos de sesión; borrar memoria local no borra el cerebro cloud.</div>
     <button id="resetMemory" class="danger" style="margin-top:10px">BORRAR MEMORIA IA LOCAL</button>
   </section>
 
@@ -414,7 +414,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
 </nav>
 
 <script src="demo.js?v=real-pro-balance-v1"></script>
-<script src="ai-brain.js?v=intelligence-v8-micro-force"></script>
+<script src="ai-brain.js?v=intelligence-v9-master-cloud"></script>
 <script>
 (function(){
   var q=function(id){return document.getElementById(id)};
