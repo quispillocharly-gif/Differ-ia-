@@ -45,6 +45,7 @@ let lastDigit = null;
 let lastPrediction = null;
 let shadowPending = null;
 let movementQueue = [];
+let movementBootstrapDone = false;
 let status = 'BOOTING';
 
 function blankP(){ return Array(10).fill(UNIFORM); }
@@ -746,6 +747,61 @@ function learnMovementOutcome(targetPrice,targetDigit){
     });
   }
 }
+function bootstrapMovementPredictor(){
+  if(movementBootstrapDone)return;
+  movementBootstrapDone=true;
+  const n=Math.min(hist.length,priceHist.length,motionHist.length);
+  if(n<120)return;
+
+  let existing=0;
+  HORIZONS.forEach(h=>{existing+=Object.keys(mem.movementModels[h]||{}).length});
+  if(existing>20)return;
+
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  const start=Math.max(24,n-12000);
+  let samples=0;
+
+  for(let targetIndex=start;targetIndex<n;targetIndex++){
+    const targetPrice=Number(priceHist[targetIndex]);
+    const targetDigit=hist[targetIndex];
+    if(!Number.isFinite(targetPrice)||!Number.isInteger(targetDigit))continue;
+
+    for(const h of HORIZONS){
+      const signalIndex=targetIndex-h;
+      if(signalIndex<8)continue;
+      const sourcePrice=Number(priceHist[signalIndex]);
+      const snap=motionHist[signalIndex];
+      const sourceDigit=hist[signalIndex];
+      if(!Number.isFinite(sourcePrice)||!snap||!Number.isInteger(sourceDigit))continue;
+
+      const units=Math.round((targetPrice-sourcePrice)/unit);
+      const bucketIndex=moveBucketIndex(units);
+      movementContextKeys(snap).forEach(entry=>{
+        const node=ensureMovementNode(h,entry.key);
+        updateCategorical(node.p,bucketIndex,.012,MOVE_BUCKETS.length);
+        node.n++;
+        node.last=Math.max(0,mem.tickCount-(n-targetIndex));
+      });
+      const st=mem.movementBucketStats[h][bucketIndex];
+      st.n++;
+      st.sum+=units;
+
+      [
+        {key:'B:'+bucketIndex,alpha:.010},
+        {key:'BD:'+bucketIndex+'>D'+sourceDigit,alpha:.014}
+      ].forEach(entry=>{
+        const node=ensureMoveDigitNode(h,entry.key);
+        updateProb(node.p,targetDigit,entry.alpha);
+        node.n++;
+        node.last=Math.max(0,mem.tickCount-(n-targetIndex));
+      });
+      samples++;
+    }
+  }
+  console.log('Future movement predictor bootstrapped from history:',samples,'training samples');
+}
+
 function movementForecast(h=1){
   h=clamp(Math.round(safeNum(h,1)),1,3);
   const snap=motionSnapshot();
@@ -1604,6 +1660,7 @@ function connectDeriv(){
       const times=Array.isArray(m.history.times)?m.history.times:[];
       const pip=Number(m.pip_size||4);
       if(Number.isFinite(pip))marketPip=pip;
+      bootstrapMovementPredictor();
 
       for(let i=0;i<prices.length;i++){
         const ep=Number(times[i]||0);
