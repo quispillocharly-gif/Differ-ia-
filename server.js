@@ -16,7 +16,7 @@ const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
 const VERSION = 1;
-const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','phase','futureMove','collab'];
+const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','phase','futureMove','range','collab'];
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
@@ -30,6 +30,10 @@ const MOVE_CENTERS = [-14,-6,-2,0,2,6,14];
 const MOVE_UNIFORM = 1/MOVE_BUCKETS.length;
 const MOVE_BASE_LOGLOSS = Math.log(MOVE_BUCKETS.length);
 const MOVE_BASE_BRIER = 6/49;
+const RANGE_STATES = ['STAY','BREAK_DOWN','BREAK_UP'];
+const RANGE_UNIFORM = 1/3;
+const RANGE_BASE_LOGLOSS = Math.log(3);
+const RANGE_BASE_BRIER = 2/9;
 const ENTRY_RESEARCH_PROFILES = {
   balanced:{riskCeiling:.0975,minConfidence:.22,minConsensus:.54,robustCeiling:.118},
   strict:{riskCeiling:.0940,minConfidence:.26,minConsensus:.60,robustCeiling:.110},
@@ -52,6 +56,8 @@ let lastPrediction = null;
 let shadowPending = null;
 let movementQueue = [];
 let movementBootstrapDone = false;
+let rangeQueue = [];
+let rangeBootstrapDone = false;
 let riseFallBootstrapDone = false;
 let riseFallPending = [];
 let riseFallLastPrediction = null;
@@ -60,6 +66,8 @@ let status = 'BOOTING';
 function blankP(){ return Array(10).fill(UNIFORM); }
 function blankMoveP(){ return Array(MOVE_BUCKETS.length).fill(MOVE_UNIFORM); }
 function freshMovePerf(){ return {samples:0,logLossEWMA:MOVE_BASE_LOGLOSS,brierEWMA:MOVE_BASE_BRIER,directionHitEWMA:1/3,maeUnitsEWMA:6,lastAt:0}; }
+function freshRangePerf(){ return {samples:0,logLossEWMA:RANGE_BASE_LOGLOSS,brierEWMA:RANGE_BASE_BRIER,accuracyEWMA:1/3,lastAt:0}; }
+function blankRangeState(){ return Array(3).fill(RANGE_UNIFORM); }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 function safeNum(x,d=0){ x=Number(x); return Number.isFinite(x)?x:d; }
 function mean(xs){ return xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : 0; }
@@ -358,6 +366,8 @@ function freshMemory(){
       3:Array.from({length:7},()=>({n:0,sum:0}))
     },
     movementPerf:{1:freshMovePerf(),2:freshMovePerf(),3:freshMovePerf()},
+    rangeModels:{1:{},2:{},3:{}},
+    rangePerf:{1:freshRangePerf(),2:freshRangePerf(),3:freshRangePerf()},
     globalP: blankP(),
     globalN: 0,
     modelLoss: {},
@@ -407,6 +417,33 @@ function normalizeMemory(x){
       directionHitEWMA:clamp(safeNum(p.directionHitEWMA,1/3),0,1),
       maeUnitsEWMA:Math.max(0,safeNum(p.maeUnitsEWMA,6)),
       lastAt:Math.max(0,safeNum(p.lastAt,0))
+    };
+  });
+
+  m.rangeModels=m.rangeModels&&typeof m.rangeModels==='object'?m.rangeModels:base.rangeModels;
+  m.rangePerf=m.rangePerf&&typeof m.rangePerf==='object'?m.rangePerf:base.rangePerf;
+  HORIZONS.forEach(h=>{
+    const bucket=m.rangeModels[h]&&typeof m.rangeModels[h]==='object'?m.rangeModels[h]:{};
+    const clean={};
+    for(const [key,node] of Object.entries(bucket)){
+      if(typeof key!=='string'||key.length>180)continue;
+      clean[key]={
+        state:Array.isArray(node?.state)&&node.state.length===3
+          ?node.state.map(v=>Math.max(.0001,safeNum(v,1)))
+          :[1,1,1],
+        p:Array.isArray(node?.p)&&node.p.length===10?normalizeDist(node.p):blankP(),
+        n:Math.max(0,Math.floor(safeNum(node?.n,0))),
+        last:Math.max(0,Math.floor(safeNum(node?.last,0)))
+      };
+    }
+    m.rangeModels[h]=clean;
+    const rp=m.rangePerf[h]||{};
+    m.rangePerf[h]={
+      samples:Math.max(0,Math.floor(safeNum(rp.samples,0))),
+      logLossEWMA:clamp(safeNum(rp.logLossEWMA,RANGE_BASE_LOGLOSS),.01,8),
+      brierEWMA:clamp(safeNum(rp.brierEWMA,RANGE_BASE_BRIER),0,1),
+      accuracyEWMA:clamp(safeNum(rp.accuracyEWMA,1/3),0,1),
+      lastAt:Math.max(0,safeNum(rp.lastAt,0))
     };
   });
 
@@ -1546,6 +1583,255 @@ function resolveMovementForecasts(targetPrice,counter){
   });
 }
 
+function rangeDigitCorridor(digits,endIndex){
+  if(!Array.isArray(digits)||endIndex<0)return {low:0,high:9,coverage:0,width:10};
+  const recent=digits.slice(Math.max(0,endIndex-13),endIndex+1)
+    .map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9);
+  if(recent.length<5)return {low:0,high:9,coverage:0,width:10};
+  let best={low:0,high:9,coverage:0,width:10,score:-1};
+  for(let low=0;low<=8;low++){
+    for(let high=low+1;high<=Math.min(9,low+4);high++){
+      const inside=recent.reduce((n,d)=>n+(d>=low&&d<=high?1:0),0);
+      const coverage=inside/recent.length;
+      const width=high-low+1;
+      const score=coverage-width*.035;
+      if(coverage>=.42 && (score>best.score || (score===best.score&&width<best.width))){
+        best={low,high,coverage,width,score};
+      }
+    }
+  }
+  return {low:best.low,high:best.high,coverage:best.coverage,width:best.width};
+}
+function rangeSnapshotAt(prices,endIndex,digits=hist,motionState=null){
+  if(!Array.isArray(prices)||endIndex<7)return null;
+  const start=Math.max(0,endIndex-15);
+  const p=prices.slice(start,endIndex+1).map(Number).filter(Number.isFinite);
+  if(p.length<8)return null;
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  const low=Math.min(...p),high=Math.max(...p),last=p[p.length-1];
+  const widthUnits=Math.max(1,Math.round((high-low)/unit));
+  const short=p.slice(-7);
+  const shortWidth=Math.max(...short)-Math.min(...short);
+  const compression=clamp((shortWidth/unit)/Math.max(1,widthUnits),0,2);
+  let pathUnits=0,flips=0,prevSign=0;
+  for(let i=1;i<p.length;i++){
+    const u=(p[i]-p[i-1])/unit;
+    pathUnits+=Math.abs(u);
+    const sign=u>0?1:u<0?-1:0;
+    if(sign&&prevSign&&sign!==prevSign)flips++;
+    if(sign)prevSign=sign;
+  }
+  const netUnits=Math.abs((last-p[0])/unit);
+  const efficiency=clamp(netUnits/Math.max(1,pathUnits),0,1);
+  const oscillation=clamp(1-widthUnits/Math.max(widthUnits,pathUnits),0,1);
+  const flipRate=clamp(flips/Math.max(1,p.length-2),0,1);
+  const lateralScore=clamp((1-efficiency)*.46+oscillation*.29+flipRate*.25,0,1);
+  const position=clamp((last-low)/Math.max(unit,high-low),0,1);
+  const compressionBand=compression<.58?'COMPRESS':compression>.92?'EXPAND':'STABLE';
+  const widthBand=widthUnits<=5?'TIGHT':widthUnits<=12?'NARROW':widthUnits<=28?'MID':'WIDE';
+  const positionBand=position<.30?'LOW':position>.70?'HIGH':'MID';
+  const lateralBand=lateralScore>=.72?'HIGH':lateralScore>=.52?'MID':'LOW';
+  const corridor=rangeDigitCorridor(digits,endIndex);
+  const motion=motionState||motionHist[endIndex]||null;
+  const phase=marketPhaseFromMotion(motion);
+  const toleranceUnits=Math.max(1,Math.round(widthUnits*.12));
+  return {
+    low,high,last,widthUnits,compression,lateralScore,position,
+    compressionBand,widthBand,positionBand,lateralBand,corridor,
+    phase,
+    volatility:motion?.volatility||'MID',
+    trendBand:motion?.trendBand||'STABLE',
+    toleranceUnits
+  };
+}
+function rangeContextKeys(snap,sourceDigit){
+  if(!snap)return [];
+  const keys=[
+    {key:'R:'+snap.lateralBand+'|W'+snap.widthBand+'|C'+snap.compressionBand+'|P'+snap.positionBand,need:55,base:.92},
+    {key:'RD:'+snap.lateralBand+'|W'+snap.widthBand+'|C'+snap.compressionBand+'>D'+sourceDigit,need:38,base:1.10},
+    {key:'RV:'+snap.lateralBand+'|V'+snap.volatility+'|T'+snap.trendBand,need:50,base:.84}
+  ];
+  if(snap.corridor?.coverage>=.48){
+    keys.push({
+      key:'RC:'+snap.lateralBand+'|DG'+snap.corridor.low+'-'+snap.corridor.high+'|C'+snap.compressionBand,
+      need:34,base:1.18
+    });
+  }
+  return keys;
+}
+function ensureRangeNode(h,key){
+  const bucket=mem.rangeModels[h];
+  if(!bucket[key])bucket[key]={state:[1,1,1],p:blankP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function normalizeRangeState(xs){
+  const a=Array.from({length:3},(_,i)=>Math.max(.000001,safeNum(xs?.[i],1)));
+  const s=a.reduce((x,y)=>x+y,0)||1;
+  return a.map(x=>x/s);
+}
+function rangeOutcomeIndex(snap,targetPrice){
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  const tol=Math.max(unit,safeNum(snap?.toleranceUnits,1)*unit);
+  if(Number(targetPrice)>safeNum(snap?.high,Number(targetPrice))+tol)return 2;
+  if(Number(targetPrice)<safeNum(snap?.low,Number(targetPrice))-tol)return 1;
+  return 0;
+}
+function learnRangeOutcome(targetPrice,targetDigit){
+  if(!Number.isFinite(Number(targetPrice))||!Number.isInteger(targetDigit))return;
+  for(const h of HORIZONS){
+    const signalIndex=priceHist.length-h;
+    if(signalIndex<7)continue;
+    const snap=rangeSnapshotAt(priceHist,signalIndex,hist,motionHist[signalIndex]);
+    const sourceDigit=hist[signalIndex];
+    if(!snap||!Number.isInteger(sourceDigit)||snap.lateralScore<.34)continue;
+    const outcome=rangeOutcomeIndex(snap,targetPrice);
+    rangeContextKeys(snap,sourceDigit).forEach(entry=>{
+      const node=ensureRangeNode(h,entry.key);
+      const alpha=clamp(.030*(mem.shadow?.drift?.active?1.15:1)*(1-Math.min(.35,node.n/1400)),.008,.042);
+      updateCategorical(node.state,outcome,alpha,3);
+      updateProb(node.p,targetDigit,clamp(alpha*.86,.007,.036));
+      node.n++;
+      node.last=mem.tickCount;
+    });
+  }
+}
+function rangeForecast(h=1){
+  h=clamp(Math.round(safeNum(h,1)),1,3);
+  if(priceHist.length<8||!hist.length)return null;
+  const end=priceHist.length-1;
+  const snap=rangeSnapshotAt(priceHist,end,hist,motionHist[end]);
+  const sourceDigit=hist[hist.length-1];
+  if(!snap||!Number.isInteger(sourceDigit))return null;
+  const stateNum=Array(3).fill(0),stateDen=Array(3).fill(0);
+  const digitNum=Array(10).fill(0),digitDen=Array(10).fill(0);
+  let supportSum=0,totalN=0,keyCount=0;
+  rangeContextKeys(snap,sourceDigit).forEach(entry=>{
+    const node=mem.rangeModels[h]?.[entry.key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/entry.need);
+    const w=entry.base*support;
+    if(w<=.01)return;
+    const sp=normalizeRangeState(node.state);
+    const dp=normalizeDist(node.p);
+    for(let i=0;i<3;i++){stateNum[i]+=sp[i]*w;stateDen[i]+=w}
+    for(let d=0;d<10;d++){digitNum[d]+=dp[d]*w;digitDen[d]+=w}
+    supportSum+=support;totalN+=safeNum(node.n,0);keyCount++;
+  });
+  const stateP=keyCount?normalizeRangeState(stateNum.map((x,i)=>x/(stateDen[i]||1))):[.50,.25,.25];
+  const digitP=keyCount?normalizeDist(digitNum.map((x,d)=>x/(digitDen[d]||1))):blankP();
+  const perf=mem.rangePerf[h]||freshRangePerf();
+  const digitPerf=mem.shadow.performance.range||{};
+  const activeRange=snap.phase==='RANGE'||snap.lateralScore>=.56;
+  const ready=
+    activeRange &&
+    safeNum(perf.samples,0)>=300 &&
+    safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS)<=1.08 &&
+    safeNum(perf.brierEWMA,RANGE_BASE_BRIER)<=.218 &&
+    safeNum(perf.accuracyEWMA,1/3)>=.40 &&
+    safeNum(digitPerf.samples,0)>=300 &&
+    safeNum(digitPerf.matchEWMA,UNIFORM)<=.1005 &&
+    safeNum(digitPerf.logLossEWMA,Math.log(10))<=Math.log(10)+.015;
+  const exposed=Array.from({length:10},(_,d)=>({d,p:digitP[d]})).sort((a,b)=>b.p-a.p).slice(0,3);
+  return {
+    h,stateP,digitP,n:totalN,
+    support:clamp(supportSum/Math.max(1,keyCount),0,1),
+    stayProbability:stateP[0],
+    breakoutDownProbability:stateP[1],
+    breakoutUpProbability:stateP[2],
+    activeRange,ready,
+    widthUnits:snap.widthUnits,
+    compression:snap.compression,
+    compressionBand:snap.compressionBand,
+    lateralScore:snap.lateralScore,
+    position:snap.position,
+    positionBand:snap.positionBand,
+    low:snap.low,high:snap.high,
+    digitCorridor:snap.corridor,
+    exposedDigits:exposed,
+    phase:snap.phase,
+    perf:{
+      samples:safeNum(perf.samples,0),
+      logLossEWMA:safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS),
+      brierEWMA:safeNum(perf.brierEWMA,RANGE_BASE_BRIER),
+      accuracyEWMA:safeNum(perf.accuracyEWMA,1/3)
+    }
+  };
+}
+function scheduleRangeForecasts(counter){
+  for(const h of HORIZONS){
+    const f=rangeForecast(h);
+    if(!f||!f.activeRange)continue;
+    rangeQueue.push({
+      due:counter+h,h,
+      stateP:f.stateP.slice(),
+      low:f.low,high:f.high,
+      toleranceUnits:Math.max(1,Math.round(f.widthUnits*.12))
+    });
+  }
+  if(rangeQueue.length>30)rangeQueue=rangeQueue.slice(-30);
+}
+function resolveRangeForecasts(targetPrice,counter){
+  if(!rangeQueue.length||!Number.isFinite(Number(targetPrice)))return;
+  const due=[],keep=[];
+  rangeQueue.forEach(x=>(x.due<=counter?due:keep).push(x));
+  rangeQueue=keep.slice(-30);
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  due.forEach(item=>{
+    const snap={low:item.low,high:item.high,toleranceUnits:item.toleranceUnits};
+    const actual=rangeOutcomeIndex(snap,targetPrice);
+    const p=normalizeRangeState(item.stateP);
+    const prob=clamp(p[actual],.0001,.9999);
+    const logLoss=-Math.log(prob);
+    let brier=0;
+    for(let i=0;i<3;i++){const y=i===actual?1:0,e=p[i]-y;brier+=e*e}
+    brier/=3;
+    const predicted=p.indexOf(Math.max(...p));
+    const hit=predicted===actual?1:0;
+    const perf=mem.rangePerf[item.h]||(mem.rangePerf[item.h]=freshRangePerf());
+    perf.samples++;
+    const a=perf.samples<180?.028:.010;
+    perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS)+a*logLoss;
+    perf.brierEWMA=(1-a)*safeNum(perf.brierEWMA,RANGE_BASE_BRIER)+a*brier;
+    perf.accuracyEWMA=(1-a)*safeNum(perf.accuracyEWMA,1/3)+a*hit;
+    perf.lastAt=Date.now();
+  });
+}
+function bootstrapRangePredictor(){
+  if(rangeBootstrapDone)return;
+  rangeBootstrapDone=true;
+  const n=Math.min(hist.length,priceHist.length,motionHist.length);
+  if(n<150)return;
+  let existing=0;
+  HORIZONS.forEach(h=>existing+=Object.keys(mem.rangeModels[h]||{}).length);
+  if(existing>15)return;
+  const start=Math.max(20,n-12000);
+  let samples=0;
+  for(let targetIndex=start;targetIndex<n;targetIndex++){
+    const targetPrice=Number(priceHist[targetIndex]),targetDigit=hist[targetIndex];
+    if(!Number.isFinite(targetPrice)||!Number.isInteger(targetDigit))continue;
+    for(const h of HORIZONS){
+      const signalIndex=targetIndex-h;
+      if(signalIndex<7)continue;
+      const snap=rangeSnapshotAt(priceHist,signalIndex,hist,motionHist[signalIndex]);
+      const sourceDigit=hist[signalIndex];
+      if(!snap||!Number.isInteger(sourceDigit)||snap.lateralScore<.34)continue;
+      const outcome=rangeOutcomeIndex(snap,targetPrice);
+      rangeContextKeys(snap,sourceDigit).forEach(entry=>{
+        const node=ensureRangeNode(h,entry.key);
+        updateCategorical(node.state,outcome,.012,3);
+        updateProb(node.p,targetDigit,.010);
+        node.n++;
+        node.last=Math.max(0,mem.tickCount-(n-targetIndex));
+      });
+      samples++;
+    }
+  }
+  console.log('Range Intelligence bootstrapped from history:',samples,'training samples');
+}
+
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
     updateProb(mem.globalP,targetDigit,.018*driftLearningBoost());
@@ -1599,6 +1885,14 @@ function pruneModels(){
     }
   });
   HORIZONS.forEach(h=>{
+    const bucket=mem.rangeModels[h]||{};
+    const keys=Object.keys(bucket);
+    if(keys.length>1500){
+      keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
+      keys.slice(1500).forEach(k=>delete bucket[k]);
+    }
+  });
+  HORIZONS.forEach(h=>{
     const move=mem.movementModels[h]||{};
     const mk=Object.keys(move);
     if(mk.length>1800){
@@ -1646,6 +1940,7 @@ function expertWeight(name){
     else if(name==='motion') w*=1.08;
     else if(name==='phase') w*=1.10;
     else if(name==='futureMove') w*=1.12;
+    else if(name==='range') w*=1.10;
     else if(name==='collab') w*=.92;
   }
   return clamp(w,.10,6);
@@ -1734,6 +2029,18 @@ function modelViews(){
     const maturity=clamp((safeNum(pp.samples,0)-1200)/2600,0,1);
     const base=ready ? (.08+.16*maturity) : 0;
     views.push({name:'phase',p:phase.p,support:phase.support,base,n:phase.n,phase:phase.phase,state:phase.state,ready});
+  }
+
+  const range=rangeForecast(1);
+  if(range){
+    const rp=mem.shadow.performance.range||{samples:0,matchEWMA:UNIFORM,logLossEWMA:Math.log(10)};
+    const maturity=clamp((safeNum(rp.samples,0)-300)/1800,0,1);
+    const persistence=clamp((safeNum(range.stayProbability,.5)-.40)/.45,0,1);
+    const base=range.ready ? (.07+.17*maturity)*(.65+.35*persistence) : 0;
+    views.push({
+      name:'range',p:range.digitP,support:range.support,base,n:range.n,
+      ready:range.ready,forecast:range
+    });
   }
   return views;
 }
@@ -2212,10 +2519,12 @@ function processDigit(d,epoch,quote){
   const nextCounter=liveTickCount+1;
 
   resolveMovementForecasts(targetPrice,nextCounter);
+  resolveRangeForecasts(targetPrice,nextCounter);
   riseFallResolve(targetPrice,nextCounter);
   evaluateShadow(d);
   riseFallLearnOutcome(targetPrice);
   learnMovementOutcome(targetPrice,d);
+  learnRangeOutcome(targetPrice,d);
   learnDigit(d,hist);
 
   hist.push(d);
@@ -2241,6 +2550,7 @@ function processDigit(d,epoch,quote){
 
   prepareShadow();
   scheduleMovementForecasts(liveTickCount);
+  scheduleRangeForecasts(liveTickCount);
   riseFallSchedule(liveTickCount);
   if(riseFallMem.tickCount%250===0)pruneRiseFall();
   if(epoch)riseFallMem.lastEpoch=Math.max(safeNum(riseFallMem.lastEpoch,0),Number(epoch)||0);
@@ -2282,6 +2592,7 @@ function connectDeriv(){
       const pip=Number(m.pip_size||4);
       if(Number.isFinite(pip))marketPip=pip;
       bootstrapMovementPredictor();
+      bootstrapRangePredictor();
       bootstrapRiseFall();
 
       for(let i=0;i<prices.length;i++){
@@ -2328,6 +2639,7 @@ function masterExpertWeights(){
     motion:w('motion'),
     phase:w('phase'),
     futureMove:w('futureMove'),
+    range:w('range'),
     collab:w('collab')
   };
 }
@@ -2388,6 +2700,26 @@ function masterPublic(){
     },
     champion,
     entryResearch:entryResearchPublic(),
+    rangePredictor:(()=>{
+      const f=rangeForecast(1),p=mem.rangePerf[1]||freshRangePerf();
+      return {
+        samples:p.samples,
+        logLossEWMA:p.logLossEWMA,
+        brierEWMA:p.brierEWMA,
+        accuracyEWMA:p.accuracyEWMA,
+        activeRange:!!f?.activeRange,
+        stayProbability:f?.stayProbability||0,
+        breakoutDownProbability:f?.breakoutDownProbability||0,
+        breakoutUpProbability:f?.breakoutUpProbability||0,
+        widthUnits:f?.widthUnits||0,
+        compressionBand:f?.compressionBand||'UNKNOWN',
+        lateralScore:f?.lateralScore||0,
+        digitCorridor:f?.digitCorridor||null,
+        exposedDigits:f?.exposedDigits||[],
+        support:f?.support||0,
+        ready:!!f?.ready
+      };
+    })(),
     movementPredictor:(()=>{
       const f=movementForecast(1),p=mem.movementPerf[1]||freshMovePerf();
       return {
@@ -2425,6 +2757,8 @@ function browserMemory(){
     moveDigitModels:mem.moveDigitModels,
     movementBucketStats:mem.movementBucketStats,
     movementPerf:mem.movementPerf,
+    rangeModels:mem.rangeModels,
+    rangePerf:mem.rangePerf,
     globalP:mem.globalP,
     globalN:mem.globalN,
     modelLoss:mem.modelLoss,
@@ -2712,6 +3046,7 @@ app.listen(PORT,()=>{
   console.log('Collaborative experiences restored:',mem.collaborative.accepted);
   console.log('Master brain restored:',mem.master.counterfactualTicks,'counterfactual ticks · revision',mem.master.revision);
   console.log('Entry research restored:',mem.entryResearch.resolved,'resolved forecasts · recommendation',mem.entryResearch.recommended);
+  console.log('Range Intelligence restored:',mem.rangePerf[1].samples,'validated 1T range forecasts');
   console.log('Rise/Fall memory restored:',riseFallMem.trainedSamples,'training samples ·',riseFallMem.performance[1].resolved,'validated 1T forecasts');
   prepareShadow();
   connectDeriv();
