@@ -34,7 +34,7 @@ let cloudLive={prediction:null,updatedAt:0};
 let cloudMaster={
   version:'',revision:0,updatedAt:0,receivedAt:0,cloudTicks:0,signalEpoch:0,
   counterfactualTicks:0,digitCalibration:null,rankStats:null,errorContexts:[],
-  streakStats:null,expertWeights:{},prequential:null,drift:null,champion:'',
+  streakStats:null,expertWeights:{},expertPerformance:{},prequential:null,drift:null,champion:'',
   shadowMatchRate:UNIFORM,collaborativeAccepted:0,collaborativeMatchRate:UNIFORM
 };
 
@@ -237,6 +237,20 @@ function normalizeCloudMaster(x){
     })):[],
     streakStats:ss,
     expertWeights:ew,
+    expertPerformance:(()=>{
+      const out={};
+      const raw=x.expertPerformance&&typeof x.expertPerformance==='object'?x.expertPerformance:{};
+      Object.keys(raw).forEach(name=>{
+        const p=raw[name]||{};
+        out[name]={
+          samples:Math.max(0,Math.floor(safeNum(p.samples,0))),
+          weight:clamp(safeNum(p.weight,1),.12,5),
+          matchEWMA:clamp(safeNum(p.matchEWMA,UNIFORM),0,1),
+          logLossEWMA:clamp(safeNum(p.logLossEWMA,BASELINE_LOGLOSS),.01,12)
+        };
+      });
+      return out;
+    })(),
     prequential:{
       samples:Math.max(0,Math.floor(safeNum(x.prequential?.samples,0))),
       brierEWMA:clamp(safeNum(x.prequential?.brierEWMA,BASELINE_BRIER),0,1),
@@ -738,13 +752,16 @@ function predict(){
 
   // Movimiento: aprende siempre, solo influye cuando ya demostró utilidad.
   const motion=motionDistribution(h);
-  const motionPerf=mem.expertPerf?.motion||{samples:0,skillEWMA:0,weight:1};
+  const localMotionPerf=mem.expertPerf?.motion||{samples:0,skillEWMA:0,weight:1};
+  const masterMotionPerf=cloudMasterFresh()?cloudMaster.expertPerformance?.motion:null;
   const motionMature=!!motion &&
     safeNum(motion.n,0)>=180 &&
-    safeNum(motionPerf.samples,0)>=120 &&
-    safeNum(motionPerf.skillEWMA,0)>.005;
+    (masterMotionPerf
+      ?(safeNum(masterMotionPerf.samples,0)>=120 && safeNum(masterMotionPerf.matchEWMA,UNIFORM)<UNIFORM)
+      :(safeNum(localMotionPerf.samples,0)>=120 && safeNum(localMotionPerf.skillEWMA,0)>.005));
   if(motionMature){
-    const maturity=clamp((safeNum(motionPerf.samples,0)-120)/500,0,1);
+    const motionSamples=masterMotionPerf?safeNum(masterMotionPerf.samples,0):safeNum(localMotionPerf.samples,0);
+    const maturity=clamp((motionSamples-120)/500,0,1);
     const mw=(.10+.20*maturity)*motion.support*expertWeight('motion');
     if(mw>.01){
       for(let d=0;d<10;d++){dist[d]+=motion.p[d]*mw;denom[d]+=mw}
