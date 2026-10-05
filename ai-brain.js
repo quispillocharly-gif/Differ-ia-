@@ -1146,7 +1146,10 @@ function shareExperience(t,loss,elapsed){
     body:JSON.stringify(payload),
     keepalive:true
   }).then(r=>r.ok?r.json():null).then(data=>{
-    if(data?.accepted)syncCollaborative();
+    if(data?.accepted){
+      syncCollaborative();
+      syncMasterBrain(true);
+    }
   }).catch(()=>{});
 }
 
