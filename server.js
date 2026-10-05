@@ -586,6 +586,15 @@ function freshRiseFallPerf(){
     lastAt:0
   };
 }
+function freshRiseFallOperationLearning(){
+  return {
+    total:0,wins:0,losses:0,
+    byAction:{RISE:{n:0,wins:0},FALL:{n:0,wins:0}},
+    byHorizon:{1:{n:0,wins:0},2:{n:0,wins:0},3:{n:0,wins:0}},
+    confidenceBins:Array.from({length:10},()=>({n:0,wins:0})),
+    seen:{},updatedAt:0
+  };
+}
 function freshRiseFallMemory(){
   const models={1:{},2:{},3:{}};
   const global={
@@ -602,6 +611,7 @@ function freshRiseFallMemory(){
     models,
     global,
     performance:{1:freshRiseFallPerf(),2:freshRiseFallPerf(),3:freshRiseFallPerf()},
+    operationLearning:freshRiseFallOperationLearning(),
     lastEpoch:0,
     saves:0
   };
@@ -631,6 +641,33 @@ function normalizeRiseFallMemory(x){
       lastAt:Math.max(0,safeNum(p.lastAt,0))
     };
   });
+  const rawOps=m.operationLearning&&typeof m.operationLearning==='object'?m.operationLearning:{};
+  const ops=freshRiseFallOperationLearning();
+  ops.total=Math.max(0,Math.floor(safeNum(rawOps.total,0)));
+  ops.wins=Math.max(0,Math.floor(safeNum(rawOps.wins,0)));
+  ops.losses=Math.max(0,Math.floor(safeNum(rawOps.losses,Math.max(0,ops.total-ops.wins))));
+  ['RISE','FALL'].forEach(name=>{
+    const x=rawOps.byAction?.[name]||{};
+    ops.byAction[name]={n:Math.max(0,Math.floor(safeNum(x.n,0))),wins:Math.max(0,Math.floor(safeNum(x.wins,0)))};
+  });
+  [1,2,3].forEach(h=>{
+    const x=rawOps.byHorizon?.[h]||{};
+    ops.byHorizon[h]={n:Math.max(0,Math.floor(safeNum(x.n,0))),wins:Math.max(0,Math.floor(safeNum(x.wins,0)))};
+  });
+  ops.confidenceBins=Array.from({length:10},(_,i)=>{
+    const x=Array.isArray(rawOps.confidenceBins)?rawOps.confidenceBins[i]:null;
+    return {n:Math.max(0,Math.floor(safeNum(x?.n,0))),wins:Math.max(0,Math.floor(safeNum(x?.wins,0)))};
+  });
+  const seen=rawOps.seen&&typeof rawOps.seen==='object'?rawOps.seen:{};
+  ops.seen=Object.fromEntries(
+    Object.entries(seen)
+      .filter(([k])=>typeof k==='string'&&k.length<=96)
+      .sort((a,b)=>safeNum(b[1],0)-safeNum(a[1],0))
+      .slice(0,2500)
+  );
+  ops.updatedAt=Math.max(0,safeNum(rawOps.updatedAt,0));
+  m.operationLearning=ops;
+
   m.tickCount=Math.max(0,Math.floor(safeNum(m.tickCount,0)));
   m.trainedSamples=Math.max(0,Math.floor(safeNum(m.trainedSamples,0)));
   m.lastEpoch=Math.max(0,Math.floor(safeNum(m.lastEpoch,0)));
@@ -718,6 +755,92 @@ function riseFallOwnDistribution(h,snap){
   const p=riseFallNorm3(acc.map((x,i)=>x/(den[i]||1)));
   return {p,support:used?supportSum/used:0,n:totalN+safeNum(g.n,0)};
 }
+function riseFallPosterior(stat,priorRate=.52,priorN=18){
+  const n=Math.max(0,safeNum(stat?.n,0));
+  const wins=Math.max(0,safeNum(stat?.wins,0));
+  return (wins+priorN*priorRate)/(n+priorN);
+}
+function riseFallOperationGate(action,h,probability){
+  const ops=riseFallMem.operationLearning||freshRiseFallOperationLearning();
+  const a=ops.byAction?.[action]||{n:0,wins:0};
+  const hz=ops.byHorizon?.[h]||{n:0,wins:0};
+  const binIndex=clamp(Math.floor(clamp(safeNum(probability,.5),.5,.999)*10),0,9);
+  const bin=ops.confidenceBins?.[binIndex]||{n:0,wins:0};
+
+  const parts=[
+    {n:a.n,rate:riseFallPosterior(a)},
+    {n:hz.n,rate:riseFallPosterior(hz)},
+    {n:bin.n,rate:riseFallPosterior(bin)}
+  ].filter(x=>x.n>0);
+  const weight=parts.reduce((s,x)=>s+Math.min(120,x.n),0);
+  const learnedRate=weight
+    ? parts.reduce((s,x)=>s+x.rate*Math.min(120,x.n),0)/weight
+    : .52;
+  const samples=Math.max(a.n,hz.n,bin.n);
+
+  let minProbability=.56;
+  if(samples>=30){
+    if(learnedRate<.49)minProbability=.62;
+    else if(learnedRate<.515)minProbability=.60;
+    else if(learnedRate<.535)minProbability=.58;
+  }
+  return {
+    samples,
+    learnedWinRate:clamp(learnedRate,0,1),
+    minProbability,
+    totalOperations:ops.total,
+    totalWins:ops.wins,
+    totalLosses:ops.losses,
+    overallWinRate:ops.total?ops.wins/ops.total:.5
+  };
+}
+function recordRiseFallDemoOperation(b){
+  const ops=riseFallMem.operationLearning||(riseFallMem.operationLearning=freshRiseFallOperationLearning());
+  const id=typeof b.id==='string'&&/^[A-Za-z0-9:_-]{6,96}$/.test(b.id)?b.id:'';
+  const action=b.action==='RISE'||b.action==='FALL'?b.action:'';
+  const h=Math.floor(safeNum(b.horizon,0));
+  const probability=safeNum(b.probability,NaN);
+  const profit=safeNum(b.profit,NaN);
+  const breakEven=safeNum(b.breakEven,NaN);
+  const signalEpoch=Math.floor(safeNum(b.signalEpoch,0));
+
+  if(b.mode!=='demo'||!id||!action||h<1||h>3||
+     !Number.isFinite(probability)||probability<.45||probability>1||
+     !Number.isFinite(profit)||Math.abs(profit)>100000||
+     !Number.isFinite(breakEven)||breakEven<=0||breakEven>1||
+     !signalEpoch){
+    return {ok:false,error:'invalid rise/fall demo experience'};
+  }
+  if(ops.seen[id])return {ok:true,accepted:false,duplicate:true,summary:riseFallOperationGate(action,h,probability)};
+
+  ops.seen[id]=Date.now();
+  const entries=Object.entries(ops.seen);
+  if(entries.length>2500){
+    entries.sort((x,y)=>safeNum(y[1],0)-safeNum(x[1],0));
+    ops.seen=Object.fromEntries(entries.slice(0,2500));
+  }
+
+  const win=profit>0;
+  ops.total++;
+  if(win)ops.wins++;else ops.losses++;
+
+  const a=ops.byAction[action];
+  a.n++; if(win)a.wins++;
+
+  const hz=ops.byHorizon[h];
+  hz.n++; if(win)hz.wins++;
+
+  const binIndex=clamp(Math.floor(clamp(probability,.5,.999)*10),0,9);
+  const bin=ops.confidenceBins[binIndex];
+  bin.n++; if(win)bin.wins++;
+
+  ops.updatedAt=Date.now();
+  riseFallMem.updatedAt=Date.now();
+  if(ops.total%5===0)saveRiseFallMemory();
+
+  return {ok:true,accepted:true,duplicate:false,summary:riseFallOperationGate(action,h,probability)};
+}
+
 function riseFallPredict(h=1){
   h=clamp(Math.round(safeNum(h,1)),1,3);
   const snap=motionSnapshot();
@@ -738,9 +861,11 @@ function riseFallPredict(h=1){
   const direction=up>=down?'RISE':'FALL';
   const directionProbability=Math.max(up,down);
   const gap=Math.abs(up-down);
+  const operationGate=riseFallOperationGate(direction,h,directionProbability);
+  const minDirectionalProbability=Math.max(.56,safeNum(operationGate.minProbability,.56));
   let action='WAIT';
-  if(up>=.56&&gap>=.065&&flat<=.30)action='RISE';
-  else if(down>=.56&&gap>=.065&&flat<=.30)action='FALL';
+  if(up>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='RISE';
+  else if(down>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='FALL';
 
   const perf=riseFallMem.performance[h]||freshRiseFallPerf();
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
@@ -775,6 +900,7 @@ function riseFallPredict(h=1){
     reversalProbability:move?clamp(safeNum(move.reversalProbability,0),0,1):0,
     continuationProbability:move?clamp(safeNum(move.continuationProbability,0),0,1):0,
     ready,
+    operationLearning:operationGate,
     validation:{
       resolved:perf.resolved,
       actionSamples:perf.actionSamples,
@@ -899,6 +1025,13 @@ function riseFallStatus(){
     updatedAt:riseFallMem.updatedAt,
     tickCount:riseFallMem.tickCount,
     trainedSamples:riseFallMem.trainedSamples,
+    operationLearning:{
+      total:riseFallMem.operationLearning.total,
+      wins:riseFallMem.operationLearning.wins,
+      losses:riseFallMem.operationLearning.losses,
+      winRate:riseFallMem.operationLearning.total?riseFallMem.operationLearning.wins/riseFallMem.operationLearning.total:.5,
+      updatedAt:riseFallMem.operationLearning.updatedAt
+    },
     predictions:{
       1:riseFallPredict(1),
       2:riseFallPredict(2),
@@ -2455,6 +2588,12 @@ app.get('/api/cloud/master',(req,res)=>{
 app.get('/api/cloud/collaborative',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   res.json({ok:true,symbol:SYMBOL,collaborative:collaborativePublic()});
+});
+
+app.post('/api/rise-fall/experience',(req,res)=>{
+  const result=recordRiseFallDemoOperation(req.body||{});
+  if(!result.ok)return res.status(400).json(result);
+  res.json(result);
 });
 
 app.get('/api/rise-fall/status',(req,res)=>{
