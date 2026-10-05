@@ -131,6 +131,7 @@ function freshSessionAnalytics(){
     lastCompletionPosition:0,
     byPosition:Array.from({length:50},()=>({trades:0,matches:0,completions:0})),
     overflow:{trades:0,matches:0,completions:0},
+    seen:{},
     updatedAt:0
   };
 }
@@ -307,6 +308,13 @@ function normalizeMemory(x){
     matches:Math.max(0,Math.floor(safeNum(of.matches,0))),
     completions:Math.max(0,Math.floor(safeNum(of.completions,0)))
   };
+  const seen=rawSa.seen&&typeof rawSa.seen==='object'?rawSa.seen:{};
+  sa.seen=Object.fromEntries(
+    Object.entries(seen)
+      .filter(([k])=>typeof k==='string'&&k.length<=96)
+      .sort((a,b)=>safeNum(b[1],0)-safeNum(a[1],0))
+      .slice(0,6000)
+  );
   master.sessionAnalytics=sa;
   m.master=master;
 
@@ -1025,10 +1033,22 @@ function updateMasterStreak(streakBefore,loss){
   master.revision++;
   master.updatedAt=Date.now();
 }
-function updateMasterSessionAnalytics(sessionOp,loss,sessionEnd){
-  if(!Number.isInteger(sessionOp)||sessionOp<1||sessionOp>500)return;
+function updateMasterSessionAnalytics(sessionId,sessionOp,loss,sessionEnd){
+  if(typeof sessionId!=='string'||!/^[A-Za-z0-9_-]{6,64}$/.test(sessionId))return false;
+  if(!Number.isInteger(sessionOp)||sessionOp<1||sessionOp>500)return false;
   const master=mem.master||(mem.master=freshMasterBrain());
   const sa=master.sessionAnalytics||(master.sessionAnalytics=freshSessionAnalytics());
+  sa.seen=sa.seen&&typeof sa.seen==='object'?sa.seen:{};
+  const eventKey=sessionId+':'+sessionOp;
+  if(sa.seen[eventKey])return false;
+  sa.seen[eventKey]=Date.now();
+
+  const entries=Object.entries(sa.seen);
+  if(entries.length>6000){
+    entries.sort((a,b)=>safeNum(b[1],0)-safeNum(a[1],0));
+    sa.seen=Object.fromEntries(entries.slice(0,6000));
+  }
+
   if(sessionOp===1)sa.sessionsStarted++;
   sa.tradesObserved++;
   sa.maxPosition=Math.max(sa.maxPosition,sessionOp);
@@ -1055,6 +1075,7 @@ function updateMasterSessionAnalytics(sessionOp,loss,sessionEnd){
   sa.updatedAt=Date.now();
   master.revision++;
   master.updatedAt=sa.updatedAt;
+  return true;
 }
 
 function evaluateShadow(actual){
@@ -1374,6 +1395,7 @@ app.post('/api/cloud/experience',(req,res)=>{
   const elapsed=Math.floor(safeNum(b.elapsed,1));
   const streakBeforeRaw=safeNum(b.streakBefore,NaN);
   const streakBefore=Number.isFinite(streakBeforeRaw)?Math.max(0,Math.min(200,Math.floor(streakBeforeRaw))):null;
+  const sessionId=typeof b.sessionId==='string'&&/^[A-Za-z0-9_-]{6,64}$/.test(b.sessionId)?b.sessionId:'';
   const sessionOpRaw=safeNum(b.sessionOp,NaN);
   const sessionOp=Number.isFinite(sessionOpRaw)?Math.max(1,Math.min(500,Math.floor(sessionOpRaw))):null;
   const sessionEnd=(b.sessionEnd==='TARGET'||b.sessionEnd==='STOP')?b.sessionEnd:'';
@@ -1386,17 +1408,17 @@ app.post('/api/cloud/experience',(req,res)=>{
     return res.status(400).json({ok:false,error:'invalid experience'});
   }
 
-  // Analítica de sesión: cuenta la posición real de la operación por dispositivo.
-  // Se registra antes del dedupe de evidencia de mercado porque dos sesiones distintas
-  // pueden operar la misma señal y ambas deben contar como sesiones observadas.
-  if(sessionOp!==null)updateMasterSessionAnalytics(sessionOp,loss,sessionEnd);
-
   // Solo acepta experiencias cercanas al mercado vivo del cloud.
   if(lastEpoch && Math.abs(signalEpoch-lastEpoch)>90){
     return res.status(409).json({ok:false,error:'stale experience'});
   }
 
-  // Mismo tick + mismo dígito = una sola evidencia, aunque lo operen varias personas.
+  // Analítica de sesión: cada sesión tiene su propio ID anónimo y cada posición cuenta una vez.
+  // Va antes del dedupe de evidencia de mercado porque dos sesiones distintas pueden coincidir
+  // en el mismo tick y ambas deben formar parte del estudio de sesiones.
+  if(sessionId&&sessionOp!==null)updateMasterSessionAnalytics(sessionId,sessionOp,loss,sessionEnd);
+
+  // Mismo tick + mismo dígito = una sola evidencia de mercado, aunque lo operen varias personas.
   const dedupKey=signalEpoch+':'+digit;
   if(col.seen[dedupKey]){
     col.duplicates++;
