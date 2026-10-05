@@ -174,7 +174,7 @@ h1{font-size:clamp(32px,5vw,56px);letter-spacing:-2.2px;line-height:.95;margin:9
 
 
 /* ===== NEXUS MOBILE APP SHELL ===== */
-.appToolbar{display:flex;justify-content:space-between;align-items:center;gap:9px;margin:9px 0 11px;padding:6px;border:1px solid rgba(53,231,255,.12);border-radius:14px;background:rgba(2,10,7,.82);box-shadow:inset 0 0 16px rgba(53,231,255,.025)}
+.strategySelect{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid rgba(53,231,255,.20);border-radius:12px;background:rgba(53,231,255,.025)}.strategySelect span{font-size:8px;color:#719a82;letter-spacing:1.2px}.strategySelect select{min-height:31px;height:31px;width:auto;padding:4px 28px 4px 9px;color:var(--cyan);font-size:9px;font-weight:900}.strategyState{font-size:8px;color:var(--warn);letter-spacing:1px}.rfPanel{display:none;border-color:rgba(53,231,255,.26);background:radial-gradient(circle at 80% 0,rgba(53,231,255,.06),transparent 34%),linear-gradient(180deg,rgba(3,14,15,.95),rgba(1,7,7,.97))}.rfDecisionBox{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(250px,.75fr);gap:12px}.rfSignal{border:1px solid rgba(53,231,255,.18);border-radius:14px;padding:13px;background:rgba(53,231,255,.025)}.rfSignal small{display:block;color:#719a82;font-size:8px;letter-spacing:1.3px}.rfDecision{font-size:30px;font-weight:950;color:var(--cyan);margin:9px 0;text-shadow:0 0 18px rgba(53,231,255,.18)}.rfMeta{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.rfMeta div{padding:8px;border:1px solid rgba(53,231,255,.10);border-radius:10px}.rfMeta b{display:block;margin-top:4px;color:var(--mint);font-size:13px}.rfControls{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.rfControls .wide{grid-column:1/-1}.rfControls button{height:48px}.rfNote{margin-top:9px;color:#698c7a;font-size:8px;line-height:1.5}.rfStatsGrid{display:none}.appToolbar{display:flex;justify-content:space-between;align-items:center;gap:9px;margin:9px 0 11px;padding:6px;border:1px solid rgba(53,231,255,.12);border-radius:14px;background:rgba(2,10,7,.82);box-shadow:inset 0 0 16px rgba(53,231,255,.025)}
 .viewSwitch{display:flex;gap:4px;padding:3px;border-radius:10px;background:#010503;border:1px solid rgba(0,255,136,.10)}
 .viewSwitch button,.soundToggle,.miniTool{min-height:30px;padding:6px 10px;border-radius:8px;font-size:8px;font-weight:900;letter-spacing:.9px}
 .viewSwitch button{border-color:transparent;background:transparent;color:#648a77;box-shadow:none}
@@ -289,6 +289,14 @@ body.simpleMode .viewStatus{color:#85ffc0}
       <button type="button" id="proView">PRO</button>
     </div>
     <span class="viewStatus" id="viewStatus">VISTA SIMPLE</span>
+    <div class="strategySelect">
+      <span>ESTRATEGIA</span>
+      <select id="strategyMode" aria-label="Seleccionar estrategia">
+        <option value="DIFFER">DIFFER</option>
+        <option value="RISE_FALL">RISE / FALL</option>
+      </select>
+      <b class="strategyState" id="strategyState">DIFFER</b>
+    </div>
     <button type="button" id="soundToggle" class="soundToggle" aria-label="Activar o desactivar sonidos">🔊 SONIDO</button>
   </div>
 
@@ -308,6 +316,43 @@ body.simpleMode .viewStatus{color:#85ffc0}
       <div class="authPill"><span id="authStatus">NO CONECTADO</span></div>
     </div>
   </section>
+
+  <section id="rfPanel" class="panel rfPanel appSection">
+    <div class="panel-head"><div class="panel-title">02R // RISE / FALL IA · MÓDULO AISLADO</div><span class="chip">NO MODIFICA DIFFER</span></div>
+    <div class="rfDecisionBox">
+      <div class="rfSignal">
+        <small>PREDICCIÓN DIRECCIONAL ACTUAL</small>
+        <div class="rfDecision" id="rfDecision">APRENDIENDO</div>
+        <div class="rfMeta">
+          <div><small>PROBABILIDAD</small><b id="rfProbability">—</b></div>
+          <div><small>MOVIMIENTO</small><b id="rfMove">—</b></div>
+          <div><small>MODO IA</small><b id="rfCloudMode">SHADOW</b></div>
+          <div><small>FASE</small><b id="rfPhase">—</b></div>
+          <div><small>GIRO / CONT</small><b id="rfTurn">—</b></div>
+          <div><small>VALIDACIÓN</small><b id="rfValidation">REUNIENDO DATOS</b></div>
+        </div>
+        <div class="rfNote">Este cerebro aprende en Railway aunque cierres la página. Lee la predicción de movimiento como evidencia, pero su memoria, validación y operaciones son independientes de DIFFER.</div>
+      </div>
+      <div class="rfControls">
+        <label>Stake<input id="rfStake" type="number" min="0.01" step="0.01" value="1.00"></label>
+        <label>Horizonte<select id="rfHorizon"><option value="1">1 TICK</option><option value="2">2 TICKS</option><option value="3">3 TICKS</option></select></label>
+        <label>Objetivo TP<input id="rfTarget" type="number" min="0.01" step="0.01" value="3.00"></label>
+        <label>Límite SL<input id="rfStopLoss" type="number" min="0.01" step="0.01" value="5.00"></label>
+        <button id="rfStart" class="primary wide">▶ INICIAR RISE / FALL IA</button>
+        <button id="rfStop" class="danger wide">■ DETENER RISE / FALL</button>
+      </div>
+    </div>
+    <div class="statusStrip"><span>ESTADO RISE/FALL</span><span id="rfStatus">SHADOW · CLOUD APRENDIENDO</span></div>
+    <div class="statusStrip"><span>CONEXIÓN RISE/FALL</span><span id="rfConnState">DESCONECTADO</span></div>
+  </section>
+
+  <div id="rfStatsGrid" class="grid rfStatsGrid">
+    <div class="card hot"><small>PNL Rise/Fall</small><b id="rfPnl">$0.00</b></div>
+    <div class="card"><small>Wins Rise/Fall</small><b id="rfWins">0</b></div>
+    <div class="card dangerCard"><small>Loss Rise/Fall</small><b id="rfLosses">0</b></div>
+    <div class="card"><small>Operaciones Rise/Fall</small><b id="rfOps">0</b></div>
+    <div class="card warn"><small>Próximo stake RF</small><b id="rfNextStake">$1.00</b></div>
+  </div>
 
   <section id="sessionPanel" class="panel sessionPanel appSection">
     <div class="panel-head"><div class="panel-title">02 // CONTROL DE SESIÓN</div><span class="chip">CONFIGURACIÓN RÁPIDA</span></div>
@@ -417,6 +462,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
 
 <script src="demo.js?v=real-pro-balance-v1"></script>
 <script src="ai-brain.js?v=intelligence-v16-confirmed-entry"></script>
+<script src="rise-fall.js?v=rf-isolated-cloud-v1"></script>
 <script>
 (function(){
   var q=function(id){return document.getElementById(id)};
