@@ -74,8 +74,9 @@ function render(){
   setText('rfProbability',pct(p.directionProbability));
   setText('rfMove',arrow+' '+(Number(p.expectedUnits)>=0?'+':'')+Number(p.expectedUnits||0).toFixed(1)+'U');
   const v=p.validation||{};
-  setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS');
-  setText('rfCloudMode',p.ready?'ACTIVO':'SHADOW');
+  const op=p.operationLearning||{};
+  setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS · OPS '+Number(op.totalOperations||0).toLocaleString());
+  setText('rfCloudMode',p.ready?'ACTIVO':(($('mode')?.value==='DEMO')?'SHADOW + DEMO':'SHADOW'));
   setText('rfPhase',String(p.phase||'—').replaceAll('_',' '));
   setText('rfTurn','GIRO '+pct(p.reversalProbability)+' · CONT '+pct(p.continuationProbability));
 }
@@ -245,7 +246,10 @@ function onRfMessage(ev){
       stake:p.stake,
       horizon:p.horizon,
       breakEven,
-      signalEpoch:p.signalEpoch
+      signalEpoch:p.signalEpoch,
+      phase:p.phase,
+      ready:p.ready,
+      contractId:''
     };
     rfSocket.send(JSON.stringify({buy:id,price:ask,req_id:++rfBuyReq}));
     p.resolve({bought:true,breakEven});
@@ -253,6 +257,7 @@ function onRfMessage(ev){
 
   if(m.msg_type==='buy'&&m.buy?.contract_id){
     rfActiveContract=m.buy.contract_id;
+    if(rfActiveTrade)rfActiveTrade.contractId=String(m.buy.contract_id);
     rfSession.ops++;
     saveSession();
     render();
@@ -304,7 +309,9 @@ function sendRfTrade(pred){
       probability:clamp(pred.directionProbability,0,1),
       stake,
       horizon:h,
-      signalEpoch:Number(pred.signalEpoch||0)
+      signalEpoch:Number(pred.signalEpoch||0),
+      phase:String(pred.phase||'UNKNOWN'),
+      ready:!!pred.ready
     };
     rfSocket.send(JSON.stringify({
       proposal:1,
@@ -320,6 +327,28 @@ function sendRfTrade(pred){
   });
 }
 
+async function reportRfDemoExperience(t,profit){
+  if(!t||rfAccountType!=='demo')return;
+  const id=String(t.contractId||('RF:'+t.signalEpoch+':'+t.action+':'+t.horizon));
+  try{
+    await fetch(CLOUD_URL+'/api/rise-fall/experience',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        id,
+        mode:'demo',
+        action:t.action,
+        horizon:t.horizon,
+        probability:t.probability,
+        breakEven:t.breakEven,
+        signalEpoch:t.signalEpoch,
+        phase:t.phase,
+        profit:Number(profit)||0
+      })
+    });
+  }catch(_){}
+}
+
 function settleRfTrade(profit,t){
   rfSession.pnl+=profit;
   if(profit>0){
@@ -331,6 +360,7 @@ function settleRfTrade(profit,t){
   }
   saveSession();
   render();
+  reportRfDemoExperience(t,profit);
 
   if(rfSession.pnl>=target()){
     rfAuto=false;
@@ -346,15 +376,19 @@ function settleRfTrade(profit,t){
 async function evaluateAuto(pred){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
-  if(!pred.ready){
+  const learningDemo=!pred.ready && rfAccountType==='demo';
+
+  // Mientras está en SHADOW puede operar únicamente en DEMO para aprender también
+  // de ejecuciones reales de contrato. REAL sigue bloqueado hasta validación.
+  if(!pred.ready && !learningDemo){
     resetConfirmation();
-    setText('rfStatus','SHADOW · APRENDIENDO EN CLOUD · SIN COMPRAR');
+    setText('rfStatus','SHADOW · APRENDIENDO · REAL BLOQUEADO HASTA VALIDACIÓN');
     return;
   }
 
   if(pred.action!=='RISE'&&pred.action!=='FALL'){
     resetConfirmation();
-    setText('rfStatus','ESPERANDO MEJOR DIRECCIÓN');
+    setText('rfStatus',learningDemo?'DEMO APRENDIENDO · ESPERANDO MEJOR DIRECCIÓN':'ESPERANDO MEJOR DIRECCIÓN');
     return;
   }
 
@@ -368,8 +402,9 @@ async function evaluateAuto(pred){
   }
   rfConfirm.lastEpoch=epoch;
 
-  if(rfConfirm.count<2){
-    setText('rfStatus','CONFIRMANDO '+pred.action+' · '+rfConfirm.count+'/2');
+  const needed=learningDemo?3:2;
+  if(rfConfirm.count<needed){
+    setText('rfStatus',(learningDemo?'DEMO APRENDIENDO · ':'')+'CONFIRMANDO '+pred.action+' · '+rfConfirm.count+'/'+needed);
     return;
   }
 
@@ -377,7 +412,7 @@ async function evaluateAuto(pred){
   try{
     const out=await sendRfTrade(pred);
     if(out?.bought){
-      setText('rfStatus','ENVIANDO '+pred.action+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
+      setText('rfStatus',(learningDemo?'DEMO LEARNING · ':'')+'ENVIANDO '+pred.action+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
     }else if(Number.isFinite(out?.breakEven)){
       setText('rfStatus','SIN COMPRA · PROBABILIDAD NO SUPERA PUNTO DE EQUILIBRIO');
     }
@@ -385,7 +420,6 @@ async function evaluateAuto(pred){
     setText('rfStatus','ERROR · '+(e?.message||e));
   }
 }
-
 async function poll(){
   try{
     const h=horizon();
@@ -424,8 +458,10 @@ async function startRf(){
   rfAuto=true;
   if(rfPrediction?.ready){
     setText('rfStatus','AUTO RISE/FALL ACTIVO · ESPERANDO CONFIRMACIÓN');
+  }else if(rfAccountType==='demo'){
+    setText('rfStatus','SHADOW + DEMO · APRENDE DEL MERCADO Y DE CADA OPERACIÓN');
   }else{
-    setText('rfStatus','SHADOW ACTIVO · COMPRARÁ SOLO CUANDO EL MODELO SEA VALIDADO');
+    setText('rfStatus','SHADOW ACTIVO · REAL BLOQUEADO HASTA VALIDACIÓN');
   }
 }
 
