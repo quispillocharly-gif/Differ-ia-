@@ -28,9 +28,15 @@ let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
 let sharedModel={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
-let sharedSyncTimer=null,sharedLogged=false,cloudPredictionTimer=null;
+let sharedSyncTimer=null,sharedLogged=false,cloudPredictionTimer=null,masterSyncTimer=null;
 let predictionQueue=[];
 let cloudLive={prediction:null,updatedAt:0};
+let cloudMaster={
+  version:'',revision:0,updatedAt:0,receivedAt:0,cloudTicks:0,signalEpoch:0,
+  counterfactualTicks:0,digitCalibration:null,rankStats:null,errorContexts:[],
+  streakStats:null,expertWeights:{},prequential:null,drift:null,champion:'',
+  collaborativeAccepted:0
+};
 
 function blankP(){return Array(10).fill(UNIFORM)}
 function freshExpertPerf(){
@@ -193,6 +199,77 @@ function log(s){
 function fmtPct(x){return Number.isFinite(x)?(x*100).toFixed(2)+'%':'—'}
 function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
 function safeNum(x,d=0){x=Number(x);return Number.isFinite(x)?x:d}
+function normalizeCloudMaster(x){
+  if(!x||typeof x!=='object')return null;
+  const dc=Array.from({length:10},(_,d)=>{
+    const s=Array.isArray(x.digitCalibration)?x.digitCalibration[d]:null;
+    return {n:Math.max(0,Math.floor(safeNum(s?.n,0))),matches:Math.max(0,Math.floor(safeNum(s?.matches,0))),predictedSum:Math.max(0,safeNum(s?.predictedSum,0))};
+  });
+  const rs=Array.from({length:10},(_,i)=>{
+    const s=Array.isArray(x.rankStats)?x.rankStats[i]:null;
+    return {n:Math.max(0,Math.floor(safeNum(s?.n,0))),matches:Math.max(0,Math.floor(safeNum(s?.matches,0)))};
+  });
+  const baseStreak={'0-2':{n:0,matches:0},'3-5':{n:0,matches:0},'6-8':{n:0,matches:0},'9-11':{n:0,matches:0},'12+':{n:0,matches:0}};
+  const ss={};
+  Object.keys(baseStreak).forEach(k=>{
+    const s=x.streakStats?.[k]||{};
+    ss[k]={n:Math.max(0,Math.floor(safeNum(s.n,0))),matches:Math.max(0,Math.floor(safeNum(s.matches,0)))};
+  });
+  const ew={};
+  ['global','recent','ctx1','ctx2','ctx3','motion','collab'].forEach(name=>{
+    if(Number.isFinite(Number(x.expertWeights?.[name])))ew[name]=clamp(Number(x.expertWeights[name]),.12,5);
+  });
+  return {
+    version:String(x.version||''),
+    revision:Math.max(0,Math.floor(safeNum(x.revision,0))),
+    updatedAt:Math.max(0,safeNum(x.updatedAt,0)),
+    receivedAt:Date.now(),
+    cloudTicks:Math.max(0,Math.floor(safeNum(x.cloudTicks,0))),
+    signalEpoch:Math.max(0,Math.floor(safeNum(x.signalEpoch,0))),
+    counterfactualTicks:Math.max(0,Math.floor(safeNum(x.counterfactualTicks,0))),
+    digitCalibration:dc,
+    rankStats:rs,
+    errorContexts:Array.isArray(x.errorContexts)?x.errorContexts.slice(-160).map(v=>({
+      ctx:String(v?.ctx||'').slice(-3),
+      digit:Math.max(0,Math.min(9,Math.floor(safeNum(v?.digit,0)))),
+      ts:Math.max(0,safeNum(v?.ts,0)),
+      risk:clamp(safeNum(v?.risk,UNIFORM),0,.5)
+    })):[],
+    streakStats:ss,
+    expertWeights:ew,
+    prequential:{
+      samples:Math.max(0,Math.floor(safeNum(x.prequential?.samples,0))),
+      brierEWMA:clamp(safeNum(x.prequential?.brierEWMA,BASELINE_BRIER),0,1),
+      logLossEWMA:clamp(safeNum(x.prequential?.logLossEWMA,BASELINE_LOGLOSS),.01,12)
+    },
+    drift:{
+      active:!!x.drift?.active,
+      events:Math.max(0,Math.floor(safeNum(x.drift?.events,0))),
+      updatedAt:Math.max(0,safeNum(x.drift?.updatedAt,0))
+    },
+    champion:String(x.champion||''),
+    collaborativeAccepted:Math.max(0,Math.floor(safeNum(x.collaborativeAccepted,0)))
+  };
+}
+function cloudMasterFresh(){
+  return !!cloudMaster.version && Date.now()-safeNum(cloudMaster.receivedAt,0)<60000;
+}
+function brainDriftActive(){
+  return cloudMasterFresh()?!!cloudMaster.drift?.active:!!mem.drift?.active;
+}
+function brainPrequential(){
+  if(cloudMasterFresh()&&safeNum(cloudMaster.prequential?.samples,0)>=60)return cloudMaster.prequential;
+  return mem.prequential;
+}
+function renderMasterState(){
+  const el=$('masterState');
+  if(!el)return;
+  if(!cloudMasterFresh()){
+    el.textContent='LOCAL BACKUP';
+    return;
+  }
+  el.textContent=(cloudMaster.version||'MASTER')+' · R'+cloudMaster.revision+' · '+cloudMaster.cloudTicks+'T';
+}
 
 function normalizeShared(x){
   const base={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
@@ -244,7 +321,7 @@ function modelLossKey(h,o){return h+':'+o}
 function learningRate(order,n){
   const base=order===1?.035:order===2?.050:.070;
   const support=Math.min(1,Math.max(0,n)/80);
-  const driftBoost=mem.drift?.active?1.30:1;
+  const driftBoost=brainDriftActive()?1.30:1;
   return clamp(base*(1-.25*support)*driftBoost,.012,.11);
 }
 function ensureNode(h,o,key){
@@ -335,7 +412,7 @@ function learnMotion(targetDigit,sourceHist){
     ].filter(x=>x.key);
     keys.forEach((entry)=>{
       const node=ensureMotionNode(h,entry.key);
-      const alpha=entry.base*(mem.drift?.active?1.20:1);
+      const alpha=entry.base*(brainDriftActive()?1.20:1);
       updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/900)),.012,.055));
       node.n++;
       node.last=mem.tickCount;
@@ -429,7 +506,10 @@ function normalizeDist(p){
 function expertWeight(name){
   const p=mem.expertPerf?.[name];
   let w=clamp(safeNum(p?.weight,1),.35,2.8);
-  if(mem.drift?.active){
+  if(cloudMasterFresh()&&Number.isFinite(Number(cloudMaster.expertWeights?.[name]))){
+    w=clamp(Number(cloudMaster.expertWeights[name]),.25,3.2);
+  }
+  if(brainDriftActive()){
     if(name==='recent')w*=1.35;
     else if(name==='ctx1')w*=1.15;
     else if(name==='ctx3')w*=.82;
@@ -494,35 +574,43 @@ function updateStreakStats(streakBefore,loss){
 }
 function streakRiskInfo(streak=session.streak){
   const key=streakBucket(streak);
-  const st=mem.streakStats?.[key]||{n:0,matches:0};
+  let source=mem.streakStats||{};
+  if(cloudMasterFresh()&&cloudMaster.streakStats){
+    const cloudN=Object.values(cloudMaster.streakStats).reduce((s,x)=>s+safeNum(x?.n,0),0);
+    if(cloudN>=20)source=cloudMaster.streakStats;
+  }
+  const st=source?.[key]||{n:0,matches:0};
   let totalN=0,totalM=0;
-  Object.values(mem.streakStats||{}).forEach(x=>{totalN+=safeNum(x.n,0);totalM+=safeNum(x.matches,0)});
+  Object.values(source||{}).forEach(x=>{totalN+=safeNum(x.n,0);totalM+=safeNum(x.matches,0)});
   const baseline=(totalM+45*UNIFORM)/(totalN+45);
   const local=(safeNum(st.matches,0)+30*baseline)/(safeNum(st.n,0)+30);
   const evidence=clamp(1-Math.exp(-safeNum(st.n,0)/24),0,1);
   const excess=clamp(local-baseline,0,.08);
   const active=safeNum(st.n,0)>=14 && excess>.012;
-  // Suave: nunca bloquea por racha; solo exige un poco más si los datos lo justifican.
   const edgePenalty=active?clamp(excess*evidence*.16,0,.0028):0;
   const qualityPenalty=active?clamp(excess*evidence*.75,0,.025):0;
   return {key,n:safeNum(st.n,0),matches:safeNum(st.matches,0),baseline,rate:local,evidence,excess,active,edgePenalty,qualityPenalty,streak:Math.max(0,Math.floor(safeNum(streak,0)))};
 }
 function digitCalibratedRisk(d,risk){
   const raw=clamp(safeNum(risk,UNIFORM),.005,.30);
-  const st=mem.digitCalibration?.[d];
-  if(!st||st.n<20)return raw;
-  const predAvg=safeNum(st.predictedSum,0)/Math.max(1,st.n);
+  let st=mem.digitCalibration?.[d];
+  const cloudSt=cloudMasterFresh()?cloudMaster.digitCalibration?.[d]:null;
+  if(cloudSt&&safeNum(cloudSt.n,0)>=20)st=cloudSt;
+  if(!st||safeNum(st.n,0)<20)return raw;
+  const predAvg=safeNum(st.predictedSum,0)/Math.max(1,safeNum(st.n,0));
   const observed=(safeNum(st.matches,0)+18*UNIFORM)/(safeNum(st.n,0)+18);
   const bias=clamp(observed-predAvg,-.018,.028);
-  const evidence=1-Math.exp(-st.n/90);
+  const evidence=1-Math.exp(-safeNum(st.n,0)/90);
   return clamp(raw+bias*evidence,Math.max(.005,raw*.72),Math.min(.30,raw*1.38));
 }
 function contextErrorPenalty(d){
   const ctx=contextSignature();
-  if(!ctx||!Array.isArray(mem.errorContexts))return 0;
+  if(!ctx)return 0;
+  const source=(cloudMasterFresh()&&cloudMaster.counterfactualTicks>=30)?cloudMaster.errorContexts:mem.errorContexts;
+  if(!Array.isArray(source))return 0;
   const now=Date.now();
   let score=0;
-  for(const x of mem.errorContexts){
+  for(const x of source){
     if(x.digit!==d||x.ctx!==ctx)continue;
     const ageDays=(now-safeNum(x.ts,now))/86400000;
     score+=Math.exp(-Math.max(0,ageDays)/3);
@@ -530,7 +618,9 @@ function contextErrorPenalty(d){
   return clamp(score*.0014,0,.007);
 }
 function rankRiskAdjustment(rank){
-  const st=mem.rankStats?.[rank];
+  let st=mem.rankStats?.[rank];
+  const cloudSt=cloudMasterFresh()?cloudMaster.rankStats?.[rank]:null;
+  if(cloudSt&&safeNum(cloudSt.n,0)>=35)st=cloudSt;
   if(!st||safeNum(st.n,0)<35)return 0;
   const observed=(safeNum(st.matches,0)+22*UNIFORM)/(safeNum(st.n,0)+22);
   const evidence=clamp(1-Math.exp(-safeNum(st.n,0)/90),0,1);
@@ -660,19 +750,25 @@ function predict(){
     }
   }
 
-  // Cloud freshness-matched.
+  // Cloud maestro freshness-matched: cuando coincide con el tick actual es el ancla principal.
   const cp=cloudLive.prediction;
+  let cloudAnchor=null;
   if(cp && Number(cp.signalEpoch)===Number(lastEpoch) && Date.now()-safeNum(cp.generatedAt,0)<3500){
     const cpp=normalizeDist(cp.probabilities);
-    const freshness=clamp(1-(Date.now()-cp.generatedAt)/3500,.20,1);
-    const cw=.34*(.25+.75*cp.confidence)*freshness*expertWeight('cloud')*(cp.driftActive?.78:1);
-    for(let d=0;d<10;d++){dist[d]+=cpp[d]*cw;denom[d]+=cw}
-    modelViews.push({name:'cloud',p:cpp,w:cw,n:safeNum(mem.prequential.samples,0)});
+    const freshness=clamp(1-(Date.now()-cp.generatedAt)/3500,.35,1);
+    const strength=clamp((.62+.18*clamp(safeNum(cp.confidence,0),0,1))*freshness,.35,.82);
+    cloudAnchor={p:cpp,strength};
+    modelViews.push({name:'cloud',p:cpp,w:1.35*strength,n:safeNum(cloudMaster.prequential?.samples,mem.prequential.samples)});
   }
 
   const p=dist.map((x,d)=>x/(denom[d]||1));
   let sum=p.reduce((a,b)=>a+b,0)||1;
   for(let d=0;d<10;d++)p[d]/=sum;
+  if(cloudAnchor){
+    for(let d=0;d<10;d++)p[d]=(1-cloudAnchor.strength)*p[d]+cloudAnchor.strength*cloudAnchor.p[d];
+    sum=p.reduce((a,b)=>a+b,0)||1;
+    for(let d=0;d<10;d++)p[d]/=sum;
+  }
 
   // Experiencias compartidas.
   const shared=sharedDistribution();
@@ -691,16 +787,18 @@ function predict(){
   const calibrationTrust=clamp(1-Math.max(0,mem.calibrationEWMA)*4.5,.25,1);
   const entropy=-p.reduce((s,x)=>s+(x>0?x*Math.log(x):0),0)/Math.log(10);
   const sharpness=clamp((1-entropy)/.075,0,1);
-  const preqSamples=safeNum(mem.prequential.samples,0);
-  const brier=safeNum(mem.prequential.brierEWMA,BASELINE_BRIER);
+  const brainPreq=brainPrequential();
+  const preqSamples=safeNum(brainPreq.samples,0);
+  const brier=safeNum(brainPreq.brierEWMA,BASELINE_BRIER);
   const preqSkill=clamp((BASELINE_BRIER-brier)/.018,-1,1);
   const skillTrust=preqSamples<35?.72:clamp(.65+.35*Math.max(0,preqSkill),.58,1);
-  const driftPenalty=mem.drift?.active?.78:1;
+  const driftActive=brainDriftActive();
+  const driftPenalty=driftActive?.78:1;
   const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
   const contextCoverage=clamp(contextNodes.length/3,0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
   const streakInfo=streakRiskInfo(session.streak);
-  const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(mem.drift?.active?.10:0),0,1);
+  const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(driftActive?.10:0),0,1);
 
   // Primero construimos un ranking bruto para poder aprender si el "#1" realmente es mejor.
   const recentPicks=mem.recentPicks.slice(-12);
@@ -726,7 +824,7 @@ function predict(){
     const disagreement=Math.sqrt(Math.max(0,variance));
     const stability=Math.exp(-disagreement*18);
     const confidence=clamp((.18+.82*support)*stability*calibrationTrust*(.72+.28*sharpness)*skillTrust*driftPenalty,0,1);
-    const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(mem.drift?.active?.12:0),0,1);
+    const oodScore=clamp((1-support)*.48+(1-contextCoverage)*.18+Math.min(1,disagreement/.03)*.22+(driftActive?.12:0),0,1);
     const qualityScore=clamp(confidence*.43+health*.22+(1-oodScore)*.20+sharpness*.10+Math.max(0,preqSkill)*.05,0,1);
     const rankAdjustment=rankRiskAdjustment(x.rawRank);
     const effectiveRisk=clamp(x.baseAdjusted+rankAdjustment,.005,.30);
@@ -748,8 +846,8 @@ function predict(){
       0,1
     );
 
-    const minScore=.405+(mem.drift?.active?.035:0)+recoveryRatio*.025+streakInfo.qualityPenalty*.45;
-    const minConf=(mem.drift?.active?.23:.16)+recoveryRatio*.025;
+    const minScore=.405+(driftActive?.035:0)+recoveryRatio*.025+streakInfo.qualityPenalty*.45;
+    const minConf=(driftActive?.23:.16)+recoveryRatio*.025;
     const usable=
       score>=minScore &&
       effectiveRisk<=.1025 &&
@@ -943,6 +1041,27 @@ function tradeError(e){
   $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
 }
 
+async function syncMasterBrain(silent=true){
+  try{
+    const r=await fetch(CLOUD_URL+'/api/cloud/master?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    const normalized=normalizeCloudMaster(data?.master);
+    if(!data?.ok||!normalized)throw new Error('respuesta master inválida');
+    const previous=cloudMaster.revision;
+    cloudMaster=normalized;
+    renderMasterState();
+    if(!silent||cloudMaster.revision!==previous){
+      log('MASTER CLOUD · '+cloudMaster.version+' · revisión '+cloudMaster.revision+' · '+cloudMaster.counterfactualTicks+' ticks contrafactuales');
+    }
+    return true;
+  }catch(e){
+    renderMasterState();
+    if(!silent)log('MASTER CLOUD · usando copia local de respaldo · '+(e?.message||e));
+    return false;
+  }
+}
+
 async function syncCloudPrediction(){
   try{
     const r=await fetch(CLOUD_URL+'/api/cloud/prediction?ts='+Date.now(),{cache:'no-store'});
@@ -991,6 +1110,7 @@ function shareExperience(t,loss,elapsed){
     risk:clamp(safeNum(t.predictedRisk,UNIFORM),0,.5),
     confidence:clamp(safeNum(t.confidence,0),0,1),
     elapsed:clamp(Math.round(safeNum(elapsed,1)),1,3),
+    streakBefore:Math.max(0,Math.floor(safeNum(t.streakBefore,0))),
     context:Array.isArray(t.context)?t.context.slice(-6):[],
     manual:!!t.manual
   };
@@ -1106,22 +1226,15 @@ async function syncFromCloud(){
     if(!data?.ok||!data.memory)throw new Error('respuesta inválida');
 
     const cloud=normalizeMemory(data.memory);
-    const localTicks=safeNum(mem.tickCount,0);
     const cloudTicks=safeNum(cloud.tickCount,0);
-    const localEpoch=safeNum(mem.lastMarketEpoch,0);
-    const cloudEpoch=Math.max(safeNum(cloud.lastMarketEpoch,0),safeNum(data.lastEpoch,0));
-    const cloudIsFresher=cloudEpoch>localEpoch+1 || (cloudEpoch>=localEpoch && cloudTicks>localTicks);
 
-    if(cloudIsFresher){
-      // Solo reemplaza el aprendizaje predictivo. Conserva estadísticas de trading locales.
+    // Railway es el cerebro predictivo maestro. Lo personal de trading permanece local.
+    if(cloudTicks>0){
       mem.models=cloud.models;
       mem.globalP=cloud.globalP;
       mem.globalN=cloud.globalN;
       mem.modelLoss=cloud.modelLoss;
       if(data.memory.motionModels)mem.motionModels=cloud.motionModels;
-      if(data.memory.expertPerf)mem.expertPerf=cloud.expertPerf;
-      if(data.memory.prequential)mem.prequential=cloud.prequential;
-      if(data.memory.drift)mem.drift=cloud.drift;
       mem.tickCount=cloudTicks;
       mem.createdAt=Math.min(safeNum(mem.createdAt,Date.now()),safeNum(cloud.createdAt,Date.now()));
       mem.updatedAt=Math.max(safeNum(mem.updatedAt,0),safeNum(cloud.updatedAt,0));
@@ -1146,19 +1259,21 @@ async function syncFromCloud(){
       if(Number.isFinite(Number(data.lastEpoch))){
         mem.lastMarketEpoch=Math.max(safeNum(mem.lastMarketEpoch,0),Number(data.lastEpoch));
       }
-
-      saveMemory(true);
-      renderSession();
-      renderDecision(predict());
-      log('NUBE · memoria sincronizada: '+cloudTicks+' ticks aprendidos');
-    }else{
-      log('NUBE · memoria local ya está al día ('+localTicks+' ticks)');
     }
+
+    const master=normalizeCloudMaster(data.master||data.memory?.master);
+    if(master)cloudMaster=master;
+
+    saveMemory(true);
+    renderMasterState();
+    renderSession();
+    renderDecision(predict());
+    log('NUBE MAESTRA · cerebro sincronizado: '+cloudTicks+' ticks · master R'+safeNum(cloudMaster.revision,0));
   }catch(e){
-    log('NUBE · no disponible, continúo con memoria local · '+(e?.message||e));
+    renderMasterState();
+    log('NUBE · no disponible, continúo con la última copia local · '+(e?.message||e));
   }
 }
-
 function connectMarket(){
   clearTimeout(reconnectTimer);
   try{marketWS?.close()}catch(_){}
@@ -1243,11 +1358,14 @@ window.demoTradeError=tradeError;
 renderSession();
 renderDecision(null);
 log(`IA cargada · memoria: ${mem.tickCount} ticks y ${mem.tradeCount} operaciones aprendidas`);
-syncFromCloud().then(()=>Promise.all([syncCollaborative(),syncCloudPrediction()])).finally(()=>{
+syncFromCloud().then(()=>Promise.all([syncMasterBrain(false),syncCollaborative(),syncCloudPrediction()])).finally(()=>{
   clearInterval(sharedSyncTimer);
   clearInterval(cloudPredictionTimer);
+  clearInterval(masterSyncTimer);
   sharedSyncTimer=setInterval(syncCollaborative,30000);
+  masterSyncTimer=setInterval(()=>syncMasterBrain(true),15000);
   cloudPredictionTimer=setInterval(syncCloudPrediction,1600);
+  renderMasterState();
   connectMarket();
 });
 })();
