@@ -36,7 +36,10 @@ let sessionStarted=false,sessionPaused=false,sessionClosed=false,sessionId='';
 let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
-let autoSignal={digit:null,count:0,lastTick:-1,lastRisk:UNIFORM};
+let autoSignal={
+  digit:null,count:0,lastTick:-1,lastRisk:UNIFORM,lastScore:0,lastConfidence:0,
+  lastOod:1,lastConsensus:0,lastRobustRisk:.30,needed:AUTO_CONFIRM_TICKS
+};
 let sharedModel={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
 let sharedSyncTimer=null,sharedLogged=false,cloudPredictionTimer=null,masterSyncTimer=null;
 let predictionQueue=[];
@@ -47,7 +50,7 @@ let cloudMaster={
   counterfactualTicks:0,digitCalibration:null,rankStats:null,errorContexts:[],
   streakStats:null,expertWeights:{},expertPerformance:{},prequential:null,drift:null,champion:'',
   shadowMatchRate:UNIFORM,collaborativeAccepted:0,collaborativeMatchRate:UNIFORM,
-  sessionAnalytics:null,movementPredictor:null
+  sessionAnalytics:null,movementPredictor:null,entryResearch:null
 };
 
 function blankP(){return Array(10).fill(UNIFORM)}
@@ -345,6 +348,27 @@ function normalizeCloudMaster(x){
     collaborativeAccepted:Math.max(0,Math.floor(safeNum(x.collaborativeAccepted,0))),
     collaborativeMatchRate:clamp(safeNum(x.collaborativeMatchRate,UNIFORM),0,1),
     sessionAnalytics:normalizeSessionAnalytics(x.sessionAnalytics),
+    entryResearch:(()=>{
+      const raw=x.entryResearch&&typeof x.entryResearch==='object'?x.entryResearch:{};
+      const profile=raw.profile&&typeof raw.profile==='object'?raw.profile:{};
+      const recommended=['balanced','strict','surgical'].includes(String(raw.recommended||''))?String(raw.recommended):'balanced';
+      return {
+        resolved:Math.max(0,Math.floor(safeNum(raw.resolved,0))),
+        recommended,
+        ready:!!raw.ready,
+        profile:{
+          riskCeiling:clamp(safeNum(profile.riskCeiling,NORMAL_RISK_CEILING),.07,NORMAL_RISK_CEILING),
+          minConfidence:clamp(safeNum(profile.minConfidence,.22),0,1),
+          minConsensus:clamp(safeNum(profile.minConsensus,.54),0,1),
+          robustCeiling:clamp(safeNum(profile.robustCeiling,.118),.07,.20),
+          accepted:Math.max(0,Math.floor(safeNum(profile.accepted,0))),
+          matches:Math.max(0,Math.floor(safeNum(profile.matches,0))),
+          matchRate:clamp(safeNum(profile.matchRate,UNIFORM),0,1),
+          posteriorRate:clamp(safeNum(profile.posteriorRate,UNIFORM),0,1),
+          coverage:clamp(safeNum(profile.coverage,0),0,1)
+        }
+      };
+    })(),
     movementPredictor:(()=>{
       const p=x.movementPredictor&&typeof x.movementPredictor==='object'?x.movementPredictor:{};
       return {
@@ -1136,6 +1160,43 @@ function schedulePrediction(decision,counter){
   if(predictionQueue.length>18)predictionQueue=predictionQueue.slice(-18);
 }
 
+function weightedRiskQuantile(items,q){
+  const xs=items.filter(x=>Number.isFinite(x.value)&&x.weight>0).sort((a,b)=>a.value-b.value);
+  if(!xs.length)return UNIFORM;
+  const total=xs.reduce((s,x)=>s+x.weight,0)||1;
+  let acc=0;
+  for(const x of xs){
+    acc+=x.weight;
+    if(acc/total>=q)return x.value;
+  }
+  return xs[xs.length-1].value;
+}
+function committeeForCandidate(views,digit){
+  const items=[];
+  for(const v of views){
+    const w=Math.max(.001,safeNum(v?.w,0));
+    if(w<=.005||!Array.isArray(v?.p)||v.p.length!==10)continue;
+    items.push({
+      value:clamp(safeNum(v.p[digit],UNIFORM),.001,.40),
+      weight:w,
+      name:String(v.name||'model')
+    });
+  }
+  if(!items.length)return {consensus:0,robustRisk:.30,dangerShare:1,spread:.30,models:0};
+  const total=items.reduce((s,x)=>s+x.weight,0)||1;
+  const safeWeight=items.reduce((s,x)=>s+(x.value<=UNIFORM?x.weight:0),0);
+  const dangerWeight=items.reduce((s,x)=>s+(x.value>=.115?x.weight:0),0);
+  const meanRisk=items.reduce((s,x)=>s+x.value*x.weight,0)/total;
+  const variance=items.reduce((s,x)=>s+x.weight*(x.value-meanRisk)*(x.value-meanRisk),0)/total;
+  return {
+    consensus:clamp(safeWeight/total,0,1),
+    robustRisk:weightedRiskQuantile(items,.75),
+    dangerShare:clamp(dangerWeight/total,0,1),
+    spread:Math.sqrt(Math.max(0,variance)),
+    models:items.length
+  };
+}
+
 function predict(){
   if(hist.length<8)return null;
   const h=horizonNow();
@@ -1297,6 +1358,18 @@ function predict(){
   preliminary.forEach((x,i)=>x.rawRank=i);
   const counterfactualRanking=preliminary.map(x=>x.d);
 
+  // El laboratorio cloud solo puede endurecer la entrada; nunca volverla más permisiva.
+  const research=cloudMasterFresh()?cloudMaster.entryResearch:null;
+  const researchProfile=research?.ready?research.profile:null;
+  const learnedRiskCeiling=Math.min(
+    NORMAL_RISK_CEILING,
+    safeNum(researchProfile?.riskCeiling,NORMAL_RISK_CEILING)
+  );
+
+  // Protección especial contra MATCH temprano: las primeras dos operaciones
+  // necesitan evidencia más robusta, no simplemente más tiempo de espera.
+  const earlyGuard=session.settled<=0?1:session.settled===1?.55:0;
+
   // Ahora la IA puntúa LOS 10 candidatos. Un primero malo no detiene la búsqueda.
   const candidates=preliminary.map(x=>{
     const mean=views.reduce((s,v)=>s+safeNum(v.p[x.d],x.risk)*Math.max(.01,safeNum(v.w,1)),0)/wsum;
@@ -1329,21 +1402,55 @@ function predict(){
       0,1
     );
 
-    const riskCeiling=NORMAL_RISK_CEILING-clusterGuard*.006;
-    const minScore=.455+(driftActive?.035:0)+recoveryRatio*.030+streakInfo.qualityPenalty*.45+clusterGuard*.055;
-    const minConf=(driftActive?.27:.22)+recoveryRatio*.030+clusterGuard*.065;
-    const maxOod=.82-clusterGuard*.07;
+    const committee=committeeForCandidate(views,x.d);
+    const riskCeiling=clamp(
+      learnedRiskCeiling-clusterGuard*.006-earlyGuard*.003,
+      .082,
+      NORMAL_RISK_CEILING
+    );
+    const minScore=.470+(driftActive?.035:0)+recoveryRatio*.030+streakInfo.qualityPenalty*.45+clusterGuard*.055+earlyGuard*.025;
+    const minConf=Math.max(
+      safeNum(researchProfile?.minConfidence,.22),
+      (driftActive?.27:.24)+recoveryRatio*.030+clusterGuard*.065+earlyGuard*.025
+    );
+    const minConsensus=Math.max(
+      safeNum(researchProfile?.minConsensus,.56),
+      .56+clusterGuard*.05+earlyGuard*.055
+    );
+    const robustCeiling=Math.min(
+      safeNum(researchProfile?.robustCeiling,.112),
+      .112-clusterGuard*.005-earlyGuard*.004
+    );
+    const maxOod=.78-clusterGuard*.07-earlyGuard*.045;
+
+    const movementRisk=futureMove?.ready&&Array.isArray(futureMove.digitP)
+      ?safeNum(futureMove.digitP[x.d],UNIFORM)
+      :null;
+    const movementConflict=Number.isFinite(movementRisk)&&movementRisk>.108;
+
+    const cloudRisk=cloudAnchor?safeNum(cloudAnchor.p[x.d],UNIFORM):null;
+    const cloudConflict=Number.isFinite(cloudRisk)&&cloudRisk>.110;
+
+    const expertVeto=committee.models>=4 && committee.dangerShare>.30;
+
     const usable=
       score>=minScore &&
       effectiveRisk<=riskCeiling &&
       edge>=UNIFORM-riskCeiling &&
       confidence>=minConf &&
-      oodScore<maxOod;
+      oodScore<maxOod &&
+      committee.consensus>=minConsensus &&
+      committee.robustRisk<=robustCeiling &&
+      !expertVeto &&
+      !movementConflict &&
+      !cloudConflict;
 
     return {
       ...x,
       disagreement,confidence,oodScore,qualityScore,rankAdjustment,
-      effectiveRisk,edge,score,minScore,minConf,usable
+      effectiveRisk,edge,score,minScore,minConf,usable,
+      committee,minConsensus,robustCeiling,movementRisk,cloudRisk,
+      movementConflict,cloudConflict,expertVeto
     };
   }).sort((a,b)=>b.score-a.score||a.effectiveRisk-b.effectiveRisk);
 
@@ -1361,7 +1468,7 @@ function predict(){
   }else if(usableCount>0){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
-    reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo efectivo ${fmtPct(selected.effectiveRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
+    reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo ${fmtPct(selected.effectiveRisk)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
   }else if(clusterGuard>0){
     reason=`CAUTELA ANTI-MATCH: detecté ${recentMatches} MATCH en las últimas ${recentSettled.length} operaciones; sigo analizando pero exijo más calidad antes de comprar.`;
   }else if(recoveryRatio>0){
@@ -1385,15 +1492,28 @@ function predict(){
     h,p,best,second,
     confidence:selected.confidence,
     edge:selected.edge,
-    requiredEdge:Math.max(0,UNIFORM-(NORMAL_RISK_CEILING-clusterGuard*.006)),
-    riskCeiling:NORMAL_RISK_CEILING-clusterGuard*.006,
+    requiredEdge:Math.max(0,UNIFORM-clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.003,.082,NORMAL_RISK_CEILING)),
+    riskCeiling:clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.003,.082,NORMAL_RISK_CEILING),
     clusterGuard,
+    earlyGuard,
+    entryResearch:research?{
+      ready:!!research.ready,
+      recommended:String(research.recommended||'balanced'),
+      resolved:safeNum(research.resolved,0),
+      riskCeiling:safeNum(research.profile?.riskCeiling,NORMAL_RISK_CEILING)
+    }:null,
     recentMatches,
     health,
     qualityScore:selected.qualityScore,
     oodScore:selected.oodScore,
     action,reason,
     disagreement:selected.disagreement,
+    entryCommittee:selected.committee,
+    minConsensus:selected.minConsensus,
+    robustCeiling:selected.robustCeiling,
+    movementConflict:selected.movementConflict,
+    cloudConflict:selected.cloudConflict,
+    expertVeto:selected.expertVeto,
     support,entropy,sharpness,preqSkill,
     motion:motion?.state||null,
     motionSupport:motion?.support||0,
@@ -1438,6 +1558,16 @@ function renderDecision(d){
   if($('candidateState')){
     const sc=Math.round(clamp(safeNum(d.best?.score,0),0,1)*100);
     $('candidateState').textContent='D'+d.best.d+' · '+sc+'/100 · '+safeNum(d.usableCount,0)+'/10 OK';
+  }
+  if($('entryCommitteeState')){
+    const ec=d.entryCommittee||{};
+    $('entryCommitteeState').textContent=
+      Math.round(clamp(safeNum(ec.consensus,0),0,1)*100)+'% ACUERDO · R '+fmtPct(safeNum(ec.robustRisk,.30));
+  }
+  if($('researchState')){
+    const er=d.entryResearch;
+    $('researchState').textContent=!er?'CLOUD APRENDE':
+      (String(er.recommended||'balanced').toUpperCase()+' · '+Math.round(safeNum(er.resolved,0))+' TESTS'+(er.ready?' · ACTIVO':' · SHADOW'));
   }
   if($('motionState')){
     const m=d.motion;
@@ -1550,51 +1680,88 @@ function canTradeMode(){
 }
 
 function resetAutoSignal(){
-  autoSignal={digit:null,count:0,lastTick:-1,lastRisk:UNIFORM};
+  autoSignal={
+    digit:null,count:0,lastTick:-1,lastRisk:UNIFORM,lastScore:0,lastConfidence:0,
+    lastOod:1,lastConsensus:0,lastRobustRisk:.30,needed:AUTO_CONFIRM_TICKS
+  };
 }
 function confirmAutoEntry(decision){
   if(!decision||decision.action!=='BUY'||!decision.best){
     resetAutoSignal();
-    return {ready:false,count:0,needed:AUTO_CONFIRM_TICKS,strong:false};
+    return {ready:false,count:0,needed:AUTO_CONFIRM_TICKS,strong:false,stable:false};
   }
 
   const risk=safeNum(decision.best.risk,UNIFORM);
   const conf=safeNum(decision.confidence,0);
   const score=safeNum(decision.best.score,0);
   const ood=safeNum(decision.oodScore,1);
+  const consensus=safeNum(decision.entryCommittee?.consensus,0);
+  const robustRisk=safeNum(decision.entryCommittee?.robustRisk,.30);
 
-  // Solo una señal excepcionalmente clara puede entrar sin segunda confirmación.
   const strong=
     risk<=STRONG_RISK_CEILING &&
     conf>=.38 &&
     score>=.60 &&
-    ood<=.50;
+    ood<=.50 &&
+    consensus>=.70 &&
+    robustRisk<=.100 &&
+    !decision.movementConflict &&
+    !decision.cloudConflict &&
+    !decision.expertVeto;
 
-  if(strong){
-    autoSignal={digit:decision.best.d,count:AUTO_CONFIRM_TICKS,lastTick:liveTickCounter,lastRisk:risk};
-    return {ready:true,count:AUTO_CONFIRM_TICKS,needed:AUTO_CONFIRM_TICKS,strong:true};
-  }
+  const marginal=
+    safeNum(decision.earlyGuard,0)>0 ||
+    risk>.0925 ||
+    conf<.31 ||
+    score<.54 ||
+    ood>.55 ||
+    consensus<.68 ||
+    robustRisk>.106;
 
+  const needed=strong?2:(marginal?3:AUTO_CONFIRM_TICKS);
   const consecutive=
     autoSignal.digit===decision.best.d &&
     autoSignal.lastTick===liveTickCounter-1;
 
+  let stable=false;
   if(consecutive){
-    autoSignal.count=Math.min(AUTO_CONFIRM_TICKS,autoSignal.count+1);
+    const riskStable=risk<=safeNum(autoSignal.lastRisk,UNIFORM)+.0008;
+    const scoreStable=score>=safeNum(autoSignal.lastScore,0)-.020;
+    const confStable=conf>=safeNum(autoSignal.lastConfidence,0)-.030;
+    const oodStable=ood<=safeNum(autoSignal.lastOod,1)+.035;
+    const consensusStable=consensus>=safeNum(autoSignal.lastConsensus,0)-.045;
+    const robustStable=robustRisk<=safeNum(autoSignal.lastRobustRisk,.30)+.003;
+    stable=riskStable&&scoreStable&&confStable&&oodStable&&consensusStable&&robustStable;
+
+    if(stable){
+      autoSignal.count=Math.min(needed,autoSignal.count+1);
+    }else{
+      autoSignal.count=1;
+    }
   }else{
-    autoSignal={digit:decision.best.d,count:1,lastTick:liveTickCounter,lastRisk:risk};
+    autoSignal.count=1;
   }
+
+  autoSignal.digit=decision.best.d;
   autoSignal.lastTick=liveTickCounter;
   autoSignal.lastRisk=risk;
+  autoSignal.lastScore=score;
+  autoSignal.lastConfidence=conf;
+  autoSignal.lastOod=ood;
+  autoSignal.lastConsensus=consensus;
+  autoSignal.lastRobustRisk=robustRisk;
+  autoSignal.needed=needed;
 
   return {
-    ready:autoSignal.count>=AUTO_CONFIRM_TICKS,
+    ready:autoSignal.count>=needed,
     count:autoSignal.count,
-    needed:AUTO_CONFIRM_TICKS,
-    strong:false
+    needed,
+    strong,
+    stable:consecutive?stable:true,
+    consensus,
+    robustRisk
   };
 }
-
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
@@ -1808,12 +1975,14 @@ function processDigit(d,epoch,isLive,quote){
     if(confirmation.ready){
       enterTrade(decision,false);
     }else{
-      $('status').textContent='CONFIRMANDO SEÑAL '+confirmation.count+'/'+confirmation.needed+' · D'+decision.best.d;
+      $('status').textContent='COMITÉ VALIDANDO '+confirmation.count+'/'+confirmation.needed+' · D'+decision.best.d;
       if($('decision')){
-        $('decision').textContent='CONFIRMANDO D'+decision.best.d+' · '+confirmation.count+'/'+confirmation.needed;
+        $('decision').textContent='VALIDANDO D'+decision.best.d+' · '+confirmation.count+'/'+confirmation.needed;
         $('decision').className='decision stateWait';
       }
-      if($('reason'))$('reason').textContent='La señal pasó los filtros, pero la IA exige confirmación consecutiva antes de comprar. No compra por una sola lectura aislada.';
+      if($('reason'))$('reason').textContent=
+        'La señal pasó el primer filtro. La IA verifica que riesgo, score, confianza, contexto y consenso no se deterioren antes de comprar · comité '+
+        Math.round(safeNum(confirmation.consensus,0)*100)+'% · robusto '+fmtPct(confirmation.robustRisk)+'.';
     }
   }else if(autoRunning && decision?.action==='PAUSE'){
     resetAutoSignal();
