@@ -1092,7 +1092,8 @@ function canTradeMode(){
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
-  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),manual};
+  const sessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
+  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual};
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
@@ -1170,7 +1171,7 @@ async function syncCollaborative(){
   }
 }
 
-function shareExperience(t,loss,elapsed){
+function shareExperience(t,loss,elapsed,sessionEnd=''){
   if(!t||!Number.isFinite(Number(t.signalEpoch))||Number(t.signalEpoch)<=0)return;
   const payload={
     signalEpoch:Number(t.signalEpoch),
@@ -1180,6 +1181,9 @@ function shareExperience(t,loss,elapsed){
     confidence:clamp(safeNum(t.confidence,0),0,1),
     elapsed:clamp(Math.round(safeNum(elapsed,1)),1,3),
     streakBefore:Math.max(0,Math.floor(safeNum(t.streakBefore,0))),
+    sessionId:String(sessionId||'').slice(0,64),
+    sessionOp:Math.max(1,Math.min(500,Math.floor(safeNum(t.sessionOp,1)))),
+    sessionEnd:(sessionEnd==='TARGET'||sessionEnd==='STOP')?sessionEnd:'',
     context:Array.isArray(t.context)?t.context.slice(-6):[],
     manual:!!t.manual
   };
@@ -1190,10 +1194,8 @@ function shareExperience(t,loss,elapsed){
     body:JSON.stringify(payload),
     keepalive:true
   }).then(r=>r.ok?r.json():null).then(data=>{
-    if(data?.accepted){
-      syncCollaborative();
-      syncMasterBrain(true);
-    }
+    if(data?.accepted)syncCollaborative();
+    if(data?.ok)syncMasterBrain(true);
   }).catch(()=>{});
 }
 
@@ -1225,23 +1227,29 @@ function settleTrade(profit){
 
   const elapsed=clamp(liveTickCounter-t.signalTick,1,3);
   mem.delayEWMA=.82*safeNum(mem.delayEWMA,1)+.18*elapsed;
-  shareExperience(t,loss,elapsed);
-  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,streakBefore:t.streakBefore,ts:Date.now(),mode:t.mode,stake:t.stake,manual:!!t.manual});
+  session.settled=Math.max(Math.floor(safeNum(session.settled,0)),Math.floor(safeNum(t.sessionOp,1)));
+  const sessionEnd=session.pnl>=target()?'TARGET':session.pnl<=-stopLoss()?'STOP':'';
+  shareExperience(t,loss,elapsed,sessionEnd);
+  mem.recentTrades.push({loss,d:t.digit,r:t.predictedRisk,c:t.confidence,p:profit,h:elapsed,op:t.sessionOp,streakBefore:t.streakBefore,ts:Date.now(),mode:t.mode,stake:t.stake,manual:!!t.manual});
   if(mem.recentTrades.length>60)mem.recentTrades.shift();
 
-  log(`${loss?'MATCH':'WIN'} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
+  log(`${loss?'MATCH':'WIN'} · OP #${t.sessionOp} · D${t.digit} · ${(profit>=0?'+':'')}$${profit.toFixed(2)} · IA ajustó calibración y horizonte ${horizonNow()}T`);
   window.nexusOutcomeSound?.(loss?'loss':'win');
   window.nexusTradeEffect?.('result',{...t,loss:!!loss,profit});
   pendingTrade=null;
   saveMemory(true);
   renderSession();
 
-  if(session.pnl>=target()){
+  if(sessionEnd==='TARGET'){
     autoRunning=false;
-    $('status').textContent='TP +$'+target().toFixed(2)+' · COMPRAS DETENIDAS · IA SIGUE APRENDIENDO';
-  }else if(session.pnl<=-stopLoss()){
+    sessionPaused=false;
+    sessionClosed=true;
+    $('status').textContent='TP +$'+target().toFixed(2)+' · SESIÓN COMPLETADA EN #'+t.sessionOp+' · IA SIGUE APRENDIENDO';
+  }else if(sessionEnd==='STOP'){
     autoRunning=false;
-    $('status').textContent='SL -$'+stopLoss().toFixed(2)+' · COMPRAS DETENIDAS · IA SIGUE APRENDIENDO';
+    sessionPaused=false;
+    sessionClosed=true;
+    $('status').textContent='SL -$'+stopLoss().toFixed(2)+' · SESIÓN CERRADA EN #'+t.sessionOp+' · IA SIGUE APRENDIENDO';
   }else if(autoRunning){
     $('status').textContent='AUTO IA ACTIVO';
   }
