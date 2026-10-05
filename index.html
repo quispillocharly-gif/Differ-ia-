@@ -347,6 +347,267 @@ body.simpleMode .viewStatus{color:#85ffc0}
   }
 }
 
+
+/* ===== FINAL RISE/FALL RESPONSIVE LAYOUT ===== */
+.rfPanel{
+  overflow:hidden;
+}
+.rfDecisionBox{
+  align-items:stretch;
+}
+.rfSignal,
+.rfControls,
+.rfMeta,
+.rfMeta>div,
+.rfControls label{
+  min-width:0;
+}
+.rfSignal{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.rfDecision{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  min-height:92px;
+  margin:0;
+  padding:14px 12px;
+  border:1px solid rgba(53,231,255,.16);
+  border-radius:14px;
+  background:rgba(53,231,255,.025);
+  line-height:1.05;
+}
+.rfMeta{
+  align-items:stretch;
+}
+.rfMeta>div{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  min-height:74px;
+}
+.rfMeta b{
+  overflow-wrap:anywhere;
+  word-break:normal;
+  line-height:1.25;
+}
+.rfNote{
+  margin:0;
+  padding:11px 12px;
+  border:1px solid rgba(53,231,255,.10);
+  border-radius:12px;
+  background:rgba(53,231,255,.018);
+}
+.rfControls{
+  align-content:start;
+}
+.rfControls label{
+  margin:0;
+}
+.rfControls input,
+.rfControls select{
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  margin:0;
+}
+#rfStart,#rfStop{
+  width:100%;
+  margin:0;
+  white-space:normal;
+  text-align:center;
+  line-height:1.2;
+}
+#rfPanel>.statusStrip{
+  min-width:0;
+}
+#rfPanel>.statusStrip span:last-child{
+  min-width:0;
+  overflow-wrap:anywhere;
+  text-align:right;
+}
+
+@media(max-width:760px){
+  .rfPanel{
+    padding:12px;
+  }
+  .rfPanel .panel-head{
+    align-items:flex-start;
+    gap:8px;
+  }
+  .rfDecisionBox{
+    display:grid;
+    grid-template-columns:minmax(0,1fr);
+    gap:12px;
+  }
+  .rfSignal{
+    width:100%;
+    padding:11px;
+  }
+  .rfSignal>small{
+    text-align:center;
+    font-size:8px;
+    letter-spacing:1.15px;
+  }
+  .rfDecision{
+    min-height:88px;
+    font-size:34px;
+  }
+  .rfMeta{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:8px;
+  }
+  .rfMeta>div{
+    padding:10px;
+    min-height:74px;
+  }
+  .rfMeta small{
+    font-size:7px;
+    letter-spacing:.85px;
+    line-height:1.25;
+  }
+  .rfMeta b{
+    margin-top:6px;
+    font-size:13px;
+    line-height:1.25;
+  }
+  .rfNote{
+    font-size:9px;
+    line-height:1.55;
+    text-align:left;
+  }
+  .rfControls{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:9px;
+    width:100%;
+  }
+  .rfControls label{
+    font-size:8px;
+    gap:5px;
+    text-align:left;
+  }
+  .rfControls input,
+  .rfControls select{
+    height:46px;
+    min-height:46px;
+    padding:8px 11px;
+    font-size:13px;
+    line-height:1.2;
+  }
+  .rfControls .wide,
+  #rfStart,
+  #rfStop{
+    grid-column:1/-1;
+  }
+  #rfStart,#rfStop{
+    min-height:52px;
+    height:auto;
+    padding:12px 14px;
+    font-size:11px;
+    letter-spacing:.45px;
+  }
+  #rfPanel>.statusStrip{
+    display:grid;
+    grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);
+    gap:10px;
+    align-items:center;
+    padding:9px 10px;
+    font-size:8px;
+  }
+  #rfPanel>.statusStrip span:last-child{
+    text-align:right;
+  }
+  .rfStatsGrid{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    gap:7px!important;
+  }
+}
+
+@media(max-width:430px){
+  .rfPanel{
+    padding:10px;
+  }
+  .rfPanel .panel-head{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+  }
+  .rfPanel .panel-title{
+    font-size:9px;
+    line-height:1.45;
+    letter-spacing:1.15px;
+  }
+  .rfPanel .chip{
+    align-self:flex-start;
+    font-size:7px;
+    padding:4px 7px;
+  }
+  .rfSignal{
+    padding:9px;
+    gap:9px;
+  }
+  .rfDecision{
+    min-height:78px;
+    font-size:30px;
+    padding:12px 8px;
+  }
+  .rfMeta{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:6px;
+  }
+  .rfMeta>div{
+    min-height:68px;
+    padding:8px;
+  }
+  .rfMeta b{
+    font-size:12px;
+  }
+  .rfNote{
+    padding:9px 10px;
+    font-size:8.5px;
+  }
+  .rfControls{
+    gap:7px;
+  }
+  .rfControls input,
+  .rfControls select{
+    height:44px;
+    min-height:44px;
+    font-size:12px;
+  }
+  #rfStart,#rfStop{
+    min-height:50px;
+    font-size:10px;
+  }
+  #rfPanel>.statusStrip{
+    grid-template-columns:1fr;
+    gap:4px;
+  }
+  #rfPanel>.statusStrip span,
+  #rfPanel>.statusStrip span:last-child{
+    text-align:left;
+  }
+  .rfStatsGrid{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+}
+
+@media(max-width:340px){
+  .rfMeta,
+  .rfControls,
+  .rfStatsGrid{
+    grid-template-columns:1fr!important;
+  }
+  .rfDecision{
+    font-size:27px;
+  }
+}
+
 </style>
 <!-- outcome-sound-v2 -->
 </head>
