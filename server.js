@@ -23,6 +23,7 @@ const TOURNAMENT_NAMES = ['base','recentFocus','contextFocus','robust'];
 const TOURNAMENT_MIN_SAMPLES = 2000;
 const TOURNAMENT_RECENT = 600;
 const TOURNAMENT_COOLDOWN_TICKS = 1800;
+const MASTER_BRAIN_VERSION = 'NEXUS-MASTER-1';
 
 let ws = null;
 let reconnectTimer = null;
@@ -99,6 +100,36 @@ function freshCollaborative(){
   };
 }
 
+function freshStreakStats(){
+  return {
+    '0-2':{n:0,matches:0},
+    '3-5':{n:0,matches:0},
+    '6-8':{n:0,matches:0},
+    '9-11':{n:0,matches:0},
+    '12+':{n:0,matches:0}
+  };
+}
+function masterStreakBucket(n){
+  n=Math.max(0,Math.floor(safeNum(n,0)));
+  if(n<=2)return '0-2';
+  if(n<=5)return '3-5';
+  if(n<=8)return '6-8';
+  if(n<=11)return '9-11';
+  return '12+';
+}
+function freshMasterBrain(){
+  return {
+    version:MASTER_BRAIN_VERSION,
+    revision:0,
+    updatedAt:0,
+    counterfactualTicks:0,
+    digitCalibration:Array.from({length:10},()=>({n:0,matches:0,predictedSum:0})),
+    rankStats:Array.from({length:10},()=>({n:0,matches:0})),
+    errorContexts:[],
+    streakStats:freshStreakStats()
+  };
+}
+
 function freshTournamentStat(){
   return {
     samples:0,wins:0,matches:0,matchRate:UNIFORM,
@@ -150,6 +181,7 @@ function freshMemory(){
     deepHistory: [],
     deepPrices: [],
     collaborative: freshCollaborative(),
+    master: freshMasterBrain(),
     shadow: freshShadow(),
     saves: 0
   };
@@ -201,6 +233,44 @@ function normalizeMemory(x){
   const seenEntries=Object.entries(col.seen).sort((a,b)=>safeNum(b[1],0)-safeNum(a[1],0)).slice(0,5000);
   col.seen=Object.fromEntries(seenEntries);
   m.collaborative=col;
+
+  const rawMaster=m.master&&typeof m.master==='object'?m.master:freshMasterBrain();
+  const master={...freshMasterBrain(),...rawMaster};
+  master.version=MASTER_BRAIN_VERSION;
+  master.revision=Math.max(0,Math.floor(safeNum(master.revision,0)));
+  master.updatedAt=Math.max(0,safeNum(master.updatedAt,0));
+  master.counterfactualTicks=Math.max(0,Math.floor(safeNum(master.counterfactualTicks,0)));
+  master.digitCalibration=Array.from({length:10},(_,d)=>{
+    const x=Array.isArray(rawMaster.digitCalibration)?rawMaster.digitCalibration[d]:null;
+    return {
+      n:Math.max(0,Math.floor(safeNum(x?.n,0))),
+      matches:Math.max(0,Math.floor(safeNum(x?.matches,0))),
+      predictedSum:Math.max(0,safeNum(x?.predictedSum,0))
+    };
+  });
+  master.rankStats=Array.from({length:10},(_,rank)=>{
+    const x=Array.isArray(rawMaster.rankStats)?rawMaster.rankStats[rank]:null;
+    return {
+      n:Math.max(0,Math.floor(safeNum(x?.n,0))),
+      matches:Math.max(0,Math.floor(safeNum(x?.matches,0)))
+    };
+  });
+  master.errorContexts=Array.isArray(rawMaster.errorContexts)?rawMaster.errorContexts.slice(-220).map(x=>({
+    ctx:String(x?.ctx||'').slice(-3),
+    digit:Math.max(0,Math.min(9,Math.floor(safeNum(x?.digit,0)))),
+    ts:Math.max(0,safeNum(x?.ts,0)),
+    risk:clamp(safeNum(x?.risk,UNIFORM),0,.5)
+  })):[];
+  const baseStreak=freshStreakStats(),rawStreak=rawMaster.streakStats&&typeof rawMaster.streakStats==='object'?rawMaster.streakStats:{};
+  master.streakStats={};
+  Object.keys(baseStreak).forEach(k=>{
+    const x=rawStreak[k]||{};
+    master.streakStats[k]={
+      n:Math.max(0,Math.floor(safeNum(x.n,0))),
+      matches:Math.max(0,Math.floor(safeNum(x.matches,0)))
+    };
+  });
+  m.master=master;
 
   const sh = m.shadow && typeof m.shadow==='object' ? m.shadow : freshShadow();
   m.shadow = {...freshShadow(), ...sh};
@@ -874,6 +944,50 @@ function ensemblePredict(){
   };
 }
 
+function updateMasterCounterfactual(pred,actual){
+  if(!pred||!Array.isArray(pred.probabilities)||pred.probabilities.length!==10)return;
+  const master=mem.master||(mem.master=freshMasterBrain());
+  const probs=normalizeDist(pred.probabilities);
+
+  for(let d=0;d<10;d++){
+    const st=master.digitCalibration[d];
+    st.n++;
+    if(actual===d)st.matches++;
+    st.predictedSum+=clamp(safeNum(probs[d],UNIFORM),0,.5);
+  }
+
+  const ranking=probs.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk).map(x=>x.d);
+  ranking.forEach((digit,rank)=>{
+    const st=master.rankStats[rank];
+    st.n++;
+    if(actual===digit)st.matches++;
+  });
+
+  const ctx=hist.slice(-3).join('');
+  if(ctx){
+    master.errorContexts.push({
+      ctx,
+      digit:actual,
+      ts:Date.now(),
+      risk:clamp(safeNum(probs[actual],UNIFORM),0,.5)
+    });
+    if(master.errorContexts.length>220)master.errorContexts.shift();
+  }
+
+  master.counterfactualTicks++;
+  master.revision++;
+  master.updatedAt=Date.now();
+}
+function updateMasterStreak(streakBefore,loss){
+  const master=mem.master||(mem.master=freshMasterBrain());
+  const key=masterStreakBucket(streakBefore);
+  const st=master.streakStats[key]||(master.streakStats[key]={n:0,matches:0});
+  st.n++;
+  if(loss)st.matches++;
+  master.revision++;
+  master.updatedAt=Date.now();
+}
+
 function evaluateShadow(actual){
   const p=shadowPending;
   if(!p) return;
@@ -885,6 +999,7 @@ function evaluateShadow(actual){
   sh.matchRate=sh.total?sh.matches/sh.total:UNIFORM;
   sh.edgeVsBaseline=UNIFORM-sh.matchRate;
 
+  updateMasterCounterfactual(p,actual);
   updateCalibration(p.rawRisk??p.risk,match);
   hedgeUpdate(p,actual);
   detectDrift(p,actual);
@@ -1015,6 +1130,50 @@ function connectDeriv(){
   });
 }
 
+function masterExpertWeights(){
+  const perf=mem.shadow.performance||{};
+  const w=name=>clamp(safeNum(perf[name]?.weight,1),.12,5);
+  return {
+    global:w('global'),
+    recent:clamp((w('recent25')*1.2+w('recent100')+w('recent300')*.55)/2.75,.12,5),
+    ctx1:w('ctx1'),
+    ctx2:w('ctx2'),
+    ctx3:w('ctx3'),
+    motion:w('motion'),
+    collab:w('collab')
+  };
+}
+function masterPublic(){
+  const master=mem.master||freshMasterBrain();
+  const champion=mem.shadow.tournament?.champion||'base';
+  const champStat=mem.shadow.tournament?.candidates?.[champion];
+  return {
+    version:MASTER_BRAIN_VERSION,
+    revision:master.revision,
+    updatedAt:master.updatedAt,
+    cloudTicks:mem.tickCount,
+    signalEpoch:lastEpoch,
+    counterfactualTicks:master.counterfactualTicks,
+    digitCalibration:master.digitCalibration,
+    rankStats:master.rankStats,
+    errorContexts:master.errorContexts.slice(-160),
+    streakStats:master.streakStats,
+    expertWeights:masterExpertWeights(),
+    prequential:{
+      samples:mem.shadow.total,
+      brierEWMA:clamp(safeNum(mem.shadow.calibration?.brierEWMA,.09),0,1),
+      logLossEWMA:clamp(safeNum(champStat?.logLossEWMA,Math.log(10)),.01,12)
+    },
+    drift:{
+      active:!!mem.shadow.drift?.active,
+      events:Math.max(0,safeNum(mem.shadow.drift?.events,0)),
+      updatedAt:Math.max(safeNum(mem.shadow.drift?.lastAt,0),master.updatedAt)
+    },
+    champion,
+    collaborativeAccepted:mem.collaborative.accepted
+  };
+}
+
 function browserMemory(){
   return {
     version:mem.version,
@@ -1026,6 +1185,7 @@ function browserMemory(){
     globalP:mem.globalP,
     globalN:mem.globalN,
     modelLoss:mem.modelLoss,
+    master:masterPublic(),
     delayEWMA:mem.delayEWMA,
     lastMarketEpoch:mem.lastMarketEpoch
   };
@@ -1112,6 +1272,8 @@ app.post('/api/cloud/experience',(req,res)=>{
   const risk=safeNum(b.risk,NaN);
   const confidence=safeNum(b.confidence,NaN);
   const elapsed=Math.floor(safeNum(b.elapsed,1));
+  const streakBeforeRaw=safeNum(b.streakBefore,NaN);
+  const streakBefore=Number.isFinite(streakBeforeRaw)?Math.max(0,Math.min(200,Math.floor(streakBeforeRaw))):null;
   const context=Array.isArray(b.context)
     ? b.context.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-6)
     : [];
@@ -1138,6 +1300,7 @@ app.post('/api/cloud/experience',(req,res)=>{
   col.accepted++;
   if(loss)col.matches++; else col.wins++;
   col.matchRate=col.matches/col.accepted;
+  if(streakBefore!==null)updateMasterStreak(streakBefore,loss);
   col.lastAt=Date.now();
   col.updatedAt=Date.now();
 
@@ -1165,6 +1328,11 @@ app.post('/api/cloud/experience',(req,res)=>{
   });
 });
 
+app.get('/api/cloud/master',(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json({ok:true,status,symbol:SYMBOL,master:masterPublic(),generatedAt:Date.now()});
+});
+
 app.get('/api/cloud/collaborative',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   res.json({ok:true,symbol:SYMBOL,collaborative:collaborativePublic()});
@@ -1179,6 +1347,7 @@ app.get('/api/cloud/status',(req,res)=>{
     deepHistorySize:hist.length,
     liveTickCount,lastTickAt,lastDigit,lastPrediction,
     motion:motionSnapshot(),
+    master:{version:MASTER_BRAIN_VERSION,revision:mem.master.revision,updatedAt:mem.master.updatedAt,counterfactualTicks:mem.master.counterfactualTicks},
     shadow:{
       total:mem.shadow.total,
       wins:mem.shadow.wins,
@@ -1214,7 +1383,8 @@ app.get('/api/cloud/prediction',(req,res)=>{
     shadow:mem.shadow.last,
     calibration:calibrationSummary(),
     drift:driftSummary(),
-    tournament:tournamentSummary()
+    tournament:tournamentSummary(),
+    master:{version:MASTER_BRAIN_VERSION,revision:mem.master.revision,updatedAt:mem.master.updatedAt}
   });
 });
 
@@ -1241,6 +1411,7 @@ app.get('/api/cloud/snapshot',(req,res)=>{
     ok:true,status,symbol:SYMBOL,lastEpoch,lastTickAt,lastDigit,
     recentDigits:hist.slice(-120),
     recentPrices:priceHist.slice(-120),
+    master:masterPublic(),
     memory:browserMemory()
   });
 });
@@ -1262,6 +1433,7 @@ app.listen(PORT,()=>{
   console.log('Shadow trades restored:',mem.shadow.total);
   console.log('Drift events restored:',mem.shadow.drift.events);
   console.log('Collaborative experiences restored:',mem.collaborative.accepted);
+  console.log('Master brain restored:',mem.master.counterfactualTicks,'counterfactual ticks · revision',mem.master.revision);
   prepareShadow();
   connectDeriv();
 });
