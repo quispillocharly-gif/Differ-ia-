@@ -1159,6 +1159,15 @@ function masterPublic(){
     errorContexts:master.errorContexts.slice(-160),
     streakStats:master.streakStats,
     expertWeights:masterExpertWeights(),
+    expertPerformance:Object.fromEntries(MODEL_NAMES.map(name=>{
+      const p=mem.shadow.performance?.[name]||{};
+      return [name,{
+        samples:Math.max(0,Math.floor(safeNum(p.samples,0))),
+        weight:clamp(safeNum(p.weight,1),.12,5),
+        matchEWMA:clamp(safeNum(p.matchEWMA,UNIFORM),0,1),
+        logLossEWMA:clamp(safeNum(p.logLossEWMA,Math.log(10)),.01,12)
+      }];
+    })),
     prequential:{
       samples:mem.shadow.total,
       brierEWMA:clamp(safeNum(mem.shadow.calibration?.brierEWMA,.09),0,1),
