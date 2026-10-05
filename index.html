@@ -271,6 +271,82 @@ body.simpleMode .viewStatus{color:#85ffc0}
   .proQuickPanel small{font-size:6px}.proQuickPanel b{font-size:9px}
 }
 
+
+/* ===== FINAL MOBILE CONNECTION FIX ===== */
+.connectionHeader,.connectionSelectors,.connectionSelector{min-width:0}
+.connectionSelector select{
+  display:block;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  overflow:visible;
+  text-overflow:clip;
+  white-space:nowrap;
+  padding-left:12px;
+  padding-right:38px;
+}
+@media(max-width:900px){
+  .connectionHeader{
+    grid-template-columns:minmax(0,1fr);
+    align-items:stretch;
+  }
+  .connectionSelectors{
+    width:100%;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  }
+  .connectionSelector{
+    width:100%;
+    min-width:0;
+  }
+  .connectionSelector select{
+    height:42px;
+    min-height:42px;
+    font-size:12px;
+    font-weight:900;
+  }
+}
+@media(max-width:520px){
+  .connectionHeader{
+    display:block;
+  }
+  .connectionTitle{
+    margin-bottom:12px;
+  }
+  .connectionSelectors{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    gap:8px;
+  }
+  .connectionSelector{
+    padding:8px;
+  }
+  .connectionSelector small{
+    font-size:7px;
+    letter-spacing:.75px;
+    white-space:normal;
+  }
+  .connectionSelector select{
+    width:100%;
+    height:44px;
+    min-height:44px;
+    padding:7px 34px 7px 10px;
+    font-size:12px;
+    line-height:1.2;
+  }
+  .connectionSelector .strategyState{
+    margin-top:5px;
+    font-size:8px;
+  }
+}
+@media(max-width:360px){
+  .connectionSelectors{
+    grid-template-columns:1fr;
+  }
+  .connectionSelector select{
+    font-size:13px;
+  }
+}
+
 </style>
 <!-- outcome-sound-v2 -->
 </head>
