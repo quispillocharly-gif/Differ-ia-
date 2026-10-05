@@ -15,7 +15,7 @@ const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
 const VERSION = 1;
-const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','phase','collab'];
+const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','phase','futureMove','collab'];
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
@@ -23,7 +23,12 @@ const TOURNAMENT_NAMES = ['base','recentFocus','contextFocus','robust'];
 const TOURNAMENT_MIN_SAMPLES = 2000;
 const TOURNAMENT_RECENT = 900;
 const TOURNAMENT_COOLDOWN_TICKS = 3600;
-const MASTER_BRAIN_VERSION = 'NEXUS-MASTER-1';
+const MASTER_BRAIN_VERSION = 'NEXUS-MASTER-2';
+const MOVE_BUCKETS = ['DOWN_JUMP','DOWN_MED','DOWN_SMALL','FLAT','UP_SMALL','UP_MED','UP_JUMP'];
+const MOVE_CENTERS = [-14,-6,-2,0,2,6,14];
+const MOVE_UNIFORM = 1/MOVE_BUCKETS.length;
+const MOVE_BASE_LOGLOSS = Math.log(MOVE_BUCKETS.length);
+const MOVE_BASE_BRIER = 6/49;
 
 let ws = null;
 let reconnectTimer = null;
@@ -39,9 +44,12 @@ let lastTickAt = 0;
 let lastDigit = null;
 let lastPrediction = null;
 let shadowPending = null;
+let movementQueue = [];
 let status = 'BOOTING';
 
 function blankP(){ return Array(10).fill(UNIFORM); }
+function blankMoveP(){ return Array(MOVE_BUCKETS.length).fill(MOVE_UNIFORM); }
+function freshMovePerf(){ return {samples:0,logLossEWMA:MOVE_BASE_LOGLOSS,brierEWMA:MOVE_BASE_BRIER,directionHitEWMA:1/3,maeUnitsEWMA:6,lastAt:0}; }
 function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
 function safeNum(x,d=0){ x=Number(x); return Number.isFinite(x)?x:d; }
 function mean(xs){ return xs.length ? xs.reduce((a,b)=>a+b,0)/xs.length : 0; }
@@ -193,6 +201,14 @@ function freshMemory(){
     models,
     motionModels:{1:{},2:{},3:{}},
     phaseModels:{1:{},2:{},3:{}},
+    movementModels:{1:{},2:{},3:{}},
+    moveDigitModels:{1:{},2:{},3:{}},
+    movementBucketStats:{
+      1:Array.from({length:7},()=>({n:0,sum:0})),
+      2:Array.from({length:7},()=>({n:0,sum:0})),
+      3:Array.from({length:7},()=>({n:0,sum:0}))
+    },
+    movementPerf:{1:freshMovePerf(),2:freshMovePerf(),3:freshMovePerf()},
     globalP: blankP(),
     globalN: 0,
     modelLoss: {},
@@ -221,6 +237,28 @@ function normalizeMemory(x){
   HORIZONS.forEach(h=>{m.motionModels[h]=m.motionModels[h]&&typeof m.motionModels[h]==='object'?m.motionModels[h]:{}});
   m.phaseModels=m.phaseModels&&typeof m.phaseModels==='object'?m.phaseModels:base.phaseModels;
   HORIZONS.forEach(h=>{m.phaseModels[h]=m.phaseModels[h]&&typeof m.phaseModels[h]==='object'?m.phaseModels[h]:{}});
+  m.movementModels=m.movementModels&&typeof m.movementModels==='object'?m.movementModels:base.movementModels;
+  m.moveDigitModels=m.moveDigitModels&&typeof m.moveDigitModels==='object'?m.moveDigitModels:base.moveDigitModels;
+  m.movementBucketStats=m.movementBucketStats&&typeof m.movementBucketStats==='object'?m.movementBucketStats:base.movementBucketStats;
+  m.movementPerf=m.movementPerf&&typeof m.movementPerf==='object'?m.movementPerf:base.movementPerf;
+  HORIZONS.forEach(h=>{
+    m.movementModels[h]=m.movementModels[h]&&typeof m.movementModels[h]==='object'?m.movementModels[h]:{};
+    m.moveDigitModels[h]=m.moveDigitModels[h]&&typeof m.moveDigitModels[h]==='object'?m.moveDigitModels[h]:{};
+    const rawStats=Array.isArray(m.movementBucketStats[h])?m.movementBucketStats[h]:[];
+    m.movementBucketStats[h]=Array.from({length:7},(_,i)=>({
+      n:Math.max(0,Math.floor(safeNum(rawStats[i]?.n,0))),
+      sum:safeNum(rawStats[i]?.sum,0)
+    }));
+    const p=m.movementPerf[h]||{};
+    m.movementPerf[h]={
+      samples:Math.max(0,Math.floor(safeNum(p.samples,0))),
+      logLossEWMA:clamp(safeNum(p.logLossEWMA,MOVE_BASE_LOGLOSS),.01,12),
+      brierEWMA:clamp(safeNum(p.brierEWMA,MOVE_BASE_BRIER),0,1),
+      directionHitEWMA:clamp(safeNum(p.directionHitEWMA,1/3),0,1),
+      maeUnitsEWMA:Math.max(0,safeNum(p.maeUnitsEWMA,6)),
+      lastAt:Math.max(0,safeNum(p.lastAt,0))
+    };
+  });
 
   m.globalP = Array.isArray(m.globalP) && m.globalP.length===10 ? normalizeDist(m.globalP) : blankP();
   m.modelLoss = m.modelLoss || {};
@@ -632,6 +670,211 @@ function phaseDist(){
   };
 }
 
+function normalizeMoveDist(p){
+  const out=Array.from({length:MOVE_BUCKETS.length},(_,i)=>Math.max(.000001,safeNum(p?.[i],MOVE_UNIFORM)));
+  const sum=out.reduce((a,b)=>a+b,0)||1;
+  return out.map(x=>x/sum);
+}
+function updateCategorical(p,target,alpha,size){
+  for(let i=0;i<size;i++)p[i]=(1-alpha)*safeNum(p[i],1/size)+alpha*(i===target?1:0);
+  const sum=p.reduce((a,b)=>a+b,0)||1;
+  for(let i=0;i<size;i++)p[i]/=sum;
+}
+function moveBucketIndex(units){
+  units=Math.round(safeNum(units,0));
+  if(units<=-9)return 0;
+  if(units<=-4)return 1;
+  if(units<=-1)return 2;
+  if(units===0)return 3;
+  if(units<=3)return 4;
+  if(units<=8)return 5;
+  return 6;
+}
+function movementContextKeys(snap){
+  if(!snap)return [];
+  const phase=marketPhaseFromMotion(snap);
+  return [
+    {key:'PH:'+phase+'|V'+snap.volatility,need:65,base:.86},
+    {key:'MA:'+snap.direction+'|'+snap.strength+'|'+snap.accel+'|'+snap.turn,need:80,base:.72},
+    {key:'MI:'+snap.microDir+'|'+snap.microForce+'|'+snap.trendBand,need:55,base:1.02},
+    {key:'PX:'+phase+'|'+snap.microForce+'|'+snap.accel,need:48,base:1.12}
+  ];
+}
+function ensureMovementNode(h,key){
+  const bucket=mem.movementModels[h];
+  if(!bucket[key])bucket[key]={p:blankMoveP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function ensureMoveDigitNode(h,key){
+  const bucket=mem.moveDigitModels[h];
+  if(!bucket[key])bucket[key]={p:blankP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function learnMovementOutcome(targetPrice,targetDigit){
+  if(!Number.isFinite(Number(targetPrice))||!Number.isInteger(targetDigit)||targetDigit<0||targetDigit>9)return;
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  for(const h of HORIZONS){
+    const signalIndex=priceHist.length-h;
+    if(signalIndex<0)continue;
+    const sourcePrice=Number(priceHist[signalIndex]);
+    const snap=motionHist[signalIndex];
+    const sourceDigit=hist[signalIndex];
+    if(!Number.isFinite(sourcePrice)||!snap||!Number.isInteger(sourceDigit))continue;
+    const units=Math.round((Number(targetPrice)-sourcePrice)/unit);
+    const bucketIndex=moveBucketIndex(units);
+    movementContextKeys(snap).forEach(entry=>{
+      const node=ensureMovementNode(h,entry.key);
+      const alpha=.032*(mem.shadow?.drift?.active?1.18:1);
+      updateCategorical(node.p,bucketIndex,clamp(alpha*(1-Math.min(.35,node.n/1400)),.008,.045),MOVE_BUCKETS.length);
+      node.n++;
+      node.last=mem.tickCount;
+    });
+    const stats=mem.movementBucketStats[h][bucketIndex];
+    stats.n++;
+    stats.sum+=units;
+
+    const digitKeys=[
+      {key:'B:'+bucketIndex,alpha:.022},
+      {key:'BD:'+bucketIndex+'>D'+sourceDigit,alpha:.032}
+    ];
+    digitKeys.forEach(entry=>{
+      const node=ensureMoveDigitNode(h,entry.key);
+      updateProb(node.p,targetDigit,clamp(entry.alpha*(1-Math.min(.35,node.n/1500)),.008,.040));
+      node.n++;
+      node.last=mem.tickCount;
+    });
+  }
+}
+function movementForecast(h=1){
+  h=clamp(Math.round(safeNum(h,1)),1,3);
+  const snap=motionSnapshot();
+  if(!snap||!hist.length)return null;
+  const sourceDigit=hist[hist.length-1];
+  const num=Array(MOVE_BUCKETS.length).fill(0),den=Array(MOVE_BUCKETS.length).fill(0);
+  let supportSum=0,totalN=0,keyCount=0;
+  movementContextKeys(snap).forEach(entry=>{
+    const node=mem.movementModels[h]?.[entry.key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/entry.need);
+    const w=entry.base*support;
+    if(w<=.01)return;
+    const p=normalizeMoveDist(node.p);
+    for(let b=0;b<MOVE_BUCKETS.length;b++){num[b]+=p[b]*w;den[b]+=w}
+    supportSum+=support;
+    totalN+=safeNum(node.n,0);
+    keyCount++;
+  });
+  if(totalN<1)return null;
+  const moveP=normalizeMoveDist(num.map((x,b)=>x/(den[b]||1)));
+  const digitP=Array(10).fill(0);
+  for(let b=0;b<MOVE_BUCKETS.length;b++){
+    const general=mem.moveDigitModels[h]?.['B:'+b];
+    const specific=mem.moveDigitModels[h]?.['BD:'+b+'>D'+sourceDigit];
+    let cond=blankP(),weight=0;
+    if(general){
+      const g=normalizeDist(general.p),w=.45*(1-Math.exp(-safeNum(general.n,0)/100));
+      for(let d=0;d<10;d++)cond[d]+=g[d]*w;
+      weight+=w;
+    }
+    if(specific){
+      const sp=normalizeDist(specific.p),w=.75*(1-Math.exp(-safeNum(specific.n,0)/70));
+      for(let d=0;d<10;d++)cond[d]+=sp[d]*w;
+      weight+=w;
+    }
+    if(weight>0){
+      cond=normalizeDist(cond.map(x=>x/weight));
+    }else{
+      cond=blankP();
+    }
+    for(let d=0;d<10;d++)digitP[d]+=moveP[b]*cond[d];
+  }
+  const projectedDigits=normalizeDist(digitP);
+  const means=mem.movementBucketStats[h].map((st,b)=>safeNum(st.n,0)>=20?safeNum(st.sum,0)/st.n:MOVE_CENTERS[b]);
+  const expectedUnits=moveP.reduce((sum,p,b)=>sum+p*means[b],0);
+  const down=moveP[0]+moveP[1]+moveP[2],flat=moveP[3],up=moveP[4]+moveP[5]+moveP[6];
+  const dirs=[{name:'DOWN',p:down},{name:'FLAT',p:flat},{name:'UP',p:up}].sort((a,b)=>b.p-a.p);
+  const reversal=snap.direction==='UP'?down:snap.direction==='DOWN'?up:Math.max(up,down);
+  const continuation=snap.direction==='UP'?up:snap.direction==='DOWN'?down:flat;
+  const perf=mem.movementPerf[h]||freshMovePerf();
+  const digitPerf=mem.shadow.performance.futureMove||{};
+  const ready=
+    safeNum(perf.samples,0)>=1500 &&
+    safeNum(perf.logLossEWMA,MOVE_BASE_LOGLOSS)<=MOVE_BASE_LOGLOSS-.010 &&
+    safeNum(perf.brierEWMA,MOVE_BASE_BRIER)<=MOVE_BASE_BRIER-.0008 &&
+    safeNum(perf.directionHitEWMA,1/3)>=.39 &&
+    safeNum(digitPerf.samples,0)>=1200 &&
+    safeNum(digitPerf.matchEWMA,UNIFORM)<=.096 &&
+    safeNum(digitPerf.logLossEWMA,Math.log(10))<=Math.log(10)-.003;
+  return {
+    h,moveP,digitP:projectedDigits,n:totalN,
+    support:clamp(supportSum/Math.max(1,keyCount),0,1),
+    expectedUnits,
+    down,flat,up,
+    direction:dirs[0].name,
+    directionProbability:dirs[0].p,
+    reversalProbability:clamp(reversal,0,1),
+    continuationProbability:clamp(continuation,0,1),
+    phase:marketPhaseFromMotion(snap),
+    ready,
+    perf:{
+      samples:safeNum(perf.samples,0),
+      logLossEWMA:safeNum(perf.logLossEWMA,MOVE_BASE_LOGLOSS),
+      brierEWMA:safeNum(perf.brierEWMA,MOVE_BASE_BRIER),
+      directionHitEWMA:safeNum(perf.directionHitEWMA,1/3),
+      maeUnitsEWMA:safeNum(perf.maeUnitsEWMA,6)
+    }
+  };
+}
+function scheduleMovementForecasts(counter){
+  for(const h of HORIZONS){
+    const f=movementForecast(h);
+    if(!f||!priceHist.length)continue;
+    movementQueue.push({
+      due:counter+h,
+      h,
+      sourcePrice:Number(priceHist[priceHist.length-1]),
+      moveP:f.moveP.slice(),
+      expectedUnits:f.expectedUnits
+    });
+  }
+  if(movementQueue.length>30)movementQueue=movementQueue.slice(-30);
+}
+function resolveMovementForecasts(targetPrice,counter){
+  if(!movementQueue.length||!Number.isFinite(Number(targetPrice)))return;
+  const due=[],keep=[];
+  movementQueue.forEach(x=>(x.due<=counter?due:keep).push(x));
+  movementQueue=keep.slice(-30);
+  const pip=Math.max(0,Math.min(8,Math.floor(safeNum(marketPip,4))));
+  const unit=Math.pow(10,-pip);
+  due.forEach(item=>{
+    const actualUnits=Math.round((Number(targetPrice)-safeNum(item.sourcePrice,Number(targetPrice)))/unit);
+    const actualBucket=moveBucketIndex(actualUnits);
+    const p=normalizeMoveDist(item.moveP);
+    const prob=clamp(p[actualBucket],.0001,.9999);
+    const logLoss=-Math.log(prob);
+    let brier=0;
+    for(let b=0;b<MOVE_BUCKETS.length;b++){
+      const y=b===actualBucket?1:0,err=p[b]-y;
+      brier+=err*err;
+    }
+    brier/=MOVE_BUCKETS.length;
+    const down=p[0]+p[1]+p[2],flat=p[3],up=p[4]+p[5]+p[6];
+    const predDir=[{d:-1,p:down},{d:0,p:flat},{d:1,p:up}].sort((a,b)=>b.p-a.p)[0].d;
+    const actualDir=actualUnits>0?1:actualUnits<0?-1:0;
+    const hit=predDir===actualDir?1:0;
+    const mae=Math.abs(safeNum(item.expectedUnits,0)-actualUnits);
+    const perf=mem.movementPerf[item.h]||(mem.movementPerf[item.h]=freshMovePerf());
+    perf.samples++;
+    const a=perf.samples<250?.025:.008;
+    perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,MOVE_BASE_LOGLOSS)+a*logLoss;
+    perf.brierEWMA=(1-a)*safeNum(perf.brierEWMA,MOVE_BASE_BRIER)+a*brier;
+    perf.directionHitEWMA=(1-a)*safeNum(perf.directionHitEWMA,1/3)+a*hit;
+    perf.maeUnitsEWMA=(1-a)*safeNum(perf.maeUnitsEWMA,6)+a*Math.min(60,mae);
+    perf.lastAt=Date.now();
+  });
+}
+
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
     updateProb(mem.globalP,targetDigit,.018*driftLearningBoost());
@@ -684,6 +927,20 @@ function pruneModels(){
       keys.slice(1600).forEach(k=>delete bucket[k]);
     }
   });
+  HORIZONS.forEach(h=>{
+    const move=mem.movementModels[h]||{};
+    const mk=Object.keys(move);
+    if(mk.length>1800){
+      mk.sort((a,b)=>(move[b].last||0)-(move[a].last||0));
+      mk.slice(1800).forEach(k=>delete move[k]);
+    }
+    const digit=mem.moveDigitModels[h]||{};
+    const dk=Object.keys(digit);
+    if(dk.length>120){
+      dk.sort((a,b)=>(digit[b].last||0)-(digit[a].last||0));
+      dk.slice(120).forEach(k=>delete digit[k]);
+    }
+  });
 }
 
 function frequencyDist(windowSize){
@@ -717,6 +974,7 @@ function expertWeight(name){
     else if(name==='ctx3') w*=.88;
     else if(name==='motion') w*=1.08;
     else if(name==='phase') w*=1.10;
+    else if(name==='futureMove') w*=1.12;
     else if(name==='collab') w*=.92;
   }
   return clamp(w,.10,6);
@@ -774,6 +1032,22 @@ function modelViews(){
     const maturity=clamp((safeNum(mp.samples,0)-250)/1200,0,1);
     const base=ready ? (.16+.26*maturity) : 0;
     views.push({name:'motion',p:motion.p,support:motion.support,base,n:motion.n,state:motion.state,ready});
+  }
+
+  const futureMove=movementForecast(1);
+  if(futureMove){
+    const fp=mem.shadow.performance.futureMove||{samples:0,matchEWMA:UNIFORM,logLossEWMA:Math.log(10)};
+    const maturity=clamp((safeNum(fp.samples,0)-1200)/3200,0,1);
+    const base=futureMove.ready ? (.08+.18*maturity) : 0;
+    views.push({
+      name:'futureMove',
+      p:futureMove.digitP,
+      support:futureMove.support,
+      base,
+      n:futureMove.n,
+      ready:futureMove.ready,
+      forecast:futureMove
+    });
   }
 
   const phase=phaseDist();
@@ -939,11 +1213,13 @@ function blendViews(views,multiplier){
 function predictionFromDist(name,p,views){
   const ranked=p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk);
   const best=ranked[0];
-  const risks=views.map(v=>v.p[best.d]);
+  const activeViews=views.filter(v=>safeNum(v.base,0)>0);
+  const confidenceViews=activeViews.length?activeViews:views;
+  const risks=confidenceViews.map(v=>v.p[best.d]);
   const m=mean(risks);
   const variance=risks.length?risks.reduce((s,x)=>s+(x-m)**2,0)/risks.length:0;
   const disagreement=Math.sqrt(variance);
-  const support=views.length?views.reduce((s,v)=>s+v.support,0)/views.length:0;
+  const support=confidenceViews.length?confidenceViews.reduce((s,v)=>s+v.support,0)/confidenceViews.length:0;
   const calibrationTrust=clamp(1-mem.shadow.calibration.ece*4,.45,1);
   const driftPenalty=mem.shadow.drift.active?.88:1;
   const confidence=clamp((.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty,0,1);
@@ -1074,6 +1350,8 @@ function tournamentSummary(){
 function ensemblePredict(){
   if(hist.length<8) return null;
   const views=modelViews();
+  const futureMoveView=views.find(v=>v.name==='futureMove');
+  const futureMove=futureMoveView?.forecast||movementForecast(1);
   const modelVotes=[];
   for(const v of views){
     const ew=expertWeight(v.name);
@@ -1101,6 +1379,20 @@ function ensemblePredict(){
     champion:championName,
     motion:motionSnapshot(),
     phase:marketPhaseFromMotion(motionSnapshot()),
+    movementForecast:futureMove?{
+      horizon:futureMove.h,
+      direction:futureMove.direction,
+      directionProbability:futureMove.directionProbability,
+      expectedUnits:futureMove.expectedUnits,
+      reversalProbability:futureMove.reversalProbability,
+      continuationProbability:futureMove.continuationProbability,
+      phase:futureMove.phase,
+      support:futureMove.support,
+      samples:futureMove.perf.samples,
+      directionHitEWMA:futureMove.perf.directionHitEWMA,
+      maeUnitsEWMA:futureMove.perf.maeUnitsEWMA,
+      ready:futureMove.ready
+    }:null,
     candidateSet,
     generatedAt:Date.now()
   };
@@ -1243,12 +1535,17 @@ function prepareShadow(){
 function processDigit(d,epoch,quote){
   if(!Number.isInteger(d)||d<0||d>9) return;
 
-  evaluateShadow(d);
-
-  learnDigit(d,hist);
-  hist.push(d);
   const q=Number(quote);
-  priceHist.push(Number.isFinite(q)?q:(priceHist.length?priceHist[priceHist.length-1]:0));
+  const targetPrice=Number.isFinite(q)?q:(priceHist.length?priceHist[priceHist.length-1]:0);
+  const nextCounter=liveTickCount+1;
+
+  resolveMovementForecasts(targetPrice,nextCounter);
+  evaluateShadow(d);
+  learnMovementOutcome(targetPrice,d);
+  learnDigit(d,hist);
+
+  hist.push(d);
+  priceHist.push(targetPrice);
   motionHist.push(motionSnapshot(priceHist));
   if(hist.length>MAX_HIST){hist.shift();motionHist.shift()}
   if(priceHist.length>MAX_HIST)priceHist.shift();
@@ -1258,14 +1555,18 @@ function processDigit(d,epoch,quote){
     mem.lastMarketEpoch=lastEpoch;
   }
 
-  liveTickCount++;
+  liveTickCount=nextCounter;
   lastTickAt=Date.now();
   lastDigit=d;
 
   if(mem.tickCount%250===0) pruneModels();
-  if(mem.tickCount%25===0) mem.deepHistory=hist.slice(-MAX_HIST);
+  if(mem.tickCount%25===0){
+    mem.deepHistory=hist.slice(-MAX_HIST);
+    mem.deepPrices=priceHist.slice(-MAX_HIST);
+  }
 
   prepareShadow();
+  scheduleMovementForecasts(liveTickCount);
 }
 
 function digitFromQuote(q,pip){
@@ -1347,6 +1648,7 @@ function masterExpertWeights(){
     ctx3:w('ctx3'),
     motion:w('motion'),
     phase:w('phase'),
+    futureMove:w('futureMove'),
     collab:w('collab')
   };
 }
@@ -1406,6 +1708,24 @@ function masterPublic(){
       updatedAt:Math.max(safeNum(mem.shadow.drift?.lastAt,0),master.updatedAt)
     },
     champion,
+    movementPredictor:(()=>{
+      const f=movementForecast(1),p=mem.movementPerf[1]||freshMovePerf();
+      return {
+        samples:p.samples,
+        logLossEWMA:p.logLossEWMA,
+        brierEWMA:p.brierEWMA,
+        directionHitEWMA:p.directionHitEWMA,
+        maeUnitsEWMA:p.maeUnitsEWMA,
+        direction:f?.direction||'UNKNOWN',
+        directionProbability:f?.directionProbability||0,
+        expectedUnits:f?.expectedUnits||0,
+        reversalProbability:f?.reversalProbability||0,
+        continuationProbability:f?.continuationProbability||0,
+        support:f?.support||0,
+        phase:f?.phase||'UNKNOWN',
+        ready:!!f?.ready
+      };
+    })(),
     shadowMatchRate:clamp(safeNum(mem.shadow.matchRate,UNIFORM),0,1),
     collaborativeAccepted:mem.collaborative.accepted,
     collaborativeMatchRate:mem.collaborative.accepted?clamp(safeNum(mem.collaborative.matchRate,UNIFORM),0,1):UNIFORM
@@ -1421,6 +1741,10 @@ function browserMemory(){
     models:mem.models,
     motionModels:mem.motionModels,
     phaseModels:mem.phaseModels,
+    movementModels:mem.movementModels,
+    moveDigitModels:mem.moveDigitModels,
+    movementBucketStats:mem.movementBucketStats,
+    movementPerf:mem.movementPerf,
     globalP:mem.globalP,
     globalN:mem.globalN,
     modelLoss:mem.modelLoss,
