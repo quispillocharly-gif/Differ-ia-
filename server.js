@@ -117,6 +117,23 @@ function masterStreakBucket(n){
   if(n<=11)return '9-11';
   return '12+';
 }
+function freshSessionAnalytics(){
+  return {
+    sessionsStarted:0,
+    sessionsCompleted:0,
+    sessionsStopped:0,
+    tradesObserved:0,
+    matches:0,
+    earlyMatches:0,
+    matchPositionSum:0,
+    maxPosition:0,
+    lastMatchPosition:0,
+    lastCompletionPosition:0,
+    byPosition:Array.from({length:50},()=>({trades:0,matches:0,completions:0})),
+    overflow:{trades:0,matches:0,completions:0},
+    updatedAt:0
+  };
+}
 function freshMasterBrain(){
   return {
     version:MASTER_BRAIN_VERSION,
@@ -126,7 +143,8 @@ function freshMasterBrain(){
     digitCalibration:Array.from({length:10},()=>({n:0,matches:0,predictedSum:0})),
     rankStats:Array.from({length:10},()=>({n:0,matches:0})),
     errorContexts:[],
-    streakStats:freshStreakStats()
+    streakStats:freshStreakStats(),
+    sessionAnalytics:freshSessionAnalytics()
   };
 }
 
@@ -270,6 +288,26 @@ function normalizeMemory(x){
       matches:Math.max(0,Math.floor(safeNum(x.matches,0)))
     };
   });
+  const rawSa=rawMaster.sessionAnalytics&&typeof rawMaster.sessionAnalytics==='object'?rawMaster.sessionAnalytics:{};
+  const sa={...freshSessionAnalytics(),...rawSa};
+  ['sessionsStarted','sessionsCompleted','sessionsStopped','tradesObserved','matches','earlyMatches','matchPositionSum','maxPosition','lastMatchPosition','lastCompletionPosition','updatedAt'].forEach(k=>{
+    sa[k]=Math.max(0,Math.floor(safeNum(sa[k],0)));
+  });
+  sa.byPosition=Array.from({length:50},(_,i)=>{
+    const x=Array.isArray(rawSa.byPosition)?rawSa.byPosition[i]:null;
+    return {
+      trades:Math.max(0,Math.floor(safeNum(x?.trades,0))),
+      matches:Math.max(0,Math.floor(safeNum(x?.matches,0))),
+      completions:Math.max(0,Math.floor(safeNum(x?.completions,0)))
+    };
+  });
+  const of=rawSa.overflow&&typeof rawSa.overflow==='object'?rawSa.overflow:{};
+  sa.overflow={
+    trades:Math.max(0,Math.floor(safeNum(of.trades,0))),
+    matches:Math.max(0,Math.floor(safeNum(of.matches,0))),
+    completions:Math.max(0,Math.floor(safeNum(of.completions,0)))
+  };
+  master.sessionAnalytics=sa;
   m.master=master;
 
   const sh = m.shadow && typeof m.shadow==='object' ? m.shadow : freshShadow();
@@ -987,6 +1025,37 @@ function updateMasterStreak(streakBefore,loss){
   master.revision++;
   master.updatedAt=Date.now();
 }
+function updateMasterSessionAnalytics(sessionOp,loss,sessionEnd){
+  if(!Number.isInteger(sessionOp)||sessionOp<1||sessionOp>500)return;
+  const master=mem.master||(mem.master=freshMasterBrain());
+  const sa=master.sessionAnalytics||(master.sessionAnalytics=freshSessionAnalytics());
+  if(sessionOp===1)sa.sessionsStarted++;
+  sa.tradesObserved++;
+  sa.maxPosition=Math.max(sa.maxPosition,sessionOp);
+
+  const bucket=sessionOp<=50?sa.byPosition[sessionOp-1]:sa.overflow;
+  bucket.trades++;
+
+  if(loss){
+    sa.matches++;
+    sa.matchPositionSum+=sessionOp;
+    sa.lastMatchPosition=sessionOp;
+    bucket.matches++;
+    if(sessionOp<=2)sa.earlyMatches++;
+  }
+
+  if(sessionEnd==='TARGET'){
+    sa.sessionsCompleted++;
+    sa.lastCompletionPosition=sessionOp;
+    bucket.completions++;
+  }else if(sessionEnd==='STOP'){
+    sa.sessionsStopped++;
+  }
+
+  sa.updatedAt=Date.now();
+  master.revision++;
+  master.updatedAt=sa.updatedAt;
+}
 
 function evaluateShadow(actual){
   const p=shadowPending;
@@ -1158,6 +1227,26 @@ function masterPublic(){
     rankStats:master.rankStats,
     errorContexts:master.errorContexts.slice(-160),
     streakStats:master.streakStats,
+    sessionAnalytics:(()=>{
+      const sa=master.sessionAnalytics||freshSessionAnalytics();
+      return {
+        sessionsStarted:sa.sessionsStarted,
+        sessionsCompleted:sa.sessionsCompleted,
+        sessionsStopped:sa.sessionsStopped,
+        completionRate:sa.sessionsStarted?sa.sessionsCompleted/sa.sessionsStarted:0,
+        tradesObserved:sa.tradesObserved,
+        matches:sa.matches,
+        earlyMatches:sa.earlyMatches,
+        earlyMatchRate:sa.matches?sa.earlyMatches/sa.matches:0,
+        avgMatchPosition:sa.matches?sa.matchPositionSum/sa.matches:0,
+        maxPosition:sa.maxPosition,
+        lastMatchPosition:sa.lastMatchPosition,
+        lastCompletionPosition:sa.lastCompletionPosition,
+        byPosition:sa.byPosition,
+        overflow:sa.overflow,
+        updatedAt:sa.updatedAt
+      };
+    })(),
     expertWeights:masterExpertWeights(),
     expertPerformance:Object.fromEntries(MODEL_NAMES.map(name=>{
       const p=mem.shadow.performance?.[name]||{};
@@ -1285,6 +1374,9 @@ app.post('/api/cloud/experience',(req,res)=>{
   const elapsed=Math.floor(safeNum(b.elapsed,1));
   const streakBeforeRaw=safeNum(b.streakBefore,NaN);
   const streakBefore=Number.isFinite(streakBeforeRaw)?Math.max(0,Math.min(200,Math.floor(streakBeforeRaw))):null;
+  const sessionOpRaw=safeNum(b.sessionOp,NaN);
+  const sessionOp=Number.isFinite(sessionOpRaw)?Math.max(1,Math.min(500,Math.floor(sessionOpRaw))):null;
+  const sessionEnd=(b.sessionEnd==='TARGET'||b.sessionEnd==='STOP')?b.sessionEnd:'';
   const context=Array.isArray(b.context)
     ? b.context.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-6)
     : [];
@@ -1293,6 +1385,11 @@ app.post('/api/cloud/experience',(req,res)=>{
      !Number.isFinite(confidence) || confidence<0 || confidence>1 || elapsed<1 || elapsed>3 || context.length<1){
     return res.status(400).json({ok:false,error:'invalid experience'});
   }
+
+  // Analítica de sesión: cuenta la posición real de la operación por dispositivo.
+  // Se registra antes del dedupe de evidencia de mercado porque dos sesiones distintas
+  // pueden operar la misma señal y ambas deben contar como sesiones observadas.
+  if(sessionOp!==null)updateMasterSessionAnalytics(sessionOp,loss,sessionEnd);
 
   // Solo acepta experiencias cercanas al mercado vivo del cloud.
   if(lastEpoch && Math.abs(signalEpoch-lastEpoch)>90){
@@ -1358,7 +1455,7 @@ app.get('/api/cloud/status',(req,res)=>{
     deepHistorySize:hist.length,
     liveTickCount,lastTickAt,lastDigit,lastPrediction,
     motion:motionSnapshot(),
-    master:{version:MASTER_BRAIN_VERSION,revision:mem.master.revision,updatedAt:mem.master.updatedAt,counterfactualTicks:mem.master.counterfactualTicks},
+    master:{version:MASTER_BRAIN_VERSION,revision:mem.master.revision,updatedAt:mem.master.updatedAt,counterfactualTicks:mem.master.counterfactualTicks,sessionAnalytics:masterPublic().sessionAnalytics},
     shadow:{
       total:mem.shadow.total,
       wins:mem.shadow.wins,
