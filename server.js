@@ -30,6 +30,11 @@ const MOVE_CENTERS = [-14,-6,-2,0,2,6,14];
 const MOVE_UNIFORM = 1/MOVE_BUCKETS.length;
 const MOVE_BASE_LOGLOSS = Math.log(MOVE_BUCKETS.length);
 const MOVE_BASE_BRIER = 6/49;
+const ENTRY_RESEARCH_PROFILES = {
+  balanced:{riskCeiling:.0975,minConfidence:.22,minConsensus:.54,robustCeiling:.118},
+  strict:{riskCeiling:.0940,minConfidence:.26,minConsensus:.60,robustCeiling:.110},
+  surgical:{riskCeiling:.0900,minConfidence:.32,minConsensus:.66,robustCeiling:.103}
+};
 
 let ws = null;
 let reconnectTimer = null;
@@ -162,6 +167,145 @@ function freshMasterBrain(){
   };
 }
 
+function freshEntryResearchStat(){
+  return {accepted:0,matches:0,recent:[],lastAt:0};
+}
+function freshEntryResearch(){
+  const profiles={};
+  Object.keys(ENTRY_RESEARCH_PROFILES).forEach(name=>profiles[name]=freshEntryResearchStat());
+  return {
+    version:1,
+    resolved:0,
+    profiles,
+    recommended:'balanced',
+    updatedAt:0
+  };
+}
+function normalizeEntryResearch(raw){
+  const base=freshEntryResearch();
+  if(!raw||typeof raw!=='object')return base;
+  const out={...base,...raw};
+  out.resolved=Math.max(0,Math.floor(safeNum(out.resolved,0)));
+  out.profiles={};
+  Object.keys(ENTRY_RESEARCH_PROFILES).forEach(name=>{
+    const x=raw.profiles?.[name]||{};
+    out.profiles[name]={
+      accepted:Math.max(0,Math.floor(safeNum(x.accepted,0))),
+      matches:Math.max(0,Math.floor(safeNum(x.matches,0))),
+      recent:Array.isArray(x.recent)?x.recent.map(v=>v?1:0).slice(-800):[],
+      lastAt:Math.max(0,safeNum(x.lastAt,0))
+    };
+  });
+  out.recommended=Object.prototype.hasOwnProperty.call(ENTRY_RESEARCH_PROFILES,String(raw.recommended||''))?String(raw.recommended):'balanced';
+  out.updatedAt=Math.max(0,safeNum(raw.updatedAt,0));
+  return out;
+}
+function weightedQuantile(items,q){
+  const xs=items.filter(x=>Number.isFinite(x.value)&&x.weight>0).sort((a,b)=>a.value-b.value);
+  if(!xs.length)return UNIFORM;
+  const total=xs.reduce((s,x)=>s+x.weight,0)||1;
+  let acc=0;
+  for(const x of xs){
+    acc+=x.weight;
+    if(acc/total>=q)return x.value;
+  }
+  return xs[xs.length-1].value;
+}
+function entryCommitteeMetrics(pending){
+  const digit=Number(pending?.digit);
+  const distributions=pending?.modelDistributions||{};
+  const votes=Array.isArray(pending?.modelVotes)?pending.modelVotes:[];
+  const items=[];
+  for(const v of votes){
+    const w=Math.max(0,safeNum(v?.weight,0));
+    const dist=distributions[v?.name];
+    if(w<=.005||!Array.isArray(dist)||dist.length!==10)continue;
+    items.push({value:clamp(safeNum(dist[digit],UNIFORM),.001,.40),weight:w,name:v.name});
+  }
+  if(!items.length)return {consensus:0,robustRisk:.30,spread:.30,models:0};
+  const total=items.reduce((s,x)=>s+x.weight,0)||1;
+  const safe=items.reduce((s,x)=>s+(x.value<=UNIFORM?x.weight:0),0);
+  const meanRisk=items.reduce((s,x)=>s+x.value*x.weight,0)/total;
+  const variance=items.reduce((s,x)=>s+x.weight*(x.value-meanRisk)*(x.value-meanRisk),0)/total;
+  return {
+    consensus:clamp(safe/total,0,1),
+    robustRisk:weightedQuantile(items,.75),
+    spread:Math.sqrt(Math.max(0,variance)),
+    models:items.length
+  };
+}
+function entryResearchAccepts(profile,pending,committee){
+  const risk=clamp(safeNum(pending?.risk,UNIFORM),.001,.40);
+  const conf=clamp(safeNum(pending?.confidence,0),0,1);
+  return risk<=profile.riskCeiling &&
+    conf>=profile.minConfidence &&
+    committee.consensus>=profile.minConsensus &&
+    committee.robustRisk<=profile.robustCeiling &&
+    committee.models>=3;
+}
+function entryPosteriorRate(stat){
+  // Prior centrado en 10% para evitar premiar perfiles con pocas muestras.
+  return (safeNum(stat?.matches,0)+20*UNIFORM)/(safeNum(stat?.accepted,0)+20);
+}
+function updateEntryResearch(pending,actual){
+  if(!pending||!Number.isInteger(actual))return;
+  const er=mem.entryResearch||(mem.entryResearch=freshEntryResearch());
+  const committee=entryCommitteeMetrics(pending);
+  er.resolved++;
+  Object.entries(ENTRY_RESEARCH_PROFILES).forEach(([name,profile])=>{
+    const st=er.profiles[name]||(er.profiles[name]=freshEntryResearchStat());
+    if(!entryResearchAccepts(profile,pending,committee))return;
+    const match=actual===pending.digit?1:0;
+    st.accepted++;
+    st.matches+=match;
+    st.recent.push(match);
+    if(st.recent.length>800)st.recent.shift();
+    st.lastAt=Date.now();
+  });
+
+  const balanced=er.profiles.balanced;
+  let recommended='balanced';
+  if(er.resolved>=1200 && balanced.accepted>=400){
+    const baseRate=entryPosteriorRate(balanced);
+    for(const name of ['strict','surgical']){
+      const st=er.profiles[name];
+      const coverage=st.accepted/Math.max(1,er.resolved);
+      const rate=entryPosteriorRate(st);
+      if(st.accepted>=350 && coverage>=.04 && rate<=baseRate-.002){
+        recommended=name;
+      }
+    }
+  }
+  er.recommended=recommended;
+  er.updatedAt=Date.now();
+}
+function entryResearchPublic(){
+  const er=mem.entryResearch||freshEntryResearch();
+  const profiles={};
+  Object.entries(ENTRY_RESEARCH_PROFILES).forEach(([name,cfg])=>{
+    const st=er.profiles?.[name]||freshEntryResearchStat();
+    const recent=Array.isArray(st.recent)?st.recent:[];
+    profiles[name]={
+      ...cfg,
+      accepted:st.accepted,
+      matches:st.matches,
+      matchRate:st.accepted?st.matches/st.accepted:UNIFORM,
+      posteriorRate:entryPosteriorRate(st),
+      recentMatchRate:recent.length?recent.reduce((a,b)=>a+b,0)/recent.length:UNIFORM,
+      coverage:er.resolved?st.accepted/er.resolved:0
+    };
+  });
+  const recommended=Object.prototype.hasOwnProperty.call(ENTRY_RESEARCH_PROFILES,er.recommended)?er.recommended:'balanced';
+  return {
+    resolved:er.resolved,
+    recommended,
+    ready:er.resolved>=1200 && (er.profiles?.[recommended]?.accepted||0)>=350,
+    profile:profiles[recommended],
+    profiles,
+    updatedAt:er.updatedAt
+  };
+}
+
 function freshTournamentStat(){
   return {
     samples:0,wins:0,matches:0,matchRate:UNIFORM,
@@ -223,6 +367,7 @@ function freshMemory(){
     deepPrices: [],
     collaborative: freshCollaborative(),
     master: freshMasterBrain(),
+    entryResearch:freshEntryResearch(),
     shadow: freshShadow(),
     saves: 0
   };
@@ -363,6 +508,7 @@ function normalizeMemory(x){
   );
   master.sessionAnalytics=sa;
   m.master=master;
+  m.entryResearch=normalizeEntryResearch(m.entryResearch);
 
   const sh = m.shadow && typeof m.shadow==='object' ? m.shadow : freshShadow();
   m.shadow = {...freshShadow(), ...sh};
@@ -1698,7 +1844,7 @@ function updateTournament(candidateSet,actual){
   for(const name of TOURNAMENT_NAMES){
     if(name===t.champion)continue;
     const st=t.candidates[name];
-    if(!st||st.samples<TOURNAMENT_MIN_SAMPLES||st.recent.length<TOURNAMENT_RECENT)return;
+    if(!st||st.samples<TOURNAMENT_MIN_SAMPLES||st.recent.length<TOURNAMENT_RECENT)continue;
     const score=tournamentScore(st);
     const recentGain=tournamentRecentRate(current)-tournamentRecentRate(st);
     const brierOkay=st.brierEWMA<=current.brierEWMA+.0015;
@@ -1890,6 +2036,7 @@ function evaluateShadow(actual){
   sh.edgeVsBaseline=UNIFORM-sh.matchRate;
 
   updateMasterCounterfactual(p,actual);
+  updateEntryResearch(p,actual);
   updateCalibration(p.rawRisk??p.risk,match);
   hedgeUpdate(p,actual);
   detectDrift(p,actual);
@@ -2107,6 +2254,7 @@ function masterPublic(){
       updatedAt:Math.max(safeNum(mem.shadow.drift?.lastAt,0),master.updatedAt)
     },
     champion,
+    entryResearch:entryResearchPublic(),
     movementPredictor:(()=>{
       const f=movementForecast(1),p=mem.movementPerf[1]||freshMovePerf();
       return {
@@ -2424,6 +2572,7 @@ app.listen(PORT,()=>{
   console.log('Drift events restored:',mem.shadow.drift.events);
   console.log('Collaborative experiences restored:',mem.collaborative.accepted);
   console.log('Master brain restored:',mem.master.counterfactualTicks,'counterfactual ticks · revision',mem.master.revision);
+  console.log('Entry research restored:',mem.entryResearch.resolved,'resolved forecasts · recommendation',mem.entryResearch.recommended);
   console.log('Rise/Fall memory restored:',riseFallMem.trainedSamples,'training samples ·',riseFallMem.performance[1].resolved,'validated 1T forecasts');
   prepareShadow();
   connectDeriv();
