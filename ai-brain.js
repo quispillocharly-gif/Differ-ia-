@@ -35,7 +35,7 @@ let cloudMaster={
   version:'',revision:0,updatedAt:0,receivedAt:0,cloudTicks:0,signalEpoch:0,
   counterfactualTicks:0,digitCalibration:null,rankStats:null,errorContexts:[],
   streakStats:null,expertWeights:{},prequential:null,drift:null,champion:'',
-  collaborativeAccepted:0
+  shadowMatchRate:UNIFORM,collaborativeAccepted:0,collaborativeMatchRate:UNIFORM
 };
 
 function blankP(){return Array(10).fill(UNIFORM)}
@@ -248,7 +248,9 @@ function normalizeCloudMaster(x){
       updatedAt:Math.max(0,safeNum(x.drift?.updatedAt,0))
     },
     champion:String(x.champion||''),
-    collaborativeAccepted:Math.max(0,Math.floor(safeNum(x.collaborativeAccepted,0)))
+    shadowMatchRate:clamp(safeNum(x.shadowMatchRate,UNIFORM),0,1),
+    collaborativeAccepted:Math.max(0,Math.floor(safeNum(x.collaborativeAccepted,0))),
+    collaborativeMatchRate:clamp(safeNum(x.collaborativeMatchRate,UNIFORM),0,1)
   };
 }
 function cloudMasterFresh(){
@@ -784,7 +786,6 @@ function predict(){
   const wsum=views.reduce((s,v)=>s+Math.max(.01,safeNum(v.w,1)),0)||1;
   const contextNodes=modelViews.filter(v=>v.name.startsWith('ctx'));
   const support=contextNodes.length?contextNodes.reduce((s,v)=>s+Math.min(1,v.n/30),0)/contextNodes.length:0;
-  const calibrationTrust=clamp(1-Math.max(0,mem.calibrationEWMA)*4.5,.25,1);
   const entropy=-p.reduce((s,x)=>s+(x>0?x*Math.log(x):0),0)/Math.log(10);
   const sharpness=clamp((1-entropy)/.075,0,1);
   const brainPreq=brainPrequential();
@@ -794,11 +795,18 @@ function predict(){
   const skillTrust=preqSamples<35?.72:clamp(.65+.35*Math.max(0,preqSkill),.58,1);
   const driftActive=brainDriftActive();
   const driftPenalty=driftActive?.78:1;
-  const recentLoss=Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
+  const masterOnline=cloudMasterFresh();
+  const calibrationPenalty=masterOnline?Math.max(0,brier-BASELINE_BRIER):Math.max(0,safeNum(mem.calibrationEWMA,0));
+  const calibrationTrust=masterOnline
+    ?clamp(1-calibrationPenalty*8,.45,1)
+    :clamp(1-calibrationPenalty*4.5,.25,1);
+  const recentLoss=masterOnline
+    ?Math.max(0,safeNum(cloudMaster.shadowMatchRate,UNIFORM)-UNIFORM)
+    :Math.max(0,safeNum(mem.lossEWMA,.10)-UNIFORM);
   const contextCoverage=clamp(contextNodes.length/3,0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
   const streakInfo=streakRiskInfo(session.streak);
-  const health=clamp(1-recentLoss*3.3-Math.max(0,mem.calibrationEWMA)*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(driftActive?.10:0),0,1);
+  const health=clamp(1-recentLoss*3.3-calibrationPenalty*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(driftActive?.10:0),0,1);
 
   // Primero construimos un ranking bruto para poder aprender si el "#1" realmente es mejor.
   const recentPicks=mem.recentPicks.slice(-12);
@@ -868,7 +876,7 @@ function predict(){
   // Solo PAUSA con deterioro severo; el resto se resuelve buscando entre los 10.
   let action='WAIT';
   let reason=`Revisé los 10 candidatos; ninguno alcanzó todavía el mínimo adaptable. Mejor actual D${selected.d} · score ${(selected.score*100).toFixed(0)}/100.`;
-  const severeInstability=(mem.tradeCount>=12&&health<.27)||(preqSamples>=80&&brier>BASELINE_BRIER+.035);
+  const severeInstability=(preqSamples>=80&&health<.20)||(preqSamples>=80&&brier>BASELINE_BRIER+.035);
   if(severeInstability){
     action='PAUSE';
     reason='PAUSA IA: deterioro severo del modelo. Sigo aprendiendo los 10 candidatos sin comprar.';
