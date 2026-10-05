@@ -750,7 +750,7 @@ function movementForecast(h=1){
   for(let b=0;b<MOVE_BUCKETS.length;b++){
     const general=mem.moveDigitModels[h]?.['B:'+b];
     const specific=mem.moveDigitModels[h]?.['BD:'+b+'>D'+sourceDigit];
-    let cond=blankP(),weight=0;
+    let cond=Array(10).fill(0),weight=0;
     if(general){
       const g=normalizeDist(general.p),w=.45*(1-Math.exp(-safeNum(general.n,0)/100));
       for(let d=0;d<10;d++)cond[d]+=g[d]*w;
