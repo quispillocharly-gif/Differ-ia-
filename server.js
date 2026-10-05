@@ -1170,7 +1170,9 @@ function masterPublic(){
       updatedAt:Math.max(safeNum(mem.shadow.drift?.lastAt,0),master.updatedAt)
     },
     champion,
-    collaborativeAccepted:mem.collaborative.accepted
+    shadowMatchRate:clamp(safeNum(mem.shadow.matchRate,UNIFORM),0,1),
+    collaborativeAccepted:mem.collaborative.accepted,
+    collaborativeMatchRate:mem.collaborative.accepted?clamp(safeNum(mem.collaborative.matchRate,UNIFORM),0,1):UNIFORM
   };
 }
 
