@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const SYMBOL = process.env.DERIV_SYMBOL || 'R_75';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const MEMORY_FILE = path.join(DATA_DIR, 'differ-ai-memory.json');
+const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
 
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
@@ -46,6 +47,9 @@ let lastPrediction = null;
 let shadowPending = null;
 let movementQueue = [];
 let movementBootstrapDone = false;
+let riseFallBootstrapDone = false;
+let riseFallPending = [];
+let riseFallLastPrediction = null;
 let status = 'BOOTING';
 
 function blankP(){ return Array(10).fill(UNIFORM); }
@@ -423,6 +427,338 @@ function normalizeMemory(x){
 
   m.shadow.recent = Array.isArray(m.shadow.recent) ? m.shadow.recent.slice(-SHADOW_RECENT_MAX) : [];
   return m;
+}
+
+function freshRiseFallPerf(){
+  return {
+    resolved:0,
+    actionSamples:0,
+    actionWins:0,
+    directionHitEWMA:.5,
+    brierEWMA:2/9,
+    logLossEWMA:Math.log(3),
+    lastAt:0
+  };
+}
+function freshRiseFallMemory(){
+  const models={1:{},2:{},3:{}};
+  const global={
+    1:{counts:[1,1,1],n:0},
+    2:{counts:[1,1,1],n:0},
+    3:{counts:[1,1,1],n:0}
+  };
+  return {
+    version:1,
+    createdAt:Date.now(),
+    updatedAt:Date.now(),
+    tickCount:0,
+    trainedSamples:0,
+    models,
+    global,
+    performance:{1:freshRiseFallPerf(),2:freshRiseFallPerf(),3:freshRiseFallPerf()},
+    lastEpoch:0,
+    saves:0
+  };
+}
+function normalizeRiseFallMemory(x){
+  const base=freshRiseFallMemory();
+  if(!x||safeNum(x.version,0)!==1)return base;
+  const m={...base,...x};
+  m.models=m.models&&typeof m.models==='object'?m.models:base.models;
+  m.global=m.global&&typeof m.global==='object'?m.global:base.global;
+  m.performance=m.performance&&typeof m.performance==='object'?m.performance:base.performance;
+  HORIZONS.forEach(h=>{
+    m.models[h]=m.models[h]&&typeof m.models[h]==='object'?m.models[h]:{};
+    const g=m.global[h]||{};
+    m.global[h]={
+      counts:Array.from({length:3},(_,i)=>Math.max(.001,safeNum(g.counts?.[i],1))),
+      n:Math.max(0,Math.floor(safeNum(g.n,0)))
+    };
+    const p=m.performance[h]||{};
+    m.performance[h]={
+      resolved:Math.max(0,Math.floor(safeNum(p.resolved,0))),
+      actionSamples:Math.max(0,Math.floor(safeNum(p.actionSamples,0))),
+      actionWins:Math.max(0,Math.floor(safeNum(p.actionWins,0))),
+      directionHitEWMA:clamp(safeNum(p.directionHitEWMA,.5),0,1),
+      brierEWMA:clamp(safeNum(p.brierEWMA,2/9),0,1),
+      logLossEWMA:clamp(safeNum(p.logLossEWMA,Math.log(3)),.01,8),
+      lastAt:Math.max(0,safeNum(p.lastAt,0))
+    };
+  });
+  m.tickCount=Math.max(0,Math.floor(safeNum(m.tickCount,0)));
+  m.trainedSamples=Math.max(0,Math.floor(safeNum(m.trainedSamples,0)));
+  m.lastEpoch=Math.max(0,Math.floor(safeNum(m.lastEpoch,0)));
+  return m;
+}
+function loadRiseFallMemory(){
+  try{
+    fs.mkdirSync(DATA_DIR,{recursive:true});
+    if(!fs.existsSync(RISE_FALL_FILE))return freshRiseFallMemory();
+    return normalizeRiseFallMemory(JSON.parse(fs.readFileSync(RISE_FALL_FILE,'utf8')));
+  }catch(e){
+    console.error('Rise/Fall memory load error:',e.message);
+    return freshRiseFallMemory();
+  }
+}
+let riseFallMem=loadRiseFallMemory();
+
+function saveRiseFallMemory(){
+  try{
+    fs.mkdirSync(DATA_DIR,{recursive:true});
+    riseFallMem.updatedAt=Date.now();
+    riseFallMem.saves=(riseFallMem.saves||0)+1;
+    const tmp=RISE_FALL_FILE+'.tmp';
+    fs.writeFileSync(tmp,JSON.stringify(riseFallMem));
+    fs.renameSync(tmp,RISE_FALL_FILE);
+  }catch(e){
+    console.error('Rise/Fall memory save error:',e.message);
+  }
+}
+function riseFallOutcomeIndex(sourcePrice,targetPrice){
+  const a=Number(sourcePrice),b=Number(targetPrice);
+  if(!Number.isFinite(a)||!Number.isFinite(b))return 1;
+  if(b>a)return 2;
+  if(b<a)return 0;
+  return 1;
+}
+function riseFallNorm3(xs){
+  const a=Array.from({length:3},(_,i)=>Math.max(.000001,safeNum(xs?.[i],1)));
+  const s=a.reduce((x,y)=>x+y,0)||1;
+  return a.map(x=>x/s);
+}
+function riseFallContextKeys(snap){
+  if(!snap)return [];
+  const phase=marketPhaseFromMotion(snap);
+  return [
+    {key:'PH:'+phase+'|V'+snap.volatility,need:70,w:1.00},
+    {key:'DIR:'+snap.direction+'|S'+snap.strength+'|A'+snap.accel,need:95,w:.82},
+    {key:'MIC:'+snap.microDir+'|F'+snap.microForce+'|T'+snap.trendBand,need:65,w:1.08},
+    {key:'TURN:'+snap.turn+'|'+phase+'|'+snap.accel,need:55,w:1.16}
+  ];
+}
+function riseFallNode(h,key){
+  const bucket=riseFallMem.models[h];
+  if(!bucket[key])bucket[key]={counts:[1,1,1],n:0,last:riseFallMem.tickCount};
+  return bucket[key];
+}
+function riseFallLearnOne(h,snap,outcome){
+  const g=riseFallMem.global[h];
+  g.counts[outcome]+=1;
+  g.n++;
+  riseFallContextKeys(snap).forEach(k=>{
+    const n=riseFallNode(h,k.key);
+    n.counts[outcome]+=1;
+    n.n++;
+    n.last=riseFallMem.tickCount;
+  });
+  riseFallMem.trainedSamples++;
+}
+function riseFallOwnDistribution(h,snap){
+  const g=riseFallMem.global[h];
+  const gp=riseFallNorm3(g.counts);
+  const acc=gp.map(x=>x*.38),den=Array(3).fill(.38);
+  let supportSum=0,used=0,totalN=0;
+  riseFallContextKeys(snap).forEach(k=>{
+    const node=riseFallMem.models[h]?.[k.key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/k.need);
+    const w=k.w*support;
+    const p=riseFallNorm3(node.counts);
+    for(let i=0;i<3;i++){acc[i]+=p[i]*w;den[i]+=w}
+    supportSum+=support;
+    used++;
+    totalN+=safeNum(node.n,0);
+  });
+  const p=riseFallNorm3(acc.map((x,i)=>x/(den[i]||1)));
+  return {p,support:used?supportSum/used:0,n:totalN+safeNum(g.n,0)};
+}
+function riseFallPredict(h=1){
+  h=clamp(Math.round(safeNum(h,1)),1,3);
+  const snap=motionSnapshot();
+  if(!snap)return null;
+  const own=riseFallOwnDistribution(h,snap);
+  let p=own.p.slice();
+
+  // Lectura unidireccional del predictor de movimiento de DIFFER.
+  // Rise/Fall puede usarla como evidencia, pero nunca escribe de regreso en DIFFER.
+  const move=movementForecast(h);
+  if(move){
+    const ext=riseFallNorm3([move.down,move.flat,move.up]);
+    const readOnlyWeight=clamp(.12+.20*safeNum(move.support,0),.12,.32);
+    p=riseFallNorm3(p.map((x,i)=>(1-readOnlyWeight)*x+readOnlyWeight*ext[i]));
+  }
+
+  const down=p[0],flat=p[1],up=p[2];
+  const direction=up>=down?'RISE':'FALL';
+  const directionProbability=Math.max(up,down);
+  const gap=Math.abs(up-down);
+  let action='WAIT';
+  if(up>=.56&&gap>=.065&&flat<=.30)action='RISE';
+  else if(down>=.56&&gap>=.065&&flat<=.30)action='FALL';
+
+  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
+  const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
+  const ready=
+    perf.resolved>=900 &&
+    perf.actionSamples>=450 &&
+    perf.directionHitEWMA>=.535 &&
+    perf.brierEWMA<=(2/9)-.004 &&
+    perf.logLossEWMA<=Math.log(3)-.010 &&
+    actionWinRate>=.53;
+
+  return {
+    horizon:h,
+    signalEpoch:lastEpoch,
+    generatedAt:Date.now(),
+    action,
+    direction,
+    directionProbability,
+    probabilities:{FALL:down,FLAT:flat,RISE:up},
+    confidence:clamp((directionProbability-.5)*2*(.55+.45*own.support),0,1),
+    support:clamp(own.support,0,1),
+    phase:marketPhaseFromMotion(snap),
+    motion:{
+      direction:snap.direction,
+      strength:snap.strength,
+      accel:snap.accel,
+      turn:snap.turn,
+      microDir:snap.microDir,
+      microForce:snap.microForce
+    },
+    expectedUnits:move?safeNum(move.expectedUnits,0):0,
+    reversalProbability:move?clamp(safeNum(move.reversalProbability,0),0,1):0,
+    continuationProbability:move?clamp(safeNum(move.continuationProbability,0),0,1):0,
+    ready,
+    validation:{
+      resolved:perf.resolved,
+      actionSamples:perf.actionSamples,
+      actionWins:perf.actionWins,
+      actionWinRate,
+      directionHitEWMA:perf.directionHitEWMA,
+      brierEWMA:perf.brierEWMA,
+      logLossEWMA:perf.logLossEWMA
+    }
+  };
+}
+function riseFallResolve(targetPrice,counter){
+  if(!riseFallPending.length||!Number.isFinite(Number(targetPrice)))return;
+  const due=[],keep=[];
+  riseFallPending.forEach(x=>(x.due<=counter?due:keep).push(x));
+  riseFallPending=keep.slice(-30);
+
+  due.forEach(item=>{
+    const actual=riseFallOutcomeIndex(item.sourcePrice,targetPrice);
+    const p=riseFallNorm3(item.p);
+    const perf=riseFallMem.performance[item.h]||(riseFallMem.performance[item.h]=freshRiseFallPerf());
+    const prob=clamp(p[actual],.0001,.9999);
+    const logLoss=-Math.log(prob);
+    let brier=0;
+    for(let i=0;i<3;i++){
+      const y=i===actual?1:0,e=p[i]-y;
+      brier+=e*e;
+    }
+    brier/=3;
+
+    perf.resolved++;
+    const a=perf.resolved<300?.025:.0075;
+    perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,Math.log(3))+a*logLoss;
+    perf.brierEWMA=(1-a)*safeNum(perf.brierEWMA,2/9)+a*brier;
+
+    const actualDir=actual===2?'RISE':actual===0?'FALL':'FLAT';
+    if(actualDir!=='FLAT'){
+      const predicted=item.up>=item.down?'RISE':'FALL';
+      const hit=predicted===actualDir?1:0;
+      perf.directionHitEWMA=(1-a)*safeNum(perf.directionHitEWMA,.5)+a*hit;
+      if(item.action==='RISE'||item.action==='FALL'){
+        perf.actionSamples++;
+        if(item.action===actualDir)perf.actionWins++;
+      }
+    }
+    perf.lastAt=Date.now();
+  });
+}
+function riseFallLearnOutcome(targetPrice){
+  const n=Math.min(hist.length,priceHist.length,motionHist.length);
+  for(const h of HORIZONS){
+    const signalIndex=n-h;
+    if(signalIndex<0)continue;
+    const sourcePrice=Number(priceHist[signalIndex]);
+    const snap=motionHist[signalIndex];
+    if(!Number.isFinite(sourcePrice)||!snap)continue;
+    const outcome=riseFallOutcomeIndex(sourcePrice,targetPrice);
+    riseFallLearnOne(h,snap,outcome);
+  }
+  riseFallMem.tickCount++;
+}
+function riseFallSchedule(counter){
+  for(const h of HORIZONS){
+    const pred=riseFallPredict(h);
+    if(!pred||!priceHist.length)continue;
+    riseFallPending.push({
+      due:counter+h,
+      h,
+      sourcePrice:Number(priceHist[priceHist.length-1]),
+      p:[pred.probabilities.FALL,pred.probabilities.FLAT,pred.probabilities.RISE],
+      up:pred.probabilities.RISE,
+      down:pred.probabilities.FALL,
+      action:pred.action
+    });
+    if(h===1)riseFallLastPrediction=pred;
+  }
+  if(riseFallPending.length>30)riseFallPending=riseFallPending.slice(-30);
+}
+function bootstrapRiseFall(){
+  if(riseFallBootstrapDone)return;
+  riseFallBootstrapDone=true;
+  if(riseFallMem.trainedSamples>500)return;
+  const n=Math.min(hist.length,priceHist.length,motionHist.length);
+  if(n<120)return;
+
+  const start=Math.max(24,n-12000);
+  let trained=0;
+  for(let targetIndex=start;targetIndex<n;targetIndex++){
+    const targetPrice=Number(priceHist[targetIndex]);
+    if(!Number.isFinite(targetPrice))continue;
+    for(const h of HORIZONS){
+      const signalIndex=targetIndex-h;
+      if(signalIndex<8)continue;
+      const sourcePrice=Number(priceHist[signalIndex]);
+      const snap=motionHist[signalIndex];
+      if(!Number.isFinite(sourcePrice)||!snap)continue;
+      riseFallLearnOne(h,snap,riseFallOutcomeIndex(sourcePrice,targetPrice));
+      trained++;
+    }
+  }
+  riseFallMem.tickCount+=Math.max(0,n-start);
+  saveRiseFallMemory();
+  console.log('Rise/Fall AI bootstrapped from history:',trained,'training samples');
+}
+function pruneRiseFall(){
+  HORIZONS.forEach(h=>{
+    const bucket=riseFallMem.models[h]||{};
+    const keys=Object.keys(bucket);
+    if(keys.length<=1800)return;
+    keys.sort((a,b)=>safeNum(bucket[b]?.last,0)-safeNum(bucket[a]?.last,0));
+    keys.slice(1800).forEach(k=>delete bucket[k]);
+  });
+}
+function riseFallStatus(){
+  return {
+    ok:true,
+    status,
+    symbol:SYMBOL,
+    isolated:true,
+    persistence:'cloud',
+    learnsWhenBrowserClosed:true,
+    updatedAt:riseFallMem.updatedAt,
+    tickCount:riseFallMem.tickCount,
+    trainedSamples:riseFallMem.trainedSamples,
+    predictions:{
+      1:riseFallPredict(1),
+      2:riseFallPredict(2),
+      3:riseFallPredict(3)
+    }
+  };
 }
 
 function loadMemory(){
@@ -1596,7 +1932,9 @@ function processDigit(d,epoch,quote){
   const nextCounter=liveTickCount+1;
 
   resolveMovementForecasts(targetPrice,nextCounter);
+  riseFallResolve(targetPrice,nextCounter);
   evaluateShadow(d);
+  riseFallLearnOutcome(targetPrice);
   learnMovementOutcome(targetPrice,d);
   learnDigit(d,hist);
 
@@ -1623,6 +1961,9 @@ function processDigit(d,epoch,quote){
 
   prepareShadow();
   scheduleMovementForecasts(liveTickCount);
+  riseFallSchedule(liveTickCount);
+  if(riseFallMem.tickCount%250===0)pruneRiseFall();
+  if(epoch)riseFallMem.lastEpoch=Math.max(safeNum(riseFallMem.lastEpoch,0),Number(epoch)||0);
 }
 
 function digitFromQuote(q,pip){
@@ -1661,6 +2002,7 @@ function connectDeriv(){
       const pip=Number(m.pip_size||4);
       if(Number.isFinite(pip))marketPip=pip;
       bootstrapMovementPredictor();
+      bootstrapRiseFall();
 
       for(let i=0;i<prices.length;i++){
         const ep=Number(times[i]||0);
@@ -1967,6 +2309,25 @@ app.get('/api/cloud/collaborative',(req,res)=>{
   res.json({ok:true,symbol:SYMBOL,collaborative:collaborativePublic()});
 });
 
+app.get('/api/rise-fall/status',(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json(riseFallStatus());
+});
+
+app.get('/api/rise-fall/prediction',(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  const h=clamp(Math.round(safeNum(req.query.h,1)),1,3);
+  res.json({
+    ok:true,
+    status,
+    symbol:SYMBOL,
+    isolated:true,
+    learnsWhenBrowserClosed:true,
+    prediction:riseFallPredict(h),
+    updatedAt:riseFallMem.updatedAt
+  });
+});
+
 app.get('/api/cloud/status',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   res.json({
@@ -2063,15 +2424,20 @@ app.listen(PORT,()=>{
   console.log('Drift events restored:',mem.shadow.drift.events);
   console.log('Collaborative experiences restored:',mem.collaborative.accepted);
   console.log('Master brain restored:',mem.master.counterfactualTicks,'counterfactual ticks · revision',mem.master.revision);
+  console.log('Rise/Fall memory restored:',riseFallMem.trainedSamples,'training samples ·',riseFallMem.performance[1].resolved,'validated 1T forecasts');
   prepareShadow();
   connectDeriv();
 });
 
-saveTimer=setInterval(saveMemory,15000);
+saveTimer=setInterval(()=>{
+  saveMemory();
+  saveRiseFallMemory();
+},15000);
 
 function shutdown(){
   clearInterval(saveTimer);
   saveMemory();
+  saveRiseFallMemory();
   try{if(ws)ws.close()}catch(_){}
   process.exit(0);
 }
