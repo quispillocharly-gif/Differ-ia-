@@ -21,6 +21,8 @@ const MOVE_BASE_BRIER=6/49;
 const NORMAL_RISK_CEILING=.0975;
 const STRONG_RISK_CEILING=.0880;
 const AUTO_CONFIRM_TICKS=2;
+const ADAPTIVE_WAIT_START=8;
+const ADAPTIVE_WAIT_FULL=28;
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -36,6 +38,7 @@ let sessionStarted=false,sessionPaused=false,sessionClosed=false,sessionId='';
 let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
+let autoWaitTicks=0;
 let autoSignal={
   digit:null,count:0,lastTick:-1,lastRisk:UNIFORM,lastScore:0,lastConfidence:0,
   lastOod:1,lastConsensus:0,lastRobustRisk:.30,needed:AUTO_CONFIRM_TICKS
@@ -1370,6 +1373,13 @@ function predict(){
   // necesitan evidencia más robusta, no simplemente más tiempo de espera.
   const earlyGuard=session.settled<=0?1:session.settled===1?.55:0;
 
+  // Ser meticuloso no significa quedarse esperando minutos.
+  // Tras varios ticks sin entrada, solo se relajan filtros BLANDOS;
+  // el techo de riesgo y los vetos duros siguen protegidos.
+  const adaptivePatience=autoRunning&&!pendingTrade
+    ?clamp((autoWaitTicks-ADAPTIVE_WAIT_START)/(ADAPTIVE_WAIT_FULL-ADAPTIVE_WAIT_START),0,1)
+    :0;
+
   // Ahora la IA puntúa LOS 10 candidatos. Un primero malo no detiene la búsqueda.
   const candidates=preliminary.map(x=>{
     const mean=views.reduce((s,v)=>s+safeNum(v.p[x.d],x.risk)*Math.max(.01,safeNum(v.w,1)),0)/wsum;
@@ -1403,35 +1413,56 @@ function predict(){
     );
 
     const committee=committeeForCandidate(views,x.d);
+
+    // El riesgo NO se flexibiliza por impaciencia. Solo reducimos ligeramente
+    // la penalización especial de las primeras operaciones si el contexto se mantiene sano.
     const riskCeiling=clamp(
-      learnedRiskCeiling-clusterGuard*.006-earlyGuard*.003,
-      .082,
+      learnedRiskCeiling-clusterGuard*.006-earlyGuard*(.0025-adaptivePatience*.0008),
+      .084,
       NORMAL_RISK_CEILING
     );
-    const minScore=.470+(driftActive?.035:0)+recoveryRatio*.030+streakInfo.qualityPenalty*.45+clusterGuard*.055+earlyGuard*.025;
-    const minConf=Math.max(
+
+    // Filtros blandos adaptativos: después de 8-28 ticks sin oportunidad
+    // la IA puede aceptar una señal razonable sin esperar minutos.
+    const minScore=
+      .465+
+      (driftActive?.035:0)+
+      recoveryRatio*.030+
+      streakInfo.qualityPenalty*.45+
+      clusterGuard*.055+
+      earlyGuard*.020-
+      adaptivePatience*.040;
+
+    const baseMinConf=Math.max(
       safeNum(researchProfile?.minConfidence,.22),
-      (driftActive?.27:.24)+recoveryRatio*.030+clusterGuard*.065+earlyGuard*.025
+      (driftActive?.27:.235)+recoveryRatio*.030+clusterGuard*.065+earlyGuard*.020
     );
-    const minConsensus=Math.max(
-      safeNum(researchProfile?.minConsensus,.56),
-      .56+clusterGuard*.05+earlyGuard*.055
+    const minConf=Math.max(.205,baseMinConf-adaptivePatience*.035);
+
+    const baseMinConsensus=Math.max(
+      safeNum(researchProfile?.minConsensus,.55),
+      .55+clusterGuard*.05+earlyGuard*.045
     );
-    const robustCeiling=Math.min(
-      safeNum(researchProfile?.robustCeiling,.112),
-      .112-clusterGuard*.005-earlyGuard*.004
+    const minConsensus=Math.max(.50,baseMinConsensus-adaptivePatience*.055);
+
+    const baseRobustCeiling=Math.min(
+      safeNum(researchProfile?.robustCeiling,.113),
+      .113-clusterGuard*.005-earlyGuard*.003
     );
-    const maxOod=.78-clusterGuard*.07-earlyGuard*.045;
+    const robustCeiling=Math.min(.118,baseRobustCeiling+adaptivePatience*.0045);
+    const maxOod=Math.min(.84,.79-clusterGuard*.07-earlyGuard*.035+adaptivePatience*.045);
 
     const movementRisk=futureMove?.ready&&Array.isArray(futureMove.digitP)
       ?safeNum(futureMove.digitP[x.d],UNIFORM)
       :null;
-    const movementConflict=Number.isFinite(movementRisk)&&movementRisk>.108;
+    const movementConflict=Number.isFinite(movementRisk)&&movementRisk>.125;
 
     const cloudRisk=cloudAnchor?safeNum(cloudAnchor.p[x.d],UNIFORM):null;
-    const cloudConflict=Number.isFinite(cloudRisk)&&cloudRisk>.110;
+    const cloudConflict=Number.isFinite(cloudRisk)&&cloudRisk>.125;
 
-    const expertVeto=committee.models>=4 && committee.dangerShare>.30;
+    // Un desacuerdo aislado no bloquea todo. Solo hay veto si casi la mitad
+    // del peso experto ve peligro claro en ese candidato.
+    const expertVeto=committee.models>=4 && committee.dangerShare>.45;
 
     const usable=
       score>=minScore &&
@@ -1460,7 +1491,7 @@ function predict(){
 
   // Solo PAUSA con deterioro severo; el resto se resuelve buscando entre los 10.
   let action='WAIT';
-  let reason=`Revisé los 10 candidatos; ninguno alcanzó todavía el mínimo adaptable. Mejor actual D${selected.d} · score ${(selected.score*100).toFixed(0)}/100.`;
+  let reason=`Revisé los 10 candidatos; ninguno alcanzó todavía el mínimo adaptable. Mejor actual D${selected.d} · score ${(selected.score*100).toFixed(0)}/100 · análisis ${autoWaitTicks}T.`;
   const severeInstability=(preqSamples>=80&&health<.20)||(preqSamples>=80&&brier>BASELINE_BRIER+.035);
   if(severeInstability){
     action='PAUSE';
@@ -1492,10 +1523,12 @@ function predict(){
     h,p,best,second,
     confidence:selected.confidence,
     edge:selected.edge,
-    requiredEdge:Math.max(0,UNIFORM-clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.003,.082,NORMAL_RISK_CEILING)),
-    riskCeiling:clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.003,.082,NORMAL_RISK_CEILING),
+    requiredEdge:Math.max(0,UNIFORM-clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*(.0025-adaptivePatience*.0008),.084,NORMAL_RISK_CEILING)),
+    riskCeiling:clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*(.0025-adaptivePatience*.0008),.084,NORMAL_RISK_CEILING),
     clusterGuard,
     earlyGuard,
+    adaptivePatience,
+    waitTicks:autoWaitTicks,
     entryResearch:research?{
       ready:!!research.ready,
       recommended:String(research.recommended||'balanced'),
@@ -1700,44 +1733,32 @@ function confirmAutoEntry(decision){
 
   const strong=
     risk<=STRONG_RISK_CEILING &&
-    conf>=.38 &&
-    score>=.60 &&
-    ood<=.50 &&
-    consensus>=.70 &&
-    robustRisk<=.100 &&
+    conf>=.36 &&
+    score>=.58 &&
+    ood<=.52 &&
+    consensus>=.68 &&
+    robustRisk<=.102 &&
     !decision.movementConflict &&
     !decision.cloudConflict &&
     !decision.expertVeto;
 
-  const marginal=
-    safeNum(decision.earlyGuard,0)>0 ||
-    risk>.0925 ||
-    conf<.31 ||
-    score<.54 ||
-    ood>.55 ||
-    consensus<.68 ||
-    robustRisk>.106;
-
-  const needed=strong?2:(marginal?3:AUTO_CONFIRM_TICKS);
-  const consecutive=
-    autoSignal.digit===decision.best.d &&
-    autoSignal.lastTick===liveTickCounter-1;
+  // Siempre validamos dos lecturas de CONTEXTO. No obligamos al mismo dígito:
+  // si el mejor candidato cambia pero la calidad no empeora, la validación continúa.
+  const needed=AUTO_CONFIRM_TICKS;
+  const consecutiveTick=autoSignal.lastTick===liveTickCounter-1;
 
   let stable=false;
-  if(consecutive){
-    const riskStable=risk<=safeNum(autoSignal.lastRisk,UNIFORM)+.0008;
-    const scoreStable=score>=safeNum(autoSignal.lastScore,0)-.020;
-    const confStable=conf>=safeNum(autoSignal.lastConfidence,0)-.030;
-    const oodStable=ood<=safeNum(autoSignal.lastOod,1)+.035;
-    const consensusStable=consensus>=safeNum(autoSignal.lastConsensus,0)-.045;
-    const robustStable=robustRisk<=safeNum(autoSignal.lastRobustRisk,.30)+.003;
+  if(consecutiveTick){
+    const riskStable=risk<=safeNum(autoSignal.lastRisk,UNIFORM)+.0012;
+    const scoreStable=score>=safeNum(autoSignal.lastScore,0)-.035;
+    const confStable=conf>=safeNum(autoSignal.lastConfidence,0)-.045;
+    const oodStable=ood<=safeNum(autoSignal.lastOod,1)+.050;
+    const consensusStable=consensus>=safeNum(autoSignal.lastConsensus,0)-.060;
+    const robustStable=robustRisk<=safeNum(autoSignal.lastRobustRisk,.30)+.0045;
     stable=riskStable&&scoreStable&&confStable&&oodStable&&consensusStable&&robustStable;
 
-    if(stable){
-      autoSignal.count=Math.min(needed,autoSignal.count+1);
-    }else{
-      autoSignal.count=1;
-    }
+    if(stable)autoSignal.count=Math.min(needed,autoSignal.count+1);
+    else autoSignal.count=1;
   }else{
     autoSignal.count=1;
   }
@@ -1757,13 +1778,15 @@ function confirmAutoEntry(decision){
     count:autoSignal.count,
     needed,
     strong,
-    stable:consecutive?stable:true,
+    stable:consecutiveTick?stable:true,
     consensus,
-    robustRisk
+    robustRisk,
+    candidateChanged:consecutiveTick&&autoSignal.digit!==decision.best.d
   };
 }
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
+  autoWaitTicks=0;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
   const sessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
   pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual};
@@ -1964,6 +1987,7 @@ function processDigit(d,epoch,isLive,quote){
   saveMemory(false);
   renderSession();
 
+  if(autoRunning&&!pendingTrade)autoWaitTicks=Math.min(999,autoWaitTicks+1);
   const decision=predict();
   schedulePrediction(decision,liveTickCounter);
   scheduleMovementForecasts(liveTickCounter);
@@ -1975,13 +1999,13 @@ function processDigit(d,epoch,isLive,quote){
     if(confirmation.ready){
       enterTrade(decision,false);
     }else{
-      $('status').textContent='COMITÉ VALIDANDO '+confirmation.count+'/'+confirmation.needed+' · D'+decision.best.d;
+      $('status').textContent='VALIDANDO CONTEXTO '+confirmation.count+'/'+confirmation.needed+' · D'+decision.best.d;
       if($('decision')){
         $('decision').textContent='VALIDANDO D'+decision.best.d+' · '+confirmation.count+'/'+confirmation.needed;
         $('decision').className='decision stateWait';
       }
       if($('reason'))$('reason').textContent=
-        'La señal pasó el primer filtro. La IA verifica que riesgo, score, confianza, contexto y consenso no se deterioren antes de comprar · comité '+
+        'La señal pasó el primer filtro. La IA confirma que la calidad del contexto se mantiene; el candidato puede cambiar si aparece uno mejor · comité '+
         Math.round(safeNum(confirmation.consensus,0)*100)+'% · robusto '+fmtPct(confirmation.robustRisk)+'.';
     }
   }else if(autoRunning && decision?.action==='PAUSE'){
@@ -2114,6 +2138,7 @@ $('start').onclick=()=>{
   pendingTrade=null;
   sessionId='S'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
   resetAutoSignal();
+  autoWaitTicks=0;
   sessionStarted=true;
   sessionPaused=false;
   sessionClosed=false;
@@ -2136,6 +2161,7 @@ if($('continue'))$('continue').onclick=()=>{
   if(!sessionStarted){$('status').textContent='PRIMERO INICIA UNA SESIÓN';return}
   if(sessionClosed){$('status').textContent='SESIÓN FINALIZADA · USA INICIAR IA PARA UNA NUEVA';return}
   resetAutoSignal();
+  autoWaitTicks=0;
   autoRunning=true;
   sessionPaused=false;
   $('status').textContent='AUTO IA CONTINUADA · OP #'+(Math.floor(safeNum(session.settled,0))+1);
