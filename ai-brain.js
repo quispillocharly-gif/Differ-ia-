@@ -919,14 +919,14 @@ function predict(){
   const localPhasePerf=mem.expertPerf?.phase||{samples:0,skillEWMA:0,weight:1};
   const masterPhasePerf=cloudMasterFresh()?cloudMaster.expertPerformance?.phase:null;
   const phaseMature=!!phase &&
-    safeNum(phase.n,0)>=220 &&
+    safeNum(phase.n,0)>=900 &&
     (masterPhasePerf
-      ?(safeNum(masterPhasePerf.samples,0)>=300 && safeNum(masterPhasePerf.matchEWMA,UNIFORM)<UNIFORM-.001)
-      :(safeNum(localPhasePerf.samples,0)>=180 && safeNum(localPhasePerf.skillEWMA,0)>.006));
+      ?(safeNum(masterPhasePerf.samples,0)>=1200 && safeNum(masterPhasePerf.matchEWMA,UNIFORM)<=.0955 && safeNum(masterPhasePerf.logLossEWMA,BASELINE_LOGLOSS)<=BASELINE_LOGLOSS-.004)
+      :(safeNum(localPhasePerf.samples,0)>=600 && safeNum(localPhasePerf.skillEWMA,0)>.012));
   if(phaseMature){
     const phaseSamples=masterPhasePerf?safeNum(masterPhasePerf.samples,0):safeNum(localPhasePerf.samples,0);
-    const maturity=clamp((phaseSamples-180)/700,0,1);
-    const pw=(.09+.19*maturity)*phase.support*expertWeight('phase');
+    const maturity=clamp((phaseSamples-600)/1800,0,1);
+    const pw=(.06+.12*maturity)*phase.support*expertWeight('phase');
     if(pw>.01){
       for(let d=0;d<10;d++){dist[d]+=phase.p[d]*pw;denom[d]+=pw}
       modelViews.push({name:'phase',p:phase.p.slice(),w:pw,n:phase.n,phase:phase.phase,state:phase.state});
@@ -989,6 +989,12 @@ function predict(){
   const streakInfo=streakRiskInfo(session.streak);
   const health=clamp(1-recentLoss*3.3-calibrationPenalty*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(driftActive?.10:0),0,1);
 
+  // Cautela adaptativa: si aparecen varios MATCH recientes, no seguimos comprando
+  // con el mismo umbral. Se vuelve temporalmente más exigente sin bloquear para siempre.
+  const recentSettled=(mem.recentTrades||[]).slice(-6);
+  const recentMatches=recentSettled.reduce((n,t)=>n+(t?.loss?1:0),0);
+  const clusterGuard=recentMatches>=3?1:recentMatches>=2?.65:0;
+
   // Primero construimos un ranking bruto para poder aprender si el "#1" realmente es mejor.
   const recentPicks=mem.recentPicks.slice(-12);
   const exposure=Array(10).fill(0);recentPicks.forEach(d=>exposure[d]++);
@@ -1035,13 +1041,15 @@ function predict(){
       0,1
     );
 
-    const minScore=.405+(driftActive?.035:0)+recoveryRatio*.025+streakInfo.qualityPenalty*.45;
-    const minConf=(driftActive?.23:.16)+recoveryRatio*.025;
+    const riskCeiling=.1025-clusterGuard*.0095;
+    const minScore=.405+(driftActive?.035:0)+recoveryRatio*.025+streakInfo.qualityPenalty*.45+clusterGuard*.065;
+    const minConf=(driftActive?.23:.16)+recoveryRatio*.025+clusterGuard*.075;
+    const maxOod=.88-clusterGuard*.08;
     const usable=
       score>=minScore &&
-      effectiveRisk<=.1025 &&
+      effectiveRisk<=riskCeiling &&
       confidence>=minConf &&
-      oodScore<.88;
+      oodScore<maxOod;
 
     return {
       ...x,
@@ -1065,6 +1073,8 @@ function predict(){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
     reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo efectivo ${fmtPct(selected.effectiveRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
+  }else if(clusterGuard>0){
+    reason=`CAUTELA ANTI-MATCH: detecté ${recentMatches} MATCH en las últimas ${recentSettled.length} operaciones; sigo analizando pero exijo más calidad antes de comprar.`;
   }else if(recoveryRatio>0){
     reason=`Revisé los 10 candidatos durante recuperación; D${selected.d} quedó más cerca con score ${(selected.score*100).toFixed(0)}/100.`;
   }else if(streakInfo.active){
@@ -1086,8 +1096,10 @@ function predict(){
     h,p,best,second,
     confidence:selected.confidence,
     edge:selected.edge,
-    requiredEdge:Math.max(0,UNIFORM-.1025),
-    riskCeiling:.1025,
+    requiredEdge:Math.max(0,UNIFORM-(.1025-clusterGuard*.0095)),
+    riskCeiling:.1025-clusterGuard*.0095,
+    clusterGuard,
+    recentMatches,
     health,
     qualityScore:selected.qualityScore,
     oodScore:selected.oodScore,
