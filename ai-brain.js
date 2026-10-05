@@ -1402,19 +1402,36 @@ function connectMarket(){
 
 $('start').onclick=()=>{
   if(!canTradeMode())return;
-  session={pnl:0,wins:0,losses:0,ops:0,streak:0,maxStreak:0};
+  if(pendingTrade){$('status').textContent='ESPERA RESULTADO DE OPERACIÓN ACTUAL';return}
+  session={pnl:0,wins:0,losses:0,ops:0,settled:0,streak:0,maxStreak:0};
   nextStake=baseStake();
   pendingTrade=null;
+  sessionId='S'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
+  sessionStarted=true;
+  sessionPaused=false;
+  sessionClosed=false;
   autoRunning=true;
-  $('status').textContent='AUTO IA ACTIVO';
+  $('status').textContent='AUTO IA ACTIVO · SESIÓN NUEVA';
   log(`NUEVA SESIÓN ${$('mode').value} · stake $${baseStake().toFixed(2)} · TP $${target().toFixed(2)} · SL $${stopLoss().toFixed(2)}`);
   renderSession();
 };
 
 $('stop').onclick=()=>{
   autoRunning=false;
-  $('status').textContent='COMPRAS DETENIDAS · IA SIGUE APRENDIENDO';
-  log('STOP MANUAL DE COMPRAS · aprendizaje continúa');
+  if(sessionStarted&&!sessionClosed)sessionPaused=true;
+  $('status').textContent='SESIÓN PAUSADA · IA SIGUE APRENDIENDO';
+  log('PAUSA MANUAL · sesión conservada · usa CONTINUAR IA para retomarla');
+};
+
+if($('continue'))$('continue').onclick=()=>{
+  if(!canTradeMode())return;
+  if(!sessionStarted){$('status').textContent='PRIMERO INICIA UNA SESIÓN';return}
+  if(sessionClosed){$('status').textContent='SESIÓN FINALIZADA · USA INICIAR IA PARA UNA NUEVA';return}
+  autoRunning=true;
+  sessionPaused=false;
+  $('status').textContent='AUTO IA CONTINUADA · OP #'+(Math.floor(safeNum(session.settled,0))+1);
+  log('CONTINUAR IA · misma sesión · PNL '+(session.pnl>=0?'+':'')+'$'+session.pnl.toFixed(2)+' · próxima OP #'+(Math.floor(safeNum(session.settled,0))+1));
+  renderSession();
 };
 
 $('manualBuy').onclick=()=>{
