@@ -21,8 +21,8 @@ const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
 const TOURNAMENT_NAMES = ['base','recentFocus','contextFocus','robust'];
 const TOURNAMENT_MIN_SAMPLES = 2000;
-const TOURNAMENT_RECENT = 600;
-const TOURNAMENT_COOLDOWN_TICKS = 1800;
+const TOURNAMENT_RECENT = 900;
+const TOURNAMENT_COOLDOWN_TICKS = 3600;
 const MASTER_BRAIN_VERSION = 'NEXUS-MASTER-1';
 
 let ws = null;
@@ -782,12 +782,12 @@ function modelViews(){
     // Aprende siempre en shadow y solo vota cuando demuestra utilidad prequential.
     const pp=mem.shadow.performance.phase||{samples:0,matchEWMA:UNIFORM,logLossEWMA:Math.log(10)};
     const ready=
-      safeNum(phase.n,0)>=500 &&
-      safeNum(pp.samples,0)>=300 &&
-      safeNum(pp.matchEWMA,UNIFORM)<UNIFORM-.0018 &&
-      safeNum(pp.logLossEWMA,Math.log(10))<=Math.log(10)+.025;
-    const maturity=clamp((safeNum(pp.samples,0)-300)/1400,0,1);
-    const base=ready ? (.15+.30*maturity) : 0;
+      safeNum(phase.n,0)>=1800 &&
+      safeNum(pp.samples,0)>=1200 &&
+      safeNum(pp.matchEWMA,UNIFORM)<=.0955 &&
+      safeNum(pp.logLossEWMA,Math.log(10))<=Math.log(10)-.004;
+    const maturity=clamp((safeNum(pp.samples,0)-1200)/2600,0,1);
+    const base=ready ? (.08+.16*maturity) : 0;
     views.push({name:'phase',p:phase.p,support:phase.support,base,n:phase.n,phase:phase.phase,state:phase.state,ready});
   }
   return views;
@@ -1035,7 +1035,7 @@ function updateTournament(candidateSet,actual){
     const recentGain=tournamentRecentRate(current)-tournamentRecentRate(st);
     const brierOkay=st.brierEWMA<=current.brierEWMA+.0015;
     const logOkay=st.logLossEWMA<=current.logLossEWMA+.025;
-    if(recentGain>=.006 && brierOkay && logOkay && score<bestScore-.003){
+    if(recentGain>=.008 && brierOkay && logOkay && score<bestScore-.0045){
       bestName=name;bestScore=score;
     }
   }
