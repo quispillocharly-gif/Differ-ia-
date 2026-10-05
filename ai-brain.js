@@ -18,6 +18,9 @@ const MOVE_CENTERS=[-14,-6,-2,0,2,6,14];
 const MOVE_UNIFORM=1/MOVE_BUCKETS.length;
 const MOVE_BASE_LOGLOSS=Math.log(MOVE_BUCKETS.length);
 const MOVE_BASE_BRIER=6/49;
+const NORMAL_RISK_CEILING=.0975;
+const STRONG_RISK_CEILING=.0880;
+const AUTO_CONFIRM_TICKS=2;
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -33,6 +36,7 @@ let sessionStarted=false,sessionPaused=false,sessionClosed=false,sessionId='';
 let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
+let autoSignal={digit:null,count:0,lastTick:-1,lastRisk:UNIFORM};
 let sharedModel={accepted:0,wins:0,matches:0,matchRate:UNIFORM,byDigit:Array.from({length:10},()=>({n:0,matches:0})),contexts:{},updatedAt:0};
 let sharedSyncTimer=null,sharedLogged=false,cloudPredictionTimer=null,masterSyncTimer=null;
 let predictionQueue=[];
@@ -1325,13 +1329,14 @@ function predict(){
       0,1
     );
 
-    const riskCeiling=.1025-clusterGuard*.0095;
-    const minScore=.405+(driftActive?.035:0)+recoveryRatio*.025+streakInfo.qualityPenalty*.45+clusterGuard*.065;
-    const minConf=(driftActive?.23:.16)+recoveryRatio*.025+clusterGuard*.075;
-    const maxOod=.88-clusterGuard*.08;
+    const riskCeiling=NORMAL_RISK_CEILING-clusterGuard*.006;
+    const minScore=.455+(driftActive?.035:0)+recoveryRatio*.030+streakInfo.qualityPenalty*.45+clusterGuard*.055;
+    const minConf=(driftActive?.27:.22)+recoveryRatio*.030+clusterGuard*.065;
+    const maxOod=.82-clusterGuard*.07;
     const usable=
       score>=minScore &&
       effectiveRisk<=riskCeiling &&
+      edge>=UNIFORM-riskCeiling &&
       confidence>=minConf &&
       oodScore<maxOod;
 
@@ -1380,8 +1385,8 @@ function predict(){
     h,p,best,second,
     confidence:selected.confidence,
     edge:selected.edge,
-    requiredEdge:Math.max(0,UNIFORM-(.1025-clusterGuard*.0095)),
-    riskCeiling:.1025-clusterGuard*.0095,
+    requiredEdge:Math.max(0,UNIFORM-(NORMAL_RISK_CEILING-clusterGuard*.006)),
+    riskCeiling:NORMAL_RISK_CEILING-clusterGuard*.006,
     clusterGuard,
     recentMatches,
     health,
@@ -1544,11 +1549,58 @@ function canTradeMode(){
   return true;
 }
 
+function resetAutoSignal(){
+  autoSignal={digit:null,count:0,lastTick:-1,lastRisk:UNIFORM};
+}
+function confirmAutoEntry(decision){
+  if(!decision||decision.action!=='BUY'||!decision.best){
+    resetAutoSignal();
+    return {ready:false,count:0,needed:AUTO_CONFIRM_TICKS,strong:false};
+  }
+
+  const risk=safeNum(decision.best.risk,UNIFORM);
+  const conf=safeNum(decision.confidence,0);
+  const score=safeNum(decision.best.score,0);
+  const ood=safeNum(decision.oodScore,1);
+
+  // Solo una señal excepcionalmente clara puede entrar sin segunda confirmación.
+  const strong=
+    risk<=STRONG_RISK_CEILING &&
+    conf>=.38 &&
+    score>=.60 &&
+    ood<=.50;
+
+  if(strong){
+    autoSignal={digit:decision.best.d,count:AUTO_CONFIRM_TICKS,lastTick:liveTickCounter,lastRisk:risk};
+    return {ready:true,count:AUTO_CONFIRM_TICKS,needed:AUTO_CONFIRM_TICKS,strong:true};
+  }
+
+  const consecutive=
+    autoSignal.digit===decision.best.d &&
+    autoSignal.lastTick===liveTickCounter-1;
+
+  if(consecutive){
+    autoSignal.count=Math.min(AUTO_CONFIRM_TICKS,autoSignal.count+1);
+  }else{
+    autoSignal={digit:decision.best.d,count:1,lastTick:liveTickCounter,lastRisk:risk};
+  }
+  autoSignal.lastTick=liveTickCounter;
+  autoSignal.lastRisk=risk;
+
+  return {
+    ready:autoSignal.count>=AUTO_CONFIRM_TICKS,
+    count:autoSignal.count,
+    needed:AUTO_CONFIRM_TICKS,
+    strong:false
+  };
+}
+
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
   const sessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
   pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual};
+  if(!manual)resetAutoSignal();
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
@@ -1563,6 +1615,7 @@ function tradeError(e){
   log('ERROR DERIV · '+(e?.message||e));
   if(failed)window.nexusTradeEffect?.('error',failed);
   pendingTrade=null;
+  resetAutoSignal();
   $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
 }
 
@@ -1692,6 +1745,7 @@ function settleTrade(profit){
   window.nexusOutcomeSound?.(loss?'loss':'win');
   window.nexusTradeEffect?.('result',{...t,loss:!!loss,profit});
   pendingTrade=null;
+  resetAutoSignal();
   saveMemory(true);
   renderSession();
 
@@ -1749,9 +1803,23 @@ function processDigit(d,epoch,isLive,quote){
   renderDecision(decision);
 
   if(autoRunning && !pendingTrade && decision?.action==='BUY'){
-    enterTrade(decision,false);
+    const confirmation=confirmAutoEntry(decision);
+    decision.autoConfirmation=confirmation;
+    if(confirmation.ready){
+      enterTrade(decision,false);
+    }else{
+      $('status').textContent='CONFIRMANDO SEÑAL '+confirmation.count+'/'+confirmation.needed+' · D'+decision.best.d;
+      if($('decision')){
+        $('decision').textContent='CONFIRMANDO D'+decision.best.d+' · '+confirmation.count+'/'+confirmation.needed;
+        $('decision').className='decision stateWait';
+      }
+      if($('reason'))$('reason').textContent='La señal pasó los filtros, pero la IA exige confirmación consecutiva antes de comprar. No compra por una sola lectura aislada.';
+    }
   }else if(autoRunning && decision?.action==='PAUSE'){
+    resetAutoSignal();
     $('status').textContent='PAUSA IA · SIGUE APRENDIENDO';
+  }else if(decision?.action!=='BUY'){
+    resetAutoSignal();
   }
 }
 
@@ -1876,6 +1944,7 @@ $('start').onclick=()=>{
   nextStake=baseStake();
   pendingTrade=null;
   sessionId='S'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);
+  resetAutoSignal();
   sessionStarted=true;
   sessionPaused=false;
   sessionClosed=false;
@@ -1887,6 +1956,7 @@ $('start').onclick=()=>{
 
 $('stop').onclick=()=>{
   autoRunning=false;
+  resetAutoSignal();
   if(sessionStarted&&!sessionClosed)sessionPaused=true;
   $('status').textContent='SESIÓN PAUSADA · IA SIGUE APRENDIENDO';
   log('PAUSA MANUAL · sesión conservada · usa CONTINUAR IA para retomarla');
@@ -1896,6 +1966,7 @@ if($('continue'))$('continue').onclick=()=>{
   if(!canTradeMode())return;
   if(!sessionStarted){$('status').textContent='PRIMERO INICIA UNA SESIÓN';return}
   if(sessionClosed){$('status').textContent='SESIÓN FINALIZADA · USA INICIAR IA PARA UNA NUEVA';return}
+  resetAutoSignal();
   autoRunning=true;
   sessionPaused=false;
   $('status').textContent='AUTO IA CONTINUADA · OP #'+(Math.floor(safeNum(session.settled,0))+1);
