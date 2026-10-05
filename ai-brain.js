@@ -23,7 +23,8 @@ let marketPip=4;              // precisión del quote para medir microdesplazami
 let liveTickCounter=0;
 let autoRunning=false;
 let pendingTrade=null;
-let session={pnl:0,wins:0,losses:0,ops:0,streak:0,maxStreak:0};
+let session={pnl:0,wins:0,losses:0,ops:0,settled:0,streak:0,maxStreak:0};
+let sessionStarted=false,sessionPaused=false,sessionClosed=false,sessionId='';
 let lastDecision=null;
 let recentLogs=[];
 let nextStake=null;
@@ -35,7 +36,8 @@ let cloudMaster={
   version:'',revision:0,updatedAt:0,receivedAt:0,cloudTicks:0,signalEpoch:0,
   counterfactualTicks:0,digitCalibration:null,rankStats:null,errorContexts:[],
   streakStats:null,expertWeights:{},expertPerformance:{},prequential:null,drift:null,champion:'',
-  shadowMatchRate:UNIFORM,collaborativeAccepted:0,collaborativeMatchRate:UNIFORM
+  shadowMatchRate:UNIFORM,collaborativeAccepted:0,collaborativeMatchRate:UNIFORM,
+  sessionAnalytics:null
 };
 
 function blankP(){return Array(10).fill(UNIFORM)}
@@ -199,6 +201,38 @@ function log(s){
 function fmtPct(x){return Number.isFinite(x)?(x*100).toFixed(2)+'%':'—'}
 function clamp(x,a,b){return Math.max(a,Math.min(b,x))}
 function safeNum(x,d=0){x=Number(x);return Number.isFinite(x)?x:d}
+function normalizeSessionAnalytics(x){
+  const s=x&&typeof x==='object'?x:{};
+  const by=Array.from({length:50},(_,i)=>{
+    const v=Array.isArray(s.byPosition)?s.byPosition[i]:null;
+    return {
+      trades:Math.max(0,Math.floor(safeNum(v?.trades,0))),
+      matches:Math.max(0,Math.floor(safeNum(v?.matches,0))),
+      completions:Math.max(0,Math.floor(safeNum(v?.completions,0)))
+    };
+  });
+  return {
+    sessionsStarted:Math.max(0,Math.floor(safeNum(s.sessionsStarted,0))),
+    sessionsCompleted:Math.max(0,Math.floor(safeNum(s.sessionsCompleted,0))),
+    sessionsStopped:Math.max(0,Math.floor(safeNum(s.sessionsStopped,0))),
+    completionRate:clamp(safeNum(s.completionRate,0),0,1),
+    tradesObserved:Math.max(0,Math.floor(safeNum(s.tradesObserved,0))),
+    matches:Math.max(0,Math.floor(safeNum(s.matches,0))),
+    earlyMatches:Math.max(0,Math.floor(safeNum(s.earlyMatches,0))),
+    earlyMatchRate:clamp(safeNum(s.earlyMatchRate,0),0,1),
+    avgMatchPosition:Math.max(0,safeNum(s.avgMatchPosition,0)),
+    maxPosition:Math.max(0,Math.floor(safeNum(s.maxPosition,0))),
+    lastMatchPosition:Math.max(0,Math.floor(safeNum(s.lastMatchPosition,0))),
+    lastCompletionPosition:Math.max(0,Math.floor(safeNum(s.lastCompletionPosition,0))),
+    byPosition:by,
+    overflow:{
+      trades:Math.max(0,Math.floor(safeNum(s.overflow?.trades,0))),
+      matches:Math.max(0,Math.floor(safeNum(s.overflow?.matches,0))),
+      completions:Math.max(0,Math.floor(safeNum(s.overflow?.completions,0)))
+    },
+    updatedAt:Math.max(0,safeNum(s.updatedAt,0))
+  };
+}
 function normalizeCloudMaster(x){
   if(!x||typeof x!=='object')return null;
   const dc=Array.from({length:10},(_,d)=>{
@@ -264,7 +298,8 @@ function normalizeCloudMaster(x){
     champion:String(x.champion||''),
     shadowMatchRate:clamp(safeNum(x.shadowMatchRate,UNIFORM),0,1),
     collaborativeAccepted:Math.max(0,Math.floor(safeNum(x.collaborativeAccepted,0))),
-    collaborativeMatchRate:clamp(safeNum(x.collaborativeMatchRate,UNIFORM),0,1)
+    collaborativeMatchRate:clamp(safeNum(x.collaborativeMatchRate,UNIFORM),0,1),
+    sessionAnalytics:normalizeSessionAnalytics(x.sessionAnalytics)
   };
 }
 function cloudMasterFresh(){
@@ -279,12 +314,21 @@ function brainPrequential(){
 }
 function renderMasterState(){
   const el=$('masterState');
-  if(!el)return;
+  const study=$('sessionStudyState');
   if(!cloudMasterFresh()){
-    el.textContent='LOCAL BACKUP';
+    if(el)el.textContent='LOCAL BACKUP';
+    if(study)study.textContent='ESPERANDO MASTER';
     return;
   }
-  el.textContent=(cloudMaster.version||'MASTER')+' · R'+cloudMaster.revision+' · '+cloudMaster.cloudTicks+'T';
+  if(el)el.textContent=(cloudMaster.version||'MASTER')+' · R'+cloudMaster.revision+' · '+cloudMaster.cloudTicks+'T';
+  if(study){
+    const s=cloudMaster.sessionAnalytics||{};
+    if(safeNum(s.matches,0)>0){
+      study.textContent='MATCH 1-2 '+Math.round(clamp(safeNum(s.earlyMatchRate,0),0,1)*100)+'% · PROM #'+safeNum(s.avgMatchPosition,0).toFixed(1);
+    }else{
+      study.textContent='REUNIENDO SESIONES';
+    }
+  }
 }
 
 function normalizeShared(x){
