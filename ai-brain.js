@@ -10,7 +10,7 @@ const UNIFORM=.10;
 const MAX_HIST=1200;
 const LOG_MAX=180;
 const CLOUD_URL='https://differ-ia-cloud-production.up.railway.app';
-const EXPERTS=['global','recent','ctx1','ctx2','ctx3','motion','collab','cloud'];
+const EXPERTS=['global','recent','ctx1','ctx2','ctx3','motion','phase','collab','cloud'];
 const BASELINE_LOGLOSS=Math.log(10);
 const BASELINE_BRIER=.09;
 
@@ -64,6 +64,7 @@ function freshMemory(){
     lastMarketEpoch:0,
     models,
     motionModels:{1:{},2:{},3:{}},
+    phaseModels:{1:{},2:{},3:{}},
     globalP:blankP(),
     globalN:0,
     modelLoss:{},
@@ -102,6 +103,8 @@ function normalizeMemory(x){
   });
   m.motionModels=m.motionModels&&typeof m.motionModels==='object'?m.motionModels:base.motionModels;
   HORIZONS.forEach(h=>{m.motionModels[h]=m.motionModels[h]&&typeof m.motionModels[h]==='object'?m.motionModels[h]:{}});
+  m.phaseModels=m.phaseModels&&typeof m.phaseModels==='object'?m.phaseModels:base.phaseModels;
+  HORIZONS.forEach(h=>{m.phaseModels[h]=m.phaseModels[h]&&typeof m.phaseModels[h]==='object'?m.phaseModels[h]:{}});
   m.globalP=Array.isArray(m.globalP)&&m.globalP.length===10?m.globalP:blankP();
   m.recentTrades=Array.isArray(m.recentTrades)?m.recentTrades.slice(-60):[];
   m.recentPicks=Array.isArray(m.recentPicks)?m.recentPicks.slice(-30):[];
@@ -250,7 +253,7 @@ function normalizeCloudMaster(x){
     ss[k]={n:Math.max(0,Math.floor(safeNum(s.n,0))),matches:Math.max(0,Math.floor(safeNum(s.matches,0)))};
   });
   const ew={};
-  ['global','recent','ctx1','ctx2','ctx3','motion','collab'].forEach(name=>{
+  ['global','recent','ctx1','ctx2','ctx3','motion','phase','collab'].forEach(name=>{
     if(Number.isFinite(Number(x.expertWeights?.[name])))ew[name]=clamp(Number(x.expertWeights[name]),.12,5);
   });
   return {
@@ -508,6 +511,90 @@ function motionDistribution(h){
   };
 }
 
+function marketPhaseFromMotion(s){
+  if(!s)return 'UNKNOWN';
+  const dir=s.direction,micro=s.microDir,turn=s.turn;
+  const v=Math.abs(safeNum(s.velocity,0));
+  const a=safeNum(s.acceleration,0);
+
+  if(turn==='TURN'&&micro==='UP')return 'TURN_UP';
+  if(turn==='TURN'&&micro==='DOWN')return 'TURN_DOWN';
+  if(dir==='FLAT'||(v<.28&&Math.abs(safeNum(s.trendUnits,0))<=1))return 'RANGE';
+
+  if(dir==='UP'&&micro==='DOWN')return 'PULLBACK_DOWN';
+  if(dir==='DOWN'&&micro==='UP')return 'PULLBACK_UP';
+
+  if(dir==='UP'&&a<-.20)return 'EXHAUST_UP';
+  if(dir==='DOWN'&&a>.20)return 'EXHAUST_DOWN';
+
+  if(dir==='UP'&&(s.strength==='STRONG'||a>.35||s.trendBand==='UPFAST'))return 'IMPULSE_UP';
+  if(dir==='DOWN'&&(s.strength==='STRONG'||a<-.35||s.trendBand==='DOWNFAST'))return 'IMPULSE_DOWN';
+
+  if(dir==='UP')return 'CONTINUE_UP';
+  if(dir==='DOWN')return 'CONTINUE_DOWN';
+  return 'RANGE';
+}
+function ensurePhaseNode(h,key){
+  const bucket=mem.phaseModels[h];
+  if(!bucket[key])bucket[key]={p:blankP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function learnPhase(targetDigit,sourceHist){
+  for(const h of HORIZONS){
+    const signalIndex=sourceHist.length-h;
+    if(signalIndex<0)continue;
+    const snap=motionHist[signalIndex];
+    if(!snap)continue;
+    const phase=marketPhaseFromMotion(snap);
+    if(phase==='UNKNOWN')continue;
+    const lastDigit=sourceHist[signalIndex];
+    const keys=[
+      {key:'P:'+phase+'|V'+snap.volatility,base:.034},
+      {key:'PD:'+phase+'|V'+snap.volatility+'>D'+lastDigit,base:.042},
+      {key:'PF:'+phase+'|F'+snap.microForce+'|T'+snap.trendBand,base:.040}
+    ];
+    keys.forEach(entry=>{
+      const node=ensurePhaseNode(h,entry.key);
+      const alpha=entry.base*(brainDriftActive()?1.18:1);
+      updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/1000)),.010,.058));
+      node.n++;
+      node.last=mem.tickCount;
+    });
+  }
+}
+function phaseDistribution(h){
+  const snap=motionSnapshot();
+  if(!snap||!hist.length)return null;
+  const phase=marketPhaseFromMotion(snap);
+  if(phase==='UNKNOWN')return null;
+  const lastDigit=hist[hist.length-1];
+  const keys=[
+    {key:'P:'+phase+'|V'+snap.volatility,need:55,base:.72},
+    {key:'PD:'+phase+'|V'+snap.volatility+'>D'+lastDigit,need:34,base:1.05},
+    {key:'PF:'+phase+'|F'+snap.microForce+'|T'+snap.trendBand,need:38,base:.92}
+  ];
+  const num=Array(10).fill(0),den=Array(10).fill(0);
+  let evidence=0,totalN=0;
+  keys.forEach(entry=>{
+    const node=mem.phaseModels[h]?.[entry.key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/entry.need);
+    const w=entry.base*support;
+    if(w<=.01)return;
+    for(let d=0;d<10;d++){num[d]+=safeNum(node.p[d],UNIFORM)*w;den[d]+=w}
+    evidence+=support;
+    totalN+=safeNum(node.n,0);
+  });
+  if(totalN<1)return null;
+  return {
+    p:normalizeDist(num.map((x,d)=>x/(den[d]||1))),
+    support:clamp(evidence/keys.length,0,1),
+    n:totalN,
+    phase,
+    state:snap
+  };
+}
+
 // Aprende P(dígito futuro | contexto actual) para horizontes 1, 2 y 3 ticks.
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
@@ -532,6 +619,7 @@ function learnDigit(targetDigit,sourceHist){
     }
   }
   learnMotion(targetDigit,sourceHist);
+  learnPhase(targetDigit,sourceHist);
   mem.tickCount++;
 }
 
@@ -549,6 +637,15 @@ function pruneModels(aggressive=false){
     const bucket=mem.motionModels[h]||{};
     const keys=Object.keys(bucket);
     const limit=aggressive?950:1900;
+    if(keys.length>limit){
+      keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
+      keys.slice(limit).forEach(k=>delete bucket[k]);
+    }
+  });
+  HORIZONS.forEach(h=>{
+    const bucket=mem.phaseModels[h]||{};
+    const keys=Object.keys(bucket);
+    const limit=aggressive?700:1500;
     if(keys.length>limit){
       keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
       keys.slice(limit).forEach(k=>delete bucket[k]);
@@ -574,6 +671,7 @@ function expertWeight(name){
     else if(name==='ctx1')w*=1.15;
     else if(name==='ctx3')w*=.82;
     else if(name==='global')w*=.78;
+    else if(name==='phase')w*=1.10;
     else if(name==='collab')w*=.92;
   }
   return clamp(w,.25,3.2);
@@ -753,6 +851,9 @@ function schedulePrediction(decision,counter){
       if(decision.motionEval && !xs.some(v=>v.name==='motion')){
         xs.push({name:'motion',p:Array.isArray(decision.motionEval.p)?decision.motionEval.p.slice():blankP()});
       }
+      if(decision.phaseEval && !xs.some(v=>v.name==='phase')){
+        xs.push({name:'phase',p:Array.isArray(decision.phaseEval.p)?decision.phaseEval.p.slice():blankP()});
+      }
       return xs;
     })()
   });
@@ -810,6 +911,25 @@ function predict(){
     if(mw>.01){
       for(let d=0;d<10;d++){dist[d]+=motion.p[d]*mw;denom[d]+=mw}
       modelViews.push({name:'motion',p:motion.p.slice(),w:mw,n:motion.n,state:motion.state});
+    }
+  }
+
+  // Estructura de mercado: impulso / agotamiento / retroceso / giro / continuación / rango.
+  const phase=phaseDistribution(h);
+  const localPhasePerf=mem.expertPerf?.phase||{samples:0,skillEWMA:0,weight:1};
+  const masterPhasePerf=cloudMasterFresh()?cloudMaster.expertPerformance?.phase:null;
+  const phaseMature=!!phase &&
+    safeNum(phase.n,0)>=220 &&
+    (masterPhasePerf
+      ?(safeNum(masterPhasePerf.samples,0)>=300 && safeNum(masterPhasePerf.matchEWMA,UNIFORM)<UNIFORM-.001)
+      :(safeNum(localPhasePerf.samples,0)>=180 && safeNum(localPhasePerf.skillEWMA,0)>.006));
+  if(phaseMature){
+    const phaseSamples=masterPhasePerf?safeNum(masterPhasePerf.samples,0):safeNum(localPhasePerf.samples,0);
+    const maturity=clamp((phaseSamples-180)/700,0,1);
+    const pw=(.09+.19*maturity)*phase.support*expertWeight('phase');
+    if(pw>.01){
+      for(let d=0;d<10;d++){dist[d]+=phase.p[d]*pw;denom[d]+=pw}
+      modelViews.push({name:'phase',p:phase.p.slice(),w:pw,n:phase.n,phase:phase.phase,state:phase.state});
     }
   }
 
@@ -978,6 +1098,10 @@ function predict(){
     motionSupport:motion?.support||0,
     motionMature,
     motionEval:motion?{p:motion.p.slice()}:null,
+    phase:phase?.phase||marketPhaseFromMotion(motion?.state||motionSnapshot()),
+    phaseSupport:phase?.support||0,
+    phaseMature,
+    phaseEval:phase?{p:phase.p.slice()}:null,
     streakInfo,
     candidates,
     usableCount,
@@ -1010,6 +1134,16 @@ function renderDecision(d){
   if($('motionState')){
     const m=d.motion;
     $('motionState').textContent=!m?'APRENDIENDO':(m.microDir==='UP'?'↑':m.microDir==='DOWN'?'↓':'↔')+' '+m.microForce+' · '+(m.lastMoveUnits>0?'+':'')+m.lastMoveUnits+'U'+(d.motionMature?' · ACTIVO':' · APRENDE');
+  }
+  if($('phaseState')){
+    const labels={
+      IMPULSE_UP:'IMPULSO ↑',IMPULSE_DOWN:'IMPULSO ↓',
+      EXHAUST_UP:'AGOTAMIENTO ↑',EXHAUST_DOWN:'AGOTAMIENTO ↓',
+      PULLBACK_UP:'RETROCESO ↑',PULLBACK_DOWN:'RETROCESO ↓',
+      CONTINUE_UP:'CONTINÚA ↑',CONTINUE_DOWN:'CONTINÚA ↓',
+      TURN_UP:'GIRO ↑',TURN_DOWN:'GIRO ↓',RANGE:'RANGO',UNKNOWN:'APRENDIENDO'
+    };
+    $('phaseState').textContent=(labels[d.phase]||d.phase||'APRENDIENDO')+(d.phaseMature?' · ACTIVO':' · APRENDE');
   }
   $('meter').style.width=(d.confidence*100).toFixed(0)+'%';
   if(d.action==='BUY'){
@@ -1315,6 +1449,7 @@ async function syncFromCloud(){
       mem.globalN=cloud.globalN;
       mem.modelLoss=cloud.modelLoss;
       if(data.memory.motionModels)mem.motionModels=cloud.motionModels;
+      if(data.memory.phaseModels)mem.phaseModels=cloud.phaseModels;
       mem.tickCount=cloudTicks;
       mem.createdAt=Math.min(safeNum(mem.createdAt,Date.now()),safeNum(cloud.createdAt,Date.now()));
       mem.updatedAt=Math.max(safeNum(mem.updatedAt,0),safeNum(cloud.updatedAt,0));
