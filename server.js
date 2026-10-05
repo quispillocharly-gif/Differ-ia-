@@ -15,7 +15,7 @@ const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
 const VERSION = 1;
-const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','collab'];
+const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','ctx3','motion','phase','collab'];
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
@@ -192,6 +192,7 @@ function freshMemory(){
     tickCount: 0,
     models,
     motionModels:{1:{},2:{},3:{}},
+    phaseModels:{1:{},2:{},3:{}},
     globalP: blankP(),
     globalN: 0,
     modelLoss: {},
@@ -218,6 +219,8 @@ function normalizeMemory(x){
   });
   m.motionModels=m.motionModels&&typeof m.motionModels==='object'?m.motionModels:base.motionModels;
   HORIZONS.forEach(h=>{m.motionModels[h]=m.motionModels[h]&&typeof m.motionModels[h]==='object'?m.motionModels[h]:{}});
+  m.phaseModels=m.phaseModels&&typeof m.phaseModels==='object'?m.phaseModels:base.phaseModels;
+  HORIZONS.forEach(h=>{m.phaseModels[h]=m.phaseModels[h]&&typeof m.phaseModels[h]==='object'?m.phaseModels[h]:{}});
 
   m.globalP = Array.isArray(m.globalP) && m.globalP.length===10 ? normalizeDist(m.globalP) : blankP();
   m.modelLoss = m.modelLoss || {};
@@ -542,6 +545,93 @@ function motionDist(){
   return {p:normalizeDist(num.map((x,d)=>x/(den[d]||1))),support:clamp(evidence/keys.length,0,1),n:totalN,state:snap};
 }
 
+function marketPhaseFromMotion(s){
+  if(!s)return 'UNKNOWN';
+  const dir=s.direction, micro=s.microDir, turn=s.turn;
+  const v=Math.abs(safeNum(s.velocity,0));
+  const a=safeNum(s.acceleration,0);
+
+  if(turn==='TURN' && micro==='UP')return 'TURN_UP';
+  if(turn==='TURN' && micro==='DOWN')return 'TURN_DOWN';
+  if(dir==='FLAT'||(v<.28&&Math.abs(safeNum(s.trendUnits,0))<=1))return 'RANGE';
+
+  if(dir==='UP' && micro==='DOWN')return 'PULLBACK_DOWN';
+  if(dir==='DOWN' && micro==='UP')return 'PULLBACK_UP';
+
+  if(dir==='UP' && a<-.20)return 'EXHAUST_UP';
+  if(dir==='DOWN' && a>.20)return 'EXHAUST_DOWN';
+
+  if(dir==='UP' && (s.strength==='STRONG'||a>.35||s.trendBand==='UPFAST'))return 'IMPULSE_UP';
+  if(dir==='DOWN' && (s.strength==='STRONG'||a<-.35||s.trendBand==='DOWNFAST'))return 'IMPULSE_DOWN';
+
+  if(dir==='UP')return 'CONTINUE_UP';
+  if(dir==='DOWN')return 'CONTINUE_DOWN';
+  return 'RANGE';
+}
+function phaseLabel(phase){
+  return String(phase||'UNKNOWN');
+}
+function ensurePhaseNode(h,key){
+  const bucket=mem.phaseModels[h];
+  if(!bucket[key])bucket[key]={p:blankP(),n:0,last:mem.tickCount};
+  return bucket[key];
+}
+function learnPhase(targetDigit,sourceHist){
+  for(const h of HORIZONS){
+    const signalIndex=sourceHist.length-h;
+    if(signalIndex<0)continue;
+    const snap=motionHist[signalIndex];
+    if(!snap)continue;
+    const phase=marketPhaseFromMotion(snap);
+    if(phase==='UNKNOWN')continue;
+    const lastDigit=sourceHist[signalIndex];
+    const keys=[
+      {key:'P:'+phase+'|V'+snap.volatility,base:.034},
+      {key:'PD:'+phase+'|V'+snap.volatility+'>D'+lastDigit,base:.042},
+      {key:'PF:'+phase+'|F'+snap.microForce+'|T'+snap.trendBand,base:.040}
+    ];
+    keys.forEach(entry=>{
+      const node=ensurePhaseNode(h,entry.key);
+      const alpha=entry.base*driftLearningBoost();
+      updateProb(node.p,targetDigit,clamp(alpha*(1-Math.min(.35,node.n/1000)),.010,.060));
+      node.n++;
+      node.last=mem.tickCount;
+    });
+  }
+}
+function phaseDist(){
+  const snap=motionSnapshot();
+  if(!snap||!hist.length)return null;
+  const phase=marketPhaseFromMotion(snap);
+  if(phase==='UNKNOWN')return null;
+  const lastDigit=hist[hist.length-1];
+  const keys=[
+    {key:'P:'+phase+'|V'+snap.volatility,need:55,base:.72},
+    {key:'PD:'+phase+'|V'+snap.volatility+'>D'+lastDigit,need:34,base:1.05},
+    {key:'PF:'+phase+'|F'+snap.microForce+'|T'+snap.trendBand,need:38,base:.92}
+  ];
+  const num=Array(10).fill(0),den=Array(10).fill(0);
+  let evidence=0,totalN=0;
+  keys.forEach(entry=>{
+    const node=mem.phaseModels[1]?.[entry.key];
+    if(!node)return;
+    const support=1-Math.exp(-safeNum(node.n,0)/entry.need);
+    const w=entry.base*support;
+    if(w<=.01)return;
+    for(let d=0;d<10;d++){num[d]+=safeNum(node.p[d],UNIFORM)*w;den[d]+=w}
+    evidence+=support;
+    totalN+=safeNum(node.n,0);
+  });
+  if(totalN<1)return null;
+  return {
+    p:normalizeDist(num.map((x,d)=>x/(den[d]||1))),
+    support:clamp(evidence/keys.length,0,1),
+    n:totalN,
+    phase,
+    state:snap
+  };
+}
+
 function learnDigit(targetDigit,sourceHist){
   if(sourceHist.length){
     updateProb(mem.globalP,targetDigit,.018*driftLearningBoost());
@@ -564,6 +654,7 @@ function learnDigit(targetDigit,sourceHist){
     }
   }
   learnMotion(targetDigit,sourceHist);
+  learnPhase(targetDigit,sourceHist);
   mem.tickCount++;
 }
 
@@ -583,6 +674,14 @@ function pruneModels(){
     if(keys.length>2200){
       keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
       keys.slice(2200).forEach(k=>delete bucket[k]);
+    }
+  });
+  HORIZONS.forEach(h=>{
+    const bucket=mem.phaseModels[h]||{};
+    const keys=Object.keys(bucket);
+    if(keys.length>1600){
+      keys.sort((a,b)=>(bucket[b].last||0)-(bucket[a].last||0));
+      keys.slice(1600).forEach(k=>delete bucket[k]);
     }
   });
 }
@@ -617,6 +716,7 @@ function expertWeight(name){
     else if(name==='ctx1') w*=1.10;
     else if(name==='ctx3') w*=.88;
     else if(name==='motion') w*=1.08;
+    else if(name==='phase') w*=1.10;
     else if(name==='collab') w*=.92;
   }
   return clamp(w,.10,6);
@@ -674,6 +774,21 @@ function modelViews(){
     const maturity=clamp((safeNum(mp.samples,0)-250)/1200,0,1);
     const base=ready ? (.16+.26*maturity) : 0;
     views.push({name:'motion',p:motion.p,support:motion.support,base,n:motion.n,state:motion.state,ready});
+  }
+
+  const phase=phaseDist();
+  if(phase){
+    // Nueva capa de estructura: impulso, agotamiento, retroceso, giro, continuación o rango.
+    // Aprende siempre en shadow y solo vota cuando demuestra utilidad prequential.
+    const pp=mem.shadow.performance.phase||{samples:0,matchEWMA:UNIFORM,logLossEWMA:Math.log(10)};
+    const ready=
+      safeNum(phase.n,0)>=500 &&
+      safeNum(pp.samples,0)>=300 &&
+      safeNum(pp.matchEWMA,UNIFORM)<UNIFORM-.0018 &&
+      safeNum(pp.logLossEWMA,Math.log(10))<=Math.log(10)+.025;
+    const maturity=clamp((safeNum(pp.samples,0)-300)/1400,0,1);
+    const base=ready ? (.15+.30*maturity) : 0;
+    views.push({name:'phase',p:phase.p,support:phase.support,base,n:phase.n,phase:phase.phase,state:phase.state,ready});
   }
   return views;
 }
@@ -985,6 +1100,7 @@ function ensemblePredict(){
     driftActive:mem.shadow.drift.active,
     champion:championName,
     motion:motionSnapshot(),
+    phase:marketPhaseFromMotion(motionSnapshot()),
     candidateSet,
     generatedAt:Date.now()
   };
@@ -1230,6 +1346,7 @@ function masterExpertWeights(){
     ctx2:w('ctx2'),
     ctx3:w('ctx3'),
     motion:w('motion'),
+    phase:w('phase'),
     collab:w('collab')
   };
 }
@@ -1303,6 +1420,7 @@ function browserMemory(){
     tickCount:mem.tickCount,
     models:mem.models,
     motionModels:mem.motionModels,
+    phaseModels:mem.phaseModels,
     globalP:mem.globalP,
     globalN:mem.globalN,
     modelLoss:mem.modelLoss,
