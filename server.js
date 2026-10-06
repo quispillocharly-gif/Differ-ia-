@@ -925,12 +925,15 @@ function riseFallOperationGate(action,h,probability){
     : .52;
   const samples=Math.max(a.n,hz.n,bin.n);
 
-  let minProbability=.56;
-  let learningMinProbability=.50;
+  // La IA no debe quedarse muda esperando una señal casi perfecta.
+  // El precio real del contrato seguirá siendo la verificación económica final.
+  let minProbability=.50;
+  let learningMinProbability=.40;
   if(samples>=30){
-    if(learnedRate<.49){minProbability=.62;learningMinProbability=.54}
-    else if(learnedRate<.515){minProbability=.60;learningMinProbability=.525}
-    else if(learnedRate<.535){minProbability=.58;learningMinProbability=.515}
+    if(learnedRate<.49){minProbability=.56;learningMinProbability=.45}
+    else if(learnedRate<.515){minProbability=.54;learningMinProbability=.435}
+    else if(learnedRate<.535){minProbability=.52;learningMinProbability=.42}
+    else if(learnedRate>=.56){minProbability=.48;learningMinProbability=.39}
   }
 
   // La preparación para operar NO se calcula con operaciones exploratorias.
@@ -968,7 +971,7 @@ function riseFallOperationGate(action,h,probability){
     operationalReady
   };
 }
-function recordRiseFallDemoOperation(b){
+function recordRiseFallOperation(b){
   const ops=riseFallMem.operationLearning||(riseFallMem.operationLearning=freshRiseFallOperationLearning());
   const id=typeof b.id==='string'&&/^[A-Za-z0-9:_-]{6,96}$/.test(b.id)?b.id:'';
   const action=b.action==='RISE'||b.action==='FALL'?b.action:'';
@@ -979,7 +982,7 @@ function recordRiseFallDemoOperation(b){
   const signalEpoch=Math.floor(safeNum(b.signalEpoch,0));
   const explorationDemo=b.explorationDemo===true||b.explorationDemo===1;
 
-  if(b.mode!=='demo'||!id||!action||!RF_HORIZONS.includes(h)||
+  if(!['demo','real'].includes(String(b.mode||'').toLowerCase())||!id||!action||!RF_HORIZONS.includes(h)||
      !Number.isFinite(probability)||probability<.45||probability>1||
      !Number.isFinite(profit)||Math.abs(profit)>100000||
      !Number.isFinite(breakEven)||breakEven<=0||breakEven>1||
@@ -1049,19 +1052,31 @@ function riseFallPredict(h=1){
   const down=p[0],flat=p[1],up=p[2];
   const direction=up>=down?'RISE':'FALL';
   const directionProbability=Math.max(up,down);
+  const nonFlat=Math.max(.0001,up+down);
+  const conditionalDirectionProbability=Math.max(up,down)/nonFlat;
   const gap=Math.abs(up-down);
+  const conditionalGap=gap/nonFlat;
   const operationGate=riseFallOperationGate(direction,h,directionProbability);
-  const minDirectionalProbability=Math.max(.56,safeNum(operationGate.minProbability,.56));
-  const learningMinProbability=Math.max(.50,safeNum(operationGate.learningMinProbability,.50));
-  let action='WAIT';
-  if(up>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='RISE';
-  else if(down>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='FALL';
+  const minDirectionalProbability=Math.max(.46,safeNum(operationGate.minProbability,.50));
+  const learningMinProbability=Math.max(.36,safeNum(operationGate.learningMinProbability,.40));
 
-  // DEMO training no necesita "aprobar" una señal antes de haber aprendido.
-  // Siempre produce una dirección de entrenamiento; los resultados del contrato
-  // son precisamente las etiquetas que luego permiten aprender a seleccionar.
+  // Candidato siempre disponible. "WAIT" queda reservado para cuando ni siquiera
+  // la lectura direccional supera un mínimo razonable.
   const learningAction=direction;
-  const learningSignalStrength=clamp(gap*(1-flat)*2.5,0,1);
+  const learningSignalStrength=clamp(
+    conditionalGap*.55 +
+    (1-flat)*.25 +
+    safeNum(own.support,0)*.20,
+    0,1
+  );
+
+  let action='WAIT';
+  const strictDirectionOk=conditionalDirectionProbability>=.535;
+  const strictGapOk=conditionalGap>=.035;
+  const strictFlatOk=flat<=.46;
+  if(directionProbability>=minDirectionalProbability&&strictDirectionOk&&strictGapOk&&strictFlatOk){
+    action=direction;
+  }
 
   const perf=riseFallMem.performance[h]||freshRiseFallPerf();
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
@@ -1083,6 +1098,8 @@ function riseFallPredict(h=1){
     learningSignalStrength,
     direction,
     directionProbability,
+    conditionalDirectionProbability,
+    nonFlatProbability:nonFlat,
     strictMinProbability:minDirectionalProbability,
     learningMinProbability,
     probabilities:{FALL:down,FLAT:flat,RISE:up},
@@ -3144,7 +3161,7 @@ app.get('/api/cloud/collaborative',(req,res)=>{
 });
 
 app.post('/api/rise-fall/experience',(req,res)=>{
-  const result=recordRiseFallDemoOperation(req.body||{});
+  const result=recordRiseFallOperation(req.body||{});
   if(!result.ok)return res.status(400).json(result);
   res.json(result);
 });
