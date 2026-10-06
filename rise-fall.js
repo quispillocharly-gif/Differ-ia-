@@ -25,7 +25,7 @@ let rfAuto=false;
 let rfPrediction=null;
 let rfLastEpoch=0;
 let rfConfirm={action:null,count:0,lastEpoch:0};
-const RF_BOOTSTRAP_OPS=30;
+const RF_BOOTSTRAP_OPS=120;
 let rfNextStake=1;
 let rfSession={pnl:0,wins:0,losses:0,ops:0};
 let pollTimer=null;
@@ -71,7 +71,7 @@ function render(){
 
   const arrow=p.direction==='RISE'?'↑':'↓';
   const learningDemo=!p.ready&&$('mode')?.value==='DEMO';
-  const visibleAction=learningDemo?(p.learningAction||p.action):p.action;
+  const visibleAction=learningDemo?(p.direction||p.learningAction||p.action):p.action;
   const action=visibleAction==='RISE'?'RISE ↑':visibleAction==='FALL'?'FALL ↓':'ESPERAR';
   setText('rfDecision',action);
   setText('rfProbability',pct(p.directionProbability));
@@ -245,11 +245,12 @@ function onRfMessage(ev){
     const breakEven=ask/payout;
     const learningDemo=rfAccountType==='demo'&&!!p.learningDemo;
     const bootstrapDemo=learningDemo&&!!p.bootstrapDemo;
-    const safetyMargin=learningDemo?.004:.025;
+    const safetyMargin=.025;
 
-    // En BOOTSTRAP DEMO todavía no existe experiencia suficiente para justificar
-    // un filtro de entrada. La operación se usa precisamente para generar esa experiencia.
-    if(!bootstrapDemo && p.probability<breakEven+safetyMargin){
+    // En DEMO TRAINING no usamos el break-even como filtro de selección:
+    // necesitamos observar contratos ganadores y perdedores para aprender.
+    // En modo validado/REAL sí se exige superar precio + margen.
+    if(!learningDemo && p.probability<breakEven+safetyMargin){
       p.resolve({bought:false,breakEven,required:breakEven+safetyMargin,learningDemo,bootstrapDemo});
       return;
     }
@@ -371,11 +372,16 @@ async function reportRfDemoExperience(t,profit){
 
 function settleRfTrade(profit,t){
   rfSession.pnl+=profit;
-  if(profit>0){
-    rfSession.wins++;
+  if(profit>0)rfSession.wins++;
+  else rfSession.losses++;
+
+  // Durante entrenamiento DEMO usamos stake fijo para que la IA aprenda la
+  // calidad de la señal sin mezclarla con una progresión de apuesta.
+  if(t?.learningDemo){
+    rfNextStake=stakeBase();
+  }else if(profit>0){
     rfNextStake=Math.max(stakeBase(),Number(t?.stake||stakeBase())+profit);
   }else{
-    rfSession.losses++;
     rfNextStake=stakeBase();
   }
   saveSession();
@@ -398,41 +404,40 @@ async function evaluateAuto(pred){
 
   const opCount=Math.max(0,Number(pred.operationLearning?.totalOperations||0));
   const demo=rfAccountType==='demo';
-  const learningDemo=!pred.ready&&demo;
-  const bootstrapDemo=learningDemo&&opCount<RF_BOOTSTRAP_OPS;
-  const developingDemo=learningDemo&&opCount>=RF_BOOTSTRAP_OPS&&opCount<100;
+  const trainingDemo=!pred.ready&&demo;
 
-  if(!pred.ready && !demo){
+  if(!pred.ready&&!demo){
     resetConfirmation();
-    setText('rfStatus','SHADOW · REAL BLOQUEADO · PRIMERO DEBE APRENDER EN DEMO');
+    setText('rfStatus','SHADOW · REAL BLOQUEADO · ENTRENAMIENTO DEMO NECESARIO');
     return;
   }
 
   const epoch=Number(pred.signalEpoch||0);
-  if(!epoch)return;
+  if(!epoch||epoch===rfConfirm.lastEpoch)return;
 
-  // PRIMERA ETAPA: todavía no sabe qué señales operativas sirven.
-  // En DEMO compra la dirección que el propio modelo considere más probable,
-  // sin umbral, sin confirmación y sin filtro de break-even.
-  if(bootstrapDemo){
+  // DEMO TRAINING: no filtros de entrada antes del aprendizaje.
+  // Se toma la dirección que el modelo considera más probable, una operación
+  // a la vez, stake base fijo, y el resultado se usa como nueva experiencia.
+  if(trainingDemo){
     const action=pred.direction==='FALL'?'FALL':'RISE';
-    resetConfirmation();
+    rfConfirm.lastEpoch=epoch;
     try{
       const out=await sendRfTrade({
         ...pred,
         action,
         learningDemo:true,
-        bootstrapDemo:true
+        bootstrapDemo:opCount<RF_BOOTSTRAP_OPS
       });
       if(out?.bought){
         setText(
           'rfStatus',
-          'BOOTSTRAP DEMO · '+action+
-          ' · OPS '+opCount+'/'+RF_BOOTSTRAP_OPS+
-          ' · APRENDIENDO DE CADA RESULTADO'
+          'DEMO TRAINING · '+action+
+          ' · P '+pct(pred.directionProbability)+
+          ' · OPS '+opCount+
+          ' · APRENDE AL CERRAR'
         );
       }else if(out?.busy){
-        setText('rfStatus','BOOTSTRAP DEMO · ESPERANDO CIERRE DE OPERACIÓN');
+        setText('rfStatus','DEMO TRAINING · ESPERANDO CIERRE DE OPERACIÓN');
       }
     }catch(e){
       setText('rfStatus','ERROR · '+(e?.message||e));
@@ -440,56 +445,33 @@ async function evaluateAuto(pred){
     return;
   }
 
-  const effectiveAction=learningDemo
-    ?(pred.learningAction||pred.action||'WAIT')
-    :(pred.action||'WAIT');
-
-  if(effectiveAction!=='RISE'&&effectiveAction!=='FALL'){
+  // Modelo ya validado: aquí sí selecciona y confirma antes de comprar.
+  const action=pred.action||'WAIT';
+  if(action!=='RISE'&&action!=='FALL'){
     resetConfirmation();
-    setText(
-      'rfStatus',
-      learningDemo
-        ?'DEMO APRENDIENDO · OPS '+opCount+' · BUSCANDO DIRECCIÓN ÚTIL'
-        :'ESPERANDO DIRECCIÓN VALIDADA'
-    );
+    setText('rfStatus','MODELO VALIDADO · ESPERANDO DIRECCIÓN CON VENTAJA');
     return;
   }
 
-  // SEGUNDA ETAPA: ya tiene algo de experiencia y comienza a seleccionar.
-  // Entre 30 y 99 operaciones basta una lectura; después usa confirmación normal.
-  const needed=developingDemo?1:2;
-  if(rfConfirm.action===effectiveAction && rfConfirm.lastEpoch===epoch-1){
+  if(rfConfirm.action===action&&rfConfirm.lastEpoch===epoch-1){
     rfConfirm.count++;
   }else{
-    rfConfirm={action:effectiveAction,count:1,lastEpoch:epoch};
+    rfConfirm={action,count:1,lastEpoch:epoch};
   }
   rfConfirm.lastEpoch=epoch;
 
-  if(rfConfirm.count<needed){
-    setText('rfStatus','CONFIRMANDO '+effectiveAction+' · '+rfConfirm.count+'/'+needed);
+  if(rfConfirm.count<2){
+    setText('rfStatus','CONFIRMANDO '+action+' · '+rfConfirm.count+'/2');
     return;
   }
 
   resetConfirmation();
   try{
-    const out=await sendRfTrade({
-      ...pred,
-      action:effectiveAction,
-      learningDemo,
-      bootstrapDemo:false
-    });
+    const out=await sendRfTrade({...pred,action,learningDemo:false,bootstrapDemo:false});
     if(out?.bought){
-      setText(
-        'rfStatus',
-        (learningDemo?'DEMO LEARNING · ':'')+
-        'ENVIANDO '+effectiveAction+' · P '+pct(pred.directionProbability)+' · OPS '+opCount
-      );
+      setText('rfStatus','ENVIANDO '+action+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
     }else if(Number.isFinite(out?.breakEven)){
-      setText(
-        'rfStatus',
-        'SIN COMPRA · P '+pct(pred.directionProbability)+
-        ' < REQUERIDO '+pct(out.required||out.breakEven)
-      );
+      setText('rfStatus','SIN COMPRA · P '+pct(pred.directionProbability)+' < REQUERIDO '+pct(out.required||out.breakEven));
     }
   }catch(e){
     setText('rfStatus','ERROR · '+(e?.message||e));
@@ -537,9 +519,8 @@ async function startRf(){
     const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
     setText(
       'rfStatus',
-      ops<RF_BOOTSTRAP_OPS
-        ?'BOOTSTRAP DEMO · OPERARÁ PARA APRENDER · OPS '+ops+'/'+RF_BOOTSTRAP_OPS
-        :'SHADOW + DEMO · APRENDE DEL MERCADO Y DE CADA OPERACIÓN'
+      'DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+
+      (ops<RF_BOOTSTRAP_OPS?'/'+RF_BOOTSTRAP_OPS:'')
     );
   }else{
     setText('rfStatus','SHADOW ACTIVO · REAL BLOQUEADO HASTA VALIDACIÓN');
