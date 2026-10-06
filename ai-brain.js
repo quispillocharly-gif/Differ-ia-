@@ -23,10 +23,10 @@ const RANGE_BASE_LOGLOSS=Math.log(3);
 const RANGE_BASE_BRIER=2/9;
 const NORMAL_RISK_CEILING=.0975;
 const STRONG_RISK_CEILING=.0880;
-const AUTO_CONFIRM_TICKS=2;
+const AUTO_CONFIRM_TICKS=1;
 const ADAPTIVE_WAIT_START=8;
 const ADAPTIVE_WAIT_FULL=28;
-const DIFFER_POLICY_VERSION='DIFFER-RISK-FIRST-V1';
+const DIFFER_POLICY_VERSION='DIFFER-RANK-EVERY-TICK-V2';
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -1758,9 +1758,7 @@ function predict(){
       NORMAL_RISK_CEILING
     );
 
-    // Umbrales fijos: la IA no baja su estándar solo porque haya esperado.
-    // Queda un punto medio entre el modo excesivamente estricto y el modo
-    // adaptativo que estaba aceptando entradas demasiado pronto.
+    // These are reference targets, not stacked hard filters.
     const minScore=
       .462+
       (driftActive?.035:0)+
@@ -1798,30 +1796,44 @@ function predict(){
 
     const expertVeto=committee.models>=4 && committee.dangerShare>.36;
 
-    const usable=
-      score>=minScore &&
-      effectiveRisk<=riskCeiling &&
-      edge>=UNIFORM-riskCeiling &&
-      confidence>=minConf &&
-      oodScore<maxOod &&
-      committee.consensus>=minConsensus &&
-      committee.robustRisk<=robustCeiling &&
-      !expertVeto &&
-      !movementConflict &&
-      !cloudConflict
+    // Secondary evidence now changes the ranking instead of independently
+    // killing the signal. This avoids waiting minutes for nine simultaneous
+    // boolean conditions to be true.
+    const softPenalty=
+      Math.max(0,effectiveRisk-riskCeiling)*.70+
+      Math.max(0,minScore-score)*.018+
+      Math.max(0,minConf-confidence)*.014+
+      Math.max(0,minConsensus-committee.consensus)*.012+
+      Math.max(0,committee.robustRisk-robustCeiling)*.42+
+      Math.max(0,oodScore-maxOod)*.012+
+      Math.min(.010,committee.dangerShare*.010)+
+      (expertVeto?.006:0)+
+      (movementConflict?.004:0)+
+      (cloudConflict?.004:0);
+
+    const selectionCost=clamp(effectiveRisk+softPenalty,.005,.30);
+
+    // Only truly extreme states block this candidate.
+    const criticalUnsafe=
+      selectionCost>.155 ||
+      committee.robustRisk>.175 ||
+      oodScore>.985 ||
+      confidence<.035;
+
+    const usable=!criticalUnsafe;
 
     return {
       ...x,
       disagreement,confidence,oodScore,qualityScore,rankAdjustment,
       effectiveRisk,edge,score,minScore,minConf,usable,
       committee,minConsensus,robustCeiling,movementRisk,cloudRisk,
-      movementConflict,cloudConflict,expertVeto
+      movementConflict,cloudConflict,expertVeto,
+      softPenalty,selectionCost,criticalUnsafe
     };
-  // Para DIFFER el objetivo directo es NO coincidir con el próximo dígito.
-  // Por eso, entre señales que ya pasaron los filtros, manda el menor riesgo
-  // calibrado de MATCH. Score/consenso solo desempatan: nunca justifican
-  // escoger un candidato con mayor riesgo estimado.
+  // Direct objective: minimize calibrated MATCH risk. Secondary evidence
+  // adds a small cost, but no longer creates a wall of independent filters.
   }).sort((a,b)=>
+    a.selectionCost-b.selectionCost ||
     a.effectiveRisk-b.effectiveRisk ||
     safeNum(a.committee?.robustRisk,.30)-safeNum(b.committee?.robustRisk,.30) ||
     b.score-a.score
@@ -1831,23 +1843,19 @@ function predict(){
   const usableCount=candidates.filter(x=>x.usable).length;
   const second=candidates.find(x=>x.d!==selected.d)||candidates[1]||selected;
 
-  // Solo PAUSA con deterioro severo; el resto se resuelve buscando entre los 10.
   let action='WAIT';
-  let reason=`Revisé los 10 candidatos; ninguno alcanzó todavía el mínimo adaptable. Mejor actual D${selected.d} · score ${(selected.score*100).toFixed(0)}/100 · análisis ${autoWaitTicks}T.`;
+  let reason=`Ranking continuo 10/10 · mejor actual D${selected.d} · riesgo CAL ${fmtPct(selected.effectiveRisk)} · costo selección ${fmtPct(selected.selectionCost)}.`;
   const severeInstability=(preqSamples>=80&&health<.20)||(preqSamples>=80&&brier>BASELINE_BRIER+.035);
+
   if(severeInstability){
     action='PAUSE';
-    reason='PAUSA IA: deterioro severo del modelo. Sigo aprendiendo los 10 candidatos sin comprar.';
-  }else if(usableCount>0){
+    reason='PAUSA IA: deterioro severo del modelo. Sigo aprendiendo sin comprar.';
+  }else if(selected&&!selected.criticalUnsafe){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
-    reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo CAL ${fmtPct(selected.effectiveRisk)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
-  }else if(clusterGuard>0){
-    reason=`CAUTELA ANTI-MATCH: detecté ${recentMatches} MATCH en las últimas ${recentSettled.length} operaciones; sigo analizando pero exijo más calidad antes de comprar.`;
-  }else if(recoveryRatio>0){
-    reason=`Revisé los 10 candidatos durante recuperación; D${selected.d} quedó más cerca con score ${(selected.score*100).toFixed(0)}/100.`;
-  }else if(streakInfo.active){
-    reason=`Revisé los 10 candidatos con racha de ${streakInfo.streak} wins; ninguno superó todavía el score mínimo adaptable.`;
+    reason=`Compra D${selected.d}: menor costo de riesgo actual entre 10 · riesgo CAL ${fmtPct(selected.effectiveRisk)} · penalización ${fmtPct(selected.softPenalty)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)}${skipped?'; descarté '+skipped+' por peor evidencia combinada':''}.`;
+  }else{
+    reason=`ESPERA: incluso el mejor candidato D${selected.d} está en estado extremo · riesgo ${fmtPct(selected.effectiveRisk)} · robusto ${fmtPct(selected.committee.robustRisk)} · OOD ${Math.round(selected.oodScore*100)}%.`;
   }
 
   // Compatibilidad con el resto del bot: best es ahora el candidato ELEGIDO por búsqueda completa.
@@ -1858,7 +1866,9 @@ function predict(){
     adjusted:selected.effectiveRisk,
     errorPenalty:selected.errorPenalty,
     score:selected.score,
-    rawRank:selected.rawRank
+    rawRank:selected.rawRank,
+    selectionCost:selected.selectionCost,
+    softPenalty:selected.softPenalty
   };
 
   return {
@@ -2086,53 +2096,37 @@ function resetAutoSignal(){
 function confirmAutoEntry(decision){
   if(!decision||decision.action!=='BUY'||!decision.best){
     resetAutoSignal();
-    return {ready:false,count:0,needed:AUTO_CONFIRM_TICKS,strong:false,stable:false};
+    return {ready:false,count:0,needed:1,strong:false,stable:false};
   }
 
+  // DIFFER no necesita repetir el mismo dígito en dos ticks.
+  // El ranking ya combina riesgo calibrado, consenso, contexto, OOD,
+  // expertos, cloud y penalizaciones. Si el candidato pasa la decisión
+  // del tick actual, se puede ejecutar inmediatamente.
   const risk=safeNum(decision.best.risk,UNIFORM);
   const conf=safeNum(decision.confidence,0);
-  const score=safeNum(decision.best.score,0);
-  const ood=safeNum(decision.oodScore,1);
   const consensus=safeNum(decision.entryCommittee?.consensus,0);
   const robustRisk=safeNum(decision.entryCommittee?.robustRisk,.30);
-  const needed=AUTO_CONFIRM_TICKS;
 
-  // Vuelve a exigir el MISMO candidato en dos ticks consecutivos.
-  // No existe bypass de 1 tick, ni siquiera para una señal fuerte.
-  const sameCandidate=
-    autoSignal.digit===decision.best.d &&
-    autoSignal.lastTick===liveTickCounter-1;
-
-  let stable=false;
-  if(sameCandidate){
-    const riskStable=risk<=safeNum(autoSignal.lastRisk,UNIFORM)+.0008;
-    const scoreStable=score>=safeNum(autoSignal.lastScore,0)-.025;
-    const confStable=conf>=safeNum(autoSignal.lastConfidence,0)-.035;
-    const oodStable=ood<=safeNum(autoSignal.lastOod,1)+.040;
-    const consensusStable=consensus>=safeNum(autoSignal.lastConsensus,0)-.050;
-    const robustStable=robustRisk<=safeNum(autoSignal.lastRobustRisk,.30)+.0035;
-    stable=riskStable&&scoreStable&&confStable&&oodStable&&consensusStable&&robustStable;
-    autoSignal.count=stable?Math.min(needed,autoSignal.count+1):1;
-  }else{
-    autoSignal.count=1;
-  }
-
-  autoSignal.digit=decision.best.d;
-  autoSignal.lastTick=liveTickCounter;
-  autoSignal.lastRisk=risk;
-  autoSignal.lastScore=score;
-  autoSignal.lastConfidence=conf;
-  autoSignal.lastOod=ood;
-  autoSignal.lastConsensus=consensus;
-  autoSignal.lastRobustRisk=robustRisk;
-  autoSignal.needed=needed;
+  autoSignal={
+    digit:decision.best.d,
+    count:1,
+    lastTick:liveTickCounter,
+    lastRisk:risk,
+    lastScore:safeNum(decision.best.score,0),
+    lastConfidence:conf,
+    lastOod:safeNum(decision.oodScore,1),
+    lastConsensus:consensus,
+    lastRobustRisk:robustRisk,
+    needed:1
+  };
 
   return {
-    ready:autoSignal.count>=needed,
-    count:autoSignal.count,
-    needed,
-    strong:false,
-    stable:sameCandidate?stable:true,
+    ready:true,
+    count:1,
+    needed:1,
+    strong:true,
+    stable:true,
     consensus,
     robustRisk
   };
@@ -2365,7 +2359,7 @@ function processDigit(d,epoch,isLive,quote){
         $('decision').className='decision stateWait';
       }
       if($('reason'))$('reason').textContent=
-        'La señal pasó el primer filtro. La IA exige el mismo candidato dos ticks seguidos y confirma que riesgo, contexto y consenso no empeoren · comité '+
+        'La señal actual está lista; no se exige repetir el mismo dígito. Comité '+
         Math.round(safeNum(confirmation.consensus,0)*100)+'% · robusto '+fmtPct(confirmation.robustRisk)+'.';
     }
   }else if(autoRunning && decision?.action==='PAUSE'){
