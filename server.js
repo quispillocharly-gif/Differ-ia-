@@ -170,6 +170,46 @@ function freshSessionAnalytics(){
     updatedAt:0
   };
 }
+function freshPolicyAnalytics(){
+  return {policies:{},updatedAt:0};
+}
+function normalizePolicyAnalytics(raw){
+  const out=freshPolicyAnalytics();
+  if(!raw||typeof raw!=='object')return out;
+  const entries=Object.entries(raw.policies&&typeof raw.policies==='object'?raw.policies:{})
+    .slice(-16);
+  for(const [name,x] of entries){
+    if(!/^[A-Za-z0-9_-]{3,48}$/.test(name))continue;
+    out.policies[name]={
+      trades:Math.max(0,Math.floor(safeNum(x?.trades,0))),
+      matches:Math.max(0,Math.floor(safeNum(x?.matches,0))),
+      earlyTrades:Math.max(0,Math.floor(safeNum(x?.earlyTrades,0))),
+      earlyMatches:Math.max(0,Math.floor(safeNum(x?.earlyMatches,0))),
+      recent:Array.isArray(x?.recent)?x.recent.map(v=>v?1:0).slice(-300):[],
+      lastAt:Math.max(0,safeNum(x?.lastAt,0))
+    };
+  }
+  out.updatedAt=Math.max(0,safeNum(raw.updatedAt,0));
+  return out;
+}
+function updatePolicyAnalytics(name,loss,sessionOp){
+  if(!/^[A-Za-z0-9_-]{3,48}$/.test(String(name||'')))return;
+  const master=mem.master||(mem.master=freshMasterBrain());
+  master.policyAnalytics=master.policyAnalytics||freshPolicyAnalytics();
+  const pa=master.policyAnalytics;
+  const st=pa.policies[name]||(pa.policies[name]={trades:0,matches:0,earlyTrades:0,earlyMatches:0,recent:[],lastAt:0});
+  st.trades++;
+  if(loss)st.matches++;
+  if(Number.isInteger(sessionOp)&&sessionOp<=7){
+    st.earlyTrades++;
+    if(loss)st.earlyMatches++;
+  }
+  st.recent.push(loss?1:0);
+  if(st.recent.length>300)st.recent.shift();
+  st.lastAt=Date.now();
+  pa.updatedAt=st.lastAt;
+}
+
 function freshMasterBrain(){
   return {
     version:MASTER_BRAIN_VERSION,
@@ -180,7 +220,8 @@ function freshMasterBrain(){
     rankStats:Array.from({length:10},()=>({n:0,matches:0})),
     errorContexts:[],
     streakStats:freshStreakStats(),
-    sessionAnalytics:freshSessionAnalytics()
+    sessionAnalytics:freshSessionAnalytics(),
+    policyAnalytics:freshPolicyAnalytics()
   };
 }
 
@@ -493,6 +534,7 @@ function normalizeMemory(x){
   const rawMaster=m.master&&typeof m.master==='object'?m.master:freshMasterBrain();
   const master={...freshMasterBrain(),...rawMaster};
   master.version=MASTER_BRAIN_VERSION;
+  master.policyAnalytics=normalizePolicyAnalytics(master.policyAnalytics);
   master.revision=Math.max(0,Math.floor(safeNum(master.revision,0)));
   master.updatedAt=Math.max(0,safeNum(master.updatedAt,0));
   master.counterfactualTicks=Math.max(0,Math.floor(safeNum(master.counterfactualTicks,0)));
@@ -1824,15 +1866,18 @@ function rangeForecast(h=1){
   const perf=mem.rangePerf[h]||freshRangePerf();
   const digitPerf=mem.shadow.performance.range||{};
   const activeRange=snap.phase==='RANGE'||snap.lateralScore>=.56;
+  // Range aprende continuamente, pero solo vota cuando demuestra una mejora
+  // prospectiva real sobre el 10% base de MATCH. Evita que una capa nueva
+  // degrade al ensemble por simple madurez de muestras.
   const ready=
     activeRange &&
-    safeNum(perf.samples,0)>=300 &&
-    safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS)<=1.08 &&
-    safeNum(perf.brierEWMA,RANGE_BASE_BRIER)<=.218 &&
-    safeNum(perf.accuracyEWMA,1/3)>=.40 &&
-    safeNum(digitPerf.samples,0)>=300 &&
-    safeNum(digitPerf.matchEWMA,UNIFORM)<=.1005 &&
-    safeNum(digitPerf.logLossEWMA,Math.log(10))<=Math.log(10)+.015;
+    safeNum(perf.samples,0)>=1200 &&
+    safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS)<=RANGE_BASE_LOGLOSS-.008 &&
+    safeNum(perf.brierEWMA,RANGE_BASE_BRIER)<=RANGE_BASE_BRIER-.004 &&
+    safeNum(perf.accuracyEWMA,1/3)>=.42 &&
+    safeNum(digitPerf.samples,0)>=1200 &&
+    safeNum(digitPerf.matchEWMA,UNIFORM)<=.0975 &&
+    safeNum(digitPerf.logLossEWMA,Math.log(10))<=Math.log(10)-.002;
   const exposed=Array.from({length:10},(_,d)=>({d,p:digitP[d]})).sort((a,b)=>b.p-a.p).slice(0,3);
   return {
     h,stateP,digitP,n:totalN,
@@ -2136,7 +2181,7 @@ function modelViews(){
     const rp=mem.shadow.performance.range||{samples:0,matchEWMA:UNIFORM,logLossEWMA:Math.log(10)};
     const maturity=clamp((safeNum(rp.samples,0)-300)/1800,0,1);
     const persistence=clamp((safeNum(range.stayProbability,.5)-.40)/.45,0,1);
-    const base=range.ready ? (.07+.17*maturity)*(.65+.35*persistence) : 0;
+    const base=range.ready ? (.04+.10*maturity)*(.70+.30*persistence) : 0;
     views.push({
       name:'range',p:range.digitP,support:range.support,base,n:range.n,
       ready:range.ready,forecast:range
@@ -2783,6 +2828,25 @@ function masterPublic(){
     rankStats:master.rankStats,
     errorContexts:master.errorContexts.slice(-160),
     streakStats:master.streakStats,
+    policyAnalytics:(()=>{
+      const pa=master.policyAnalytics||freshPolicyAnalytics();
+      const policies={};
+      for(const [name,st] of Object.entries(pa.policies||{})){
+        const recent=Array.isArray(st.recent)?st.recent:[];
+        policies[name]={
+          trades:st.trades,
+          matches:st.matches,
+          matchRate:st.trades?st.matches/st.trades:UNIFORM,
+          earlyTrades:st.earlyTrades,
+          earlyMatches:st.earlyMatches,
+          earlyMatchRate:st.earlyTrades?st.earlyMatches/st.earlyTrades:UNIFORM,
+          recentTrades:recent.length,
+          recentMatchRate:recent.length?recent.reduce((a,b)=>a+b,0)/recent.length:UNIFORM,
+          lastAt:st.lastAt
+        };
+      }
+      return {policies,updatedAt:pa.updatedAt};
+    })(),
     sessionAnalytics:(()=>{
       const sa=master.sessionAnalytics||freshSessionAnalytics();
       return {
@@ -2981,6 +3045,7 @@ app.post('/api/cloud/experience',(req,res)=>{
   const sessionOpRaw=safeNum(b.sessionOp,NaN);
   const sessionOp=Number.isFinite(sessionOpRaw)?Math.max(1,Math.min(500,Math.floor(sessionOpRaw))):null;
   const sessionEnd=(b.sessionEnd==='TARGET'||b.sessionEnd==='STOP')?b.sessionEnd:'';
+  const policy=typeof b.policy==='string'&&/^[A-Za-z0-9_-]{3,48}$/.test(b.policy)?b.policy:'';
   const context=Array.isArray(b.context)
     ? b.context.map(Number).filter(d=>Number.isInteger(d)&&d>=0&&d<=9).slice(-6)
     : [];
@@ -2999,6 +3064,7 @@ app.post('/api/cloud/experience',(req,res)=>{
   // Va antes del dedupe de evidencia de mercado porque dos sesiones distintas pueden coincidir
   // en el mismo tick y ambas deben formar parte del estudio de sesiones.
   if(sessionId&&sessionOp!==null)updateMasterSessionAnalytics(sessionId,sessionOp,loss,sessionEnd);
+  if(policy)updatePolicyAnalytics(policy,loss,sessionOp);
 
   // Mismo tick + mismo dígito = una sola evidencia de mercado, aunque lo operen varias personas.
   const dedupKey=signalEpoch+':'+digit;
