@@ -798,6 +798,28 @@ body.simpleMode .viewStatus{color:#85ffc0}
     <div class="cloudGrid"><div class="cloudMini"><small>Estado nube</small><b id="cloudState">CHECKING</b></div><div class="cloudMini"><small>Ticks cloud</small><b id="cloudTicks">—</b></div><div class="cloudMini"><small>Último dígito</small><b id="cloudDigit">—</b></div><div class="cloudMini"><small>Uptime</small><b id="cloudUptime">—</b></div><div class="cloudMini"><small>Shadow trades</small><b id="shadowTrades">—</b></div><div class="cloudMini"><small>Shadow wins</small><b id="shadowWins">—</b></div><div class="cloudMini"><small>Shadow matches</small><b id="shadowMatches">—</b></div><div class="cloudMini"><small>Modelos activos</small><b id="shadowModels">—</b></div><div class="cloudMini"><small>Experiencias compartidas</small><b id="sharedAccepted">—</b></div><div class="cloudMini"><small>Duplicados filtrados</small><b id="sharedDuplicates">—</b></div><div class="cloudMini"><small>Champion cloud</small><b id="cloudChampion">—</b></div><div class="cloudMini"><small>Mejor challenger</small><b id="cloudChallenger">—</b></div><div class="cloudMini"><small>Promociones</small><b id="cloudPromotions">0</b></div><div class="cloudMini"><small>Sesiones estudiadas</small><b id="studySessions">0</b></div><div class="cloudMini"><small>Objetivos completados</small><b id="studyCompleted">0</b></div><div class="cloudMini"><small>MATCH en #1-2</small><b id="studyEarly">—</b></div><div class="cloudMini"><small>Posición prom. MATCH</small><b id="studyAvgPos">—</b></div></div>
   </section>
 
+  <section id="labPanel" class="panel appSection proOnly">
+    <div class="panel-head">
+      <div class="panel-title">06 // LABORATORIO IA // SHADOW → CANDIDATO → ACTIVO</div>
+      <span class="chip" id="labGlobalState">SEPARADO</span>
+    </div>
+    <div class="muted" style="margin-bottom:10px">
+      Este laboratorio NO participa en compras ni decisiones mientras figure SHADOW o CANDIDATO. Solo ACTIVO significa que fue integrado deliberadamente al cerebro.
+    </div>
+    <div class="cloudGrid">
+      <div class="cloudMini"><small>Differ laboratorio</small><b id="labDifferState">SHADOW</b></div>
+      <div class="cloudMini"><small>Differ pruebas</small><b id="labDifferTrials">0</b></div>
+      <div class="cloudMini"><small>Differ MATCH observado</small><b id="labDifferRate">—</b></div>
+      <div class="cloudMini"><small>Differ límite 95%</small><b id="labDifferUpper">—</b></div>
+      <div class="cloudMini"><small>Rise/Fall laboratorio</small><b id="labRfState">SHADOW</b></div>
+      <div class="cloudMini"><small>Rise/Fall señales fuertes</small><b id="labRfTrials">0</b></div>
+      <div class="cloudMini"><small>Rise/Fall acierto</small><b id="labRfHit">—</b></div>
+      <div class="cloudMini"><small>Rise/Fall límite 95%</small><b id="labRfLower">—</b></div>
+      <div class="cloudMini"><small>Familia más parecida</small><b id="labFingerprint">—</b></div>
+      <div class="cloudMini"><small>Promoción automática</small><b id="labAutoPromotion">NO</b></div>
+    </div>
+  </section>
+
   <section id="ownerMemoryPanel" class="panel warning ownerOnly"><div class="panel-head"><div class="panel-title">ADMIN // MEMORIA PERSISTENTE</div><span class="chip">LOCAL + CLOUD</span></div>
     <div class="muted">Railway es el cerebro maestro compartido. Todos los dispositivos reciben sus modelos, calibración, ranking, contextos de MATCH y aprendizaje de movimiento. La memoria local queda como respaldo y para datos de sesión; borrar memoria local no borra el cerebro cloud.</div>
     <button id="resetMemory" class="danger" style="margin-top:10px">BORRAR MEMORIA IA LOCAL</button>
@@ -1062,6 +1084,25 @@ body.simpleMode .viewStatus{color:#85ffc0}
       q('cloudState').textContent=online?'ONLINE':'SYNCING';q('cloudState').style.color=online?'#00ff88':'#ffd05a';q('cloudBadge').textContent=online?'ONLINE':'SYNCING';q('cloudBadge').style.color=online?'#00ff88':'#ffd05a';q('memBadge').textContent='CLOUD';
       q('cloudTicks').textContent=Number(d.tickCount||0).toLocaleString();q('cloudDigit').textContent=Number.isInteger(d.lastDigit)?'D'+d.lastDigit:'—';
       var sh=d.shadow||{};q('shadowTrades').textContent=Number(sh.total||0).toLocaleString();q('shadowWins').textContent=Number(sh.wins||0).toLocaleString();q('shadowMatches').textContent=Number(sh.matches||0).toLocaleString();q('shadowModels').textContent=Number(sh.modelCount||0);var co=d.collaborative||{};q('sharedAccepted').textContent=Number(co.accepted||0).toLocaleString();q('sharedDuplicates').textContent=Number(co.duplicates||0).toLocaleString();var tr=sh.tournament||{};var pretty=function(x){return String(x||'—').replace('recentFocus','RECENT').replace('contextFocus','CONTEXT').replace('robust','ROBUST').replace('base','BASE')};q('cloudChampion').textContent=pretty(tr.champion);q('cloudChallenger').textContent=pretty(tr.bestChallenger);q('cloudPromotions').textContent=Number(tr.promotions||0);if(q('proChampionMini'))q('proChampionMini').textContent=pretty(tr.champion);if(q('proChallengerMini'))q('proChallengerMini').textContent=pretty(tr.bestChallenger);var sa=(d.master&&d.master.sessionAnalytics)||{};q('studySessions').textContent=Number(sa.sessionsStarted||0).toLocaleString();q('studyCompleted').textContent=Number(sa.sessionsCompleted||0).toLocaleString();q('studyEarly').textContent=Number(sa.matches||0)>0?(Number(sa.earlyMatchRate||0)*100).toFixed(1)+'%':'—';q('studyAvgPos').textContent=Number(sa.matches||0)>0?'#'+Number(sa.avgMatchPosition||0).toFixed(1):'—';
+      var lm=(d.master&&d.master.labIntegration)||{};
+      var ld=lm.differ||{},lr=lm.riseFall||{};
+      var labColor=function(state){return state==='ACTIVE'?'#00ff88':state==='CANDIDATE'?'#ffd05a':'#7fd8ff'};
+      if(q('labDifferState')){q('labDifferState').textContent=ld.state||'SHADOW';q('labDifferState').style.color=labColor(ld.state)}
+      if(q('labDifferTrials'))q('labDifferTrials').textContent=Number(ld.trials||0).toLocaleString();
+      if(q('labDifferRate'))q('labDifferRate').textContent=Number.isFinite(Number(ld.observedMatchRate))?(Number(ld.observedMatchRate)*100).toFixed(2)+'%':'—';
+      if(q('labDifferUpper'))q('labDifferUpper').textContent=Number.isFinite(Number(ld.upper95))?(Number(ld.upper95)*100).toFixed(2)+'%':'—';
+      if(q('labRfState')){q('labRfState').textContent=lr.state||'SHADOW';q('labRfState').style.color=labColor(lr.state)}
+      if(q('labRfTrials'))q('labRfTrials').textContent=Number(lr.trials||0).toLocaleString();
+      if(q('labRfHit'))q('labRfHit').textContent=Number.isFinite(Number(lr.hitRate))?(Number(lr.hitRate)*100).toFixed(2)+'%':'—';
+      if(q('labRfLower'))q('labRfLower').textContent=Number.isFinite(Number(lr.lower95))?(Number(lr.lower95)*100).toFixed(2)+'%':'—';
+      var ul=(d.master&&d.master.universalLab)||{},fp=ul.fingerprint||{};
+      if(q('labFingerprint'))q('labFingerprint').textContent=String(fp.closestReference||'—').toUpperCase();
+      if(q('labAutoPromotion'))q('labAutoPromotion').textContent=lm.automaticPromotion?'SÍ':'NO';
+      if(q('labGlobalState')){
+        var anyActive=ld.state==='ACTIVE'||lr.state==='ACTIVE',anyCandidate=ld.state==='CANDIDATE'||lr.state==='CANDIDATE';
+        q('labGlobalState').textContent=anyActive?'HAY MODELO ACTIVO':anyCandidate?'HAY CANDIDATO':'SEPARADO';
+        q('labGlobalState').style.color=anyActive?'#00ff88':anyCandidate?'#ffd05a':'#7fd8ff';
+      }
       var s=Number(d.uptimeSeconds||0),h=Math.floor(s/3600),m=Math.floor((s%3600)/60);q('cloudUptime').textContent=h+'h '+m+'m';
     }catch(e){q('cloudState').textContent='OFFLINE';q('cloudState').style.color='#ff7792';q('cloudBadge').textContent='OFFLINE';q('cloudBadge').style.color='#ff7792'}
   }

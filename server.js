@@ -3163,6 +3163,14 @@ function chiSquareSurvivalApprox(x,df){
   const z=(Math.pow(x/df,1/3)-(1-2/(9*df)))/Math.sqrt(2/(9*df));
   return clamp(1-normalCdfApprox(z),0,1);
 }
+function wilsonLower95(successes,n){
+  n=Math.max(0,safeNum(n,0));successes=Math.max(0,safeNum(successes,0));
+  if(n<1)return 0;
+  const z=1.96,z2=z*z,p=successes/n,den=1+z2/n;
+  const centre=p+z2/(2*n);
+  const margin=z*Math.sqrt((p*(1-p)+z2/(4*n))/n);
+  return clamp((centre-margin)/den,0,1);
+}
 function wilsonUpper95(successes,n){
   n=Math.max(0,safeNum(n,0));successes=Math.max(0,safeNum(successes,0));
   if(n<1)return 1;
@@ -3648,6 +3656,51 @@ function connectDeriv(){
   });
 }
 
+function universalLabIntegrationPublic(){
+  const ul=mem.master?.universalLab||freshUniversalLab();
+  const d=ul.differ||{};
+  const r=ul.riseFall||{};
+
+  const differCandidate=
+    safeNum(d.samples,0)>=1200 &&
+    d.edgeConfirmed===true &&
+    safeNum(d.improvementVsUniform,0)>0;
+
+  const rfLower95=wilsonLower95(safeNum(r.strongWins,0),safeNum(r.strongTrials,0));
+  const riseFallCandidate=
+    safeNum(r.strongTrials,0)>=1000 &&
+    rfLower95>.50 &&
+    safeNum(r.logLoss,Math.log(3))<Math.log(3);
+
+  return {
+    automaticPromotion:false,
+    differ:{
+      state:differCandidate?'CANDIDATE':'SHADOW',
+      active:false,
+      candidate:differCandidate,
+      trials:Math.max(0,Math.floor(safeNum(d.minRiskTrials,0))),
+      observedMatchRate:clamp(safeNum(d.minRiskRate,UNIFORM),0,1),
+      upper95:clamp(safeNum(d.minRiskUpper95,1),0,1),
+      logGain:safeNum(d.improvementVsUniform,0),
+      criterion:'Upper 95% MATCH < 10% + positive prequential log-loss gain'
+    },
+    riseFall:{
+      state:riseFallCandidate?'CANDIDATE':'SHADOW',
+      active:false,
+      candidate:riseFallCandidate,
+      trials:Math.max(0,Math.floor(safeNum(r.strongTrials,0))),
+      hitRate:clamp(safeNum(r.strongHitRate,.5),0,1),
+      lower95:rfLower95,
+      logLoss:safeNum(r.logLoss,Math.log(3)),
+      criterion:'Lower 95% directional hit > 50% + better-than-baseline log-loss'
+    },
+    promotionMeaning:{
+      SHADOW:'Solo prueba; no interviene en la IA activa.',
+      CANDIDATE:'Ya superó el criterio estadístico; sigue separado hasta integración explícita.',
+      ACTIVE:'Integrado deliberadamente en el predictor activo.'
+    }
+  };
+}
 function masterExpertWeights(){
   const perf=mem.shadow.performance||{};
   const w=name=>clamp(safeNum(perf[name]?.weight,1),.12,5);
@@ -3681,6 +3734,7 @@ function masterPublic(){
     streakStats:master.streakStats,
     scienceAudit:master.scienceAudit||freshScienceAudit(),
     universalLab:master.universalLab||freshUniversalLab(),
+    labIntegration:universalLabIntegrationPublic(),
     policyAnalytics:(()=>{
       const pa=master.policyAnalytics||freshPolicyAnalytics();
       const policies={};
@@ -3969,6 +4023,7 @@ app.get('/api/ai-health',(req,res)=>{
     symbol:SYMBOL,
     scienceAudit:mem.master?.scienceAudit||freshScienceAudit(),
     universalLab:mem.master?.universalLab||freshUniversalLab(),
+    labIntegration:universalLabIntegrationPublic(),
     differ:{
       shadowMatchRate:clamp(safeNum(mem.shadow.matchRate,UNIFORM),0,1),
       calibration:calibrationSummary(),
@@ -4028,7 +4083,16 @@ app.get('/api/cloud/status',(req,res)=>{
     deepHistorySize:hist.length,
     liveTickCount,lastTickAt,lastDigit,lastPrediction,
     motion:motionSnapshot(),
-    master:{version:MASTER_BRAIN_VERSION,revision:mem.master.revision,updatedAt:mem.master.updatedAt,counterfactualTicks:mem.master.counterfactualTicks,sessionAnalytics:masterPublic().sessionAnalytics},
+    master:{
+      version:MASTER_BRAIN_VERSION,
+      revision:mem.master.revision,
+      updatedAt:mem.master.updatedAt,
+      counterfactualTicks:mem.master.counterfactualTicks,
+      sessionAnalytics:masterPublic().sessionAnalytics,
+      scienceAudit:mem.master?.scienceAudit||freshScienceAudit(),
+      universalLab:mem.master?.universalLab||freshUniversalLab(),
+      labIntegration:universalLabIntegrationPublic()
+    },
     shadow:{
       total:mem.shadow.total,
       wins:mem.shadow.wins,
