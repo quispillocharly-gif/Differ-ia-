@@ -95,24 +95,13 @@ function render(){
   }
 
   const arrow=p.direction==='RISE'?'↑':'↓';
-  const op=p.operationLearning||{};
-  const opCount=Math.max(0,Number(op.totalOperations||0));
-  const learningMode=!p.operationalReady;
-  const visibleAction=(p.action==='RISE'||p.action==='FALL')
-    ?p.action
-    :(p.learningAction||p.direction||'WAIT');
-  const action=visibleAction==='RISE'?'RISE ↑':visibleAction==='FALL'?'FALL ↓':'ESPERAR';
+  const action=p.action==='RISE'?'RISE ↑':p.action==='FALL'?'FALL ↓':'ESPERAR';
   setText('rfDecision',action);
   setText('rfProbability',pct(p.directionProbability));
   setText('rfMove',arrow+' '+(Number(p.expectedUnits)>=0?'+':'')+Number(p.expectedUnits||0).toFixed(1)+'U');
   const v=p.validation||{};
-  setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS · OPS '+opCount.toLocaleString());
-  setText(
-    'rfCloudMode',
-    learningMode
-      ?('APRENDIENDO · OPS '+opCount)
-      :(p.operationalReady?'ACTIVO':'SHADOW')
-  );
+  setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS');
+  setText('rfCloudMode',p.ready?'ACTIVO':'SHADOW');
   setText('rfPhase',String(p.phase||'—').replaceAll('_',' '));
   setText('rfTurn','GIRO '+pct(p.reversalProbability)+' · CONT '+pct(p.continuationProbability));
 }
@@ -281,7 +270,6 @@ function applyContractsFor(data){
 function sendProposalForPending(p){
   if(!p||!rfSocket||rfSocket.readyState!==WebSocket.OPEN)return false;
   rfEffectiveHorizon=p.horizon;
-  if(p.learningTrade)setText('rfStatus',rfAccountType.toUpperCase()+' · APRENDIENDO · PROPUESTA '+p.action+' · '+p.horizon+'T');
   rfSocket.send(JSON.stringify({
     proposal:1,
     amount:Number(p.stake.toFixed(2)),
@@ -307,22 +295,8 @@ function onRfMessage(ev){
   if(m.error){
     if(rfPendingProposal){
       const p=rfPendingProposal;
-      const message=String(m.error.message||m.error.code||'Error Deriv');
-      // Si el horizonte elegido no está permitido para Rise/Fall, hacemos un
-      // único fallback de entrenamiento a 5 ticks y lo hacemos visible.
-      const durationLike=/duration|tick|contract|available|minimum|min\b/i.test(message);
-      if(p.learningTrade&&durationLike&&Number(p.horizon)<5&&Number(p.retryCount||0)<1){
-        const fallback=Math.max(5,Number(rfContractSpec.minTicks)||5);
-        rfPendingProposal=null;
-        const sel=$('rfHorizon');
-        if(sel&&[...sel.options].some(o=>Number(o.value)===fallback))sel.value=String(fallback);
-        rfEffectiveHorizon=fallback;
-        setText('rfStatus',rfAccountType.toUpperCase()+' · CAMBIO A '+fallback+'T · ESPERANDO PREDICCIÓN ALINEADA');
-        p.resolve({bought:false,retryHorizon:fallback});
-        return;
-      }
       rfPendingProposal=null;
-      p.reject(new Error(message));
+      p.reject(new Error(String(m.error.message||m.error.code||'Error Deriv')));
     }else{
       setText('rfStatus','ERROR DERIV · '+(m.error.message||''));
       rfActiveTrade=null;
@@ -341,15 +315,8 @@ function onRfMessage(ev){
     }
 
     const breakEven=ask/payout;
-    const learningTrade=!!p.learningTrade;
-    const bootstrapTrade=learningTrade&&!!p.bootstrapTrade;
-    const safetyMargin=.008;
-
-    // La cuenta (DEMO/REAL) no decide si se permite operar.
-    // Mientras el modelo está aprendiendo, el usuario puede dejarlo operar en la
-    // cuenta que eligió. Una vez validado, la IA sí compara probabilidad vs precio.
-    if(!learningTrade && p.probability<breakEven+safetyMargin){
-      p.resolve({bought:false,breakEven,required:breakEven+safetyMargin,learningTrade,bootstrapTrade});
+    if(p.probability<breakEven+.025){
+      p.resolve({bought:false,breakEven});
       return;
     }
 
@@ -362,13 +329,8 @@ function onRfMessage(ev){
       signalEpoch:p.signalEpoch,
       phase:p.phase,
       ready:p.ready,
-      operationalReady:!!p.operationalReady,
-      learningTrade:!!p.learningTrade,
-      bootstrapTrade:!!p.bootstrapTrade,
-      explorationTrade:!!p.explorationTrade,
       contractId:''
     };
-    if(learningTrade)setText('rfStatus',rfAccountType.toUpperCase()+' · APRENDIENDO · COMPRANDO '+p.action+'…');
     rfSocket.send(JSON.stringify({buy:id,price:ask,req_id:++rfBuyReq}));
     p.resolve({bought:true,breakEven});
   }
@@ -419,9 +381,7 @@ function sendRfTrade(pred){
       resolve({bought:false});
       return;
     }
-    const stake=pred.learningTrade
-      ?stakeBase()
-      :Math.max(.01,Number(rfNextStake)||stakeBase());
+    const stake=Math.max(.01,Number(rfNextStake)||stakeBase());
     const h=effectiveHorizon();
     const p={
       resolve,reject,
@@ -434,11 +394,7 @@ function sendRfTrade(pred){
       retryCount:0,
       signalEpoch:Number(pred.signalEpoch||0),
       phase:String(pred.phase||'UNKNOWN'),
-      ready:!!pred.ready,
-      operationalReady:!!pred.operationalReady,
-      learningTrade:!!pred.learningTrade,
-      bootstrapTrade:!!pred.bootstrapTrade,
-      explorationTrade:!!pred.explorationTrade
+      ready:!!pred.ready
     };
     rfPendingProposal=p;
     if(!sendProposalForPending(p)){
@@ -447,46 +403,17 @@ function sendRfTrade(pred){
     }
   });
 }
-async function reportRfExperience(t,profit){
-  if(!t)return;
-  const id=String(t.contractId||('RF:'+t.signalEpoch+':'+t.action+':'+t.horizon));
-  try{
-    await fetch(CLOUD_URL+'/api/rise-fall/experience',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        id,
-        mode:rfAccountType,
-        action:t.action,
-        horizon:t.horizon,
-        probability:t.probability,
-        breakEven:t.breakEven,
-        signalEpoch:t.signalEpoch,
-        phase:t.phase,
-        explorationDemo:!!t.explorationTrade,
-        profit:Number(profit)||0
-      })
-    });
-  }catch(_){}
-}
-
 function settleRfTrade(profit,t){
   rfSession.pnl+=profit;
-  if(profit>0)rfSession.wins++;
-  else rfSession.losses++;
-
-  // Durante entrenamiento DEMO usamos stake fijo para que la IA aprenda la
-  // calidad de la señal sin mezclarla con una progresión de apuesta.
-  if(t?.learningTrade){
-    rfNextStake=stakeBase();
-  }else if(profit>0){
+  if(profit>0){
+    rfSession.wins++;
     rfNextStake=Math.max(stakeBase(),Number(t?.stake||stakeBase())+profit);
   }else{
+    rfSession.losses++;
     rfNextStake=stakeBase();
   }
   saveSession();
   render();
-  reportRfExperience(t,profit);
 
   if(rfSession.pnl>=target()){
     rfAuto=false;
@@ -499,115 +426,47 @@ function settleRfTrade(profit,t){
   }
 }
 
-async function evaluateAuto(pred,forceTraining=false){
+async function evaluateAuto(pred){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
-  const strictAction=pred.action||'WAIT';
-  const candidate=(strictAction==='RISE'||strictAction==='FALL')
-    ?strictAction
-    :(pred.learningAction==='FALL'||pred.direction==='FALL'?'FALL':'RISE');
-  const epoch=Number(pred.signalEpoch||0);
-  const operationalReady=!!pred.operationalReady;
-  const predictorReady=!!pred.ready;
-
-  if(!epoch)return;
-  if(!forceTraining&&epoch===rfConfirm.lastEpoch)return;
-
-  // Misma IA para DEMO y REAL. La cuenta seleccionada nunca bloquea el algoritmo.
-  // Mientras aún está aprendiendo, cada contrato sirve como experiencia adicional.
-  if(!operationalReady){
-    rfConfirm.lastEpoch=epoch;
-    rfLastTrainingAttemptAt=Date.now();
-    rfTrainingAttempts++;
-
-    const exploration=strictAction==='WAIT';
-    setText(
-      'rfStatus',
-      rfAccountType.toUpperCase()+' · APRENDIENDO · '+candidate+
-      ' · '+(exploration?'CANDIDATO':'SEÑAL')+' #'+rfTrainingAttempts
-    );
-
-    try{
-      const out=await sendRfTrade({
-        ...pred,
-        action:candidate,
-        learningTrade:true,
-        bootstrapTrade:!predictorReady,
-        explorationTrade:exploration
-      });
-      if(out?.bought){
-        setText(
-          'rfStatus',
-          rfAccountType.toUpperCase()+' · '+candidate+' · '+effectiveHorizon()+
-          'T · OPERACIÓN DE APRENDIZAJE'
-        );
-      }else if(out?.retryHorizon){
-        setText('rfStatus',rfAccountType.toUpperCase()+' · AJUSTADO A '+out.retryHorizon+'T');
-      }else if(out?.busy){
-        setText('rfStatus',rfAccountType.toUpperCase()+' · ESPERANDO CIERRE');
-      }
-    }catch(e){
-      setText('rfStatus','ERROR RISE/FALL · '+(e?.message||e));
-    }
-    return;
-  }
-
-  // Cuando ya está validado, WAIT sí significa una decisión de la IA: no entrar.
-  if(strictAction!=='RISE'&&strictAction!=='FALL'){
+  if(!pred.ready){
     resetConfirmation();
-    setText('rfStatus',rfAccountType.toUpperCase()+' · IA DECIDE ESPERAR · SIN VENTAJA SUFICIENTE');
+    setText('rfStatus','SHADOW · IA APRENDIENDO EN CLOUD');
     return;
   }
 
-  if(rfConfirm.action===strictAction&&rfConfirm.lastEpoch===epoch-1){
+  if(pred.action!=='RISE'&&pred.action!=='FALL'){
+    resetConfirmation();
+    setText('rfStatus','ESPERANDO MEJOR DIRECCIÓN');
+    return;
+  }
+
+  const epoch=Number(pred.signalEpoch||0);
+  if(!epoch||epoch===rfConfirm.lastEpoch)return;
+
+  if(rfConfirm.action===pred.action&&rfConfirm.lastEpoch===epoch-1){
     rfConfirm.count++;
   }else{
-    rfConfirm={action:strictAction,count:1,lastEpoch:epoch};
+    rfConfirm={action:pred.action,count:1,lastEpoch:epoch};
   }
   rfConfirm.lastEpoch=epoch;
 
-  // Una confirmación adicional solo cuando el modelo ya está validado.
   if(rfConfirm.count<2){
-    setText('rfStatus',rfAccountType.toUpperCase()+' · CONFIRMANDO '+strictAction+' · 1/2');
+    setText('rfStatus','CONFIRMANDO '+pred.action+' · '+rfConfirm.count+'/2');
     return;
   }
 
   resetConfirmation();
   try{
-    const out=await sendRfTrade({
-      ...pred,
-      action:strictAction,
-      learningTrade:false,
-      bootstrapTrade:false,
-      explorationTrade:false
-    });
+    const out=await sendRfTrade(pred);
     if(out?.bought){
-      setText('rfStatus',rfAccountType.toUpperCase()+' · ENVIANDO '+strictAction+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
+      setText('rfStatus','ENVIANDO '+pred.action+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
     }else if(Number.isFinite(out?.breakEven)){
-      setText('rfStatus','IA NO ENTRA · P '+pct(pred.directionProbability)+' < REQUERIDO '+pct(out.required||out.breakEven));
+      setText('rfStatus','SIN COMPRA · PROBABILIDAD NO SUPERA PUNTO DE EQUILIBRIO');
     }
   }catch(e){
     setText('rfStatus','ERROR · '+(e?.message||e));
   }
-}
-async function trainingWatchdog(){
-  if(!selected()||!rfAuto||!rfPrediction)return;
-  if(rfActiveContract||rfPendingProposal||rfActiveTrade)return;
-  if(!rfReady){
-    setText('rfStatus',rfAccountType.toUpperCase()+' · RECONECTANDO DERIV');
-    try{await connectRf()}catch(_){}
-    return;
-  }
-
-  // Solo fuerza experiencia mientras aún no está operacionalmente validado.
-  // Una vez validado, WAIT se respeta como decisión de la IA.
-  if(rfPrediction.operationalReady)return;
-
-  const delay=rfPrediction.ready?6500:4500;
-  if(Date.now()-rfLastTrainingAttemptAt<delay)return;
-
-  setText('rfStatus',rfAccountType.toUpperCase()+' · GENERANDO EXPERIENCIA PARA APRENDER');
-  await evaluateAuto(rfPrediction,true);
 }
 async function poll(){
   try{
@@ -624,7 +483,6 @@ async function poll(){
       rfLastEpoch=epoch;
       await evaluateAuto(rfPrediction);
     }
-    await trainingWatchdog();
   }catch(e){
     setText('rfCloudMode','OFFLINE');
     setText('rfStatus','CLOUD RISE/FALL NO DISPONIBLE');
@@ -646,18 +504,14 @@ async function startRf(){
   }
 
   rfAuto=true;
-  rfLastTrainingAttemptAt=0;
-  const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
-  if(rfPrediction?.operationalReady){
-    setText('rfStatus',rfAccountType.toUpperCase()+' · AUTO RISE/FALL ACTIVO');
+  if(rfPrediction?.ready){
+    setText('rfStatus','AUTO RISE/FALL ACTIVO · ESPERANDO CONFIRMACIÓN');
   }else{
-    setText('rfStatus',rfAccountType.toUpperCase()+' · IA APRENDIENDO CON OPERACIONES · OPS '+ops);
-    if(rfPrediction)setTimeout(()=>evaluateAuto(rfPrediction,true),50);
+    setText('rfStatus','SHADOW ACTIVO · IA APRENDIENDO EN CLOUD');
   }
 }
 function stopRf(){
   rfAuto=false;
-  rfLastTrainingAttemptAt=0;
   resetConfirmation();
   setText('rfStatus','DETENIDO · CLOUD SIGUE APRENDIENDO');
 }

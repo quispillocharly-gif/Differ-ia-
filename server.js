@@ -741,7 +741,7 @@ function freshRiseFallMemory(){
   const models={},global={},performance={};
   RF_HORIZONS.forEach(h=>{
     models[h]={};
-    global[h]={counts:[1,1,1],n:0};
+    global[h]={counts:[1,1,1],fast:[1/3,1/3,1/3],n:0};
     performance[h]=freshRiseFallPerf();
   });
   return {
@@ -770,6 +770,7 @@ function normalizeRiseFallMemory(x){
     const g=m.global[h]||{};
     m.global[h]={
       counts:Array.from({length:3},(_,i)=>Math.max(.001,safeNum(g.counts?.[i],1))),
+      fast:riseFallNorm3(Array.isArray(g.fast)&&g.fast.length===3?g.fast:g.counts),
       n:Math.max(0,Math.floor(safeNum(g.n,0)))
     };
     const p=m.performance[h]||{};
@@ -860,39 +861,77 @@ function riseFallContextKeys(snap){
 }
 function riseFallNode(h,key){
   const bucket=riseFallMem.models[h];
-  if(!bucket[key])bucket[key]={counts:[1,1,1],n:0,last:riseFallMem.tickCount};
+  if(!bucket[key]){
+    bucket[key]={counts:[1,1,1],fast:[1/3,1/3,1/3],n:0,last:riseFallMem.tickCount};
+  }else{
+    const node=bucket[key];
+    if(!Array.isArray(node.counts)||node.counts.length!==3)node.counts=[1,1,1];
+    node.counts=node.counts.map(v=>Math.max(.001,safeNum(v,1)));
+    node.fast=riseFallNorm3(Array.isArray(node.fast)&&node.fast.length===3?node.fast:node.counts);
+    node.n=Math.max(0,Math.floor(safeNum(node.n,0)));
+    node.last=Math.max(0,Math.floor(safeNum(node.last,0)));
+  }
   return bucket[key];
 }
 function riseFallLearnOne(h,snap,outcome){
   const g=riseFallMem.global[h];
+  if(!Array.isArray(g.fast)||g.fast.length!==3)g.fast=riseFallNorm3(g.counts);
   g.counts[outcome]+=1;
+  const ga=.035;
+  g.fast=riseFallNorm3(g.fast.map((x,i)=>(1-ga)*x+ga*(i===outcome?1:0)));
   g.n++;
+
   riseFallContextKeys(snap).forEach(k=>{
-    const n=riseFallNode(h,k.key);
-    n.counts[outcome]+=1;
-    n.n++;
-    n.last=riseFallMem.tickCount;
+    const node=riseFallNode(h,k.key);
+    node.counts[outcome]+=1;
+    const support=1-Math.exp(-Math.max(0,node.n)/Math.max(1,k.need));
+    const alpha=clamp(.075-.030*support,.038,.075);
+    node.fast=riseFallNorm3(node.fast.map((x,i)=>(1-alpha)*x+alpha*(i===outcome?1:0)));
+    node.n++;
+    node.last=riseFallMem.tickCount;
   });
   riseFallMem.trainedSamples++;
 }
 function riseFallOwnDistribution(h,snap){
   const g=riseFallMem.global[h];
-  const gp=riseFallNorm3(g.counts);
+  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
+  const slowGlobal=riseFallNorm3(g.counts);
+  const fastGlobal=riseFallNorm3(Array.isArray(g.fast)&&g.fast.length===3?g.fast:g.counts);
+
+  // When recent prequential error worsens, recent memory gets more influence.
+  // Long-term memory is never discarded, preventing catastrophic forgetting.
+  const brierDrift=clamp((safeNum(perf.brierEWMA,2/9)-(2/9)+.004)/.035,0,1);
+  const logDrift=clamp((safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3)+.008)/.10,0,1);
+  const driftPressure=Math.max(brierDrift,logDrift);
+  const fastWeight=clamp(.30+.35*driftPressure,.30,.65);
+
+  const gp=riseFallNorm3(slowGlobal.map((x,i)=>(1-fastWeight)*x+fastWeight*fastGlobal[i]));
   const acc=gp.map(x=>x*.38),den=Array(3).fill(.38);
   let supportSum=0,used=0,totalN=0;
+
   riseFallContextKeys(snap).forEach(k=>{
     const node=riseFallMem.models[h]?.[k.key];
     if(!node)return;
     const support=1-Math.exp(-safeNum(node.n,0)/k.need);
     const w=k.w*support;
-    const p=riseFallNorm3(node.counts);
+    const slow=riseFallNorm3(node.counts);
+    const fast=riseFallNorm3(Array.isArray(node.fast)&&node.fast.length===3?node.fast:node.counts);
+    const localFast=clamp(fastWeight+(1-support)*.08,.30,.72);
+    const p=riseFallNorm3(slow.map((x,i)=>(1-localFast)*x+localFast*fast[i]));
     for(let i=0;i<3;i++){acc[i]+=p[i]*w;den[i]+=w}
     supportSum+=support;
     used++;
     totalN+=safeNum(node.n,0);
   });
+
   const p=riseFallNorm3(acc.map((x,i)=>x/(den[i]||1)));
-  return {p,support:used?supportSum/used:0,n:totalN+safeNum(g.n,0)};
+  return {
+    p,
+    support:used?supportSum/used:0,
+    n:totalN+safeNum(g.n,0),
+    fastWeight,
+    driftPressure
+  };
 }
 function riseFallPosterior(stat,priorRate=.52,priorN=18){
   const n=Math.max(0,safeNum(stat?.n,0));
@@ -1037,15 +1076,16 @@ function riseFallPredict(h=1){
   if(!RF_HORIZONS.includes(h))h=1;
   const snap=motionSnapshot();
   if(!snap)return null;
+
   const own=riseFallOwnDistribution(h,snap);
   let p=own.p.slice();
 
-  // Lectura unidireccional del predictor de movimiento de DIFFER.
-  // Rise/Fall puede usarla como evidencia, pero nunca escribe de regreso en DIFFER.
+  // Rise/Fall may read the movement predictor as evidence, but never writes
+  // back into DIFFER and never depends on account type or execution mode.
   const move=movementForecast(h<=3?h:3);
   if(move){
     const ext=riseFallNorm3([move.down,move.flat,move.up]);
-    const readOnlyWeight=clamp(.12+.20*safeNum(move.support,0),.12,.32);
+    const readOnlyWeight=clamp(.10+.18*safeNum(move.support,0),.10,.28);
     p=riseFallNorm3(p.map((x,i)=>(1-readOnlyWeight)*x+readOnlyWeight*ext[i]));
   }
 
@@ -1056,54 +1096,55 @@ function riseFallPredict(h=1){
   const conditionalDirectionProbability=Math.max(up,down)/nonFlat;
   const gap=Math.abs(up-down);
   const conditionalGap=gap/nonFlat;
-  const operationGate=riseFallOperationGate(direction,h,directionProbability);
-  const minDirectionalProbability=Math.max(.46,safeNum(operationGate.minProbability,.50));
-  const learningMinProbability=Math.max(.36,safeNum(operationGate.learningMinProbability,.40));
 
-  // Candidato siempre disponible. "WAIT" queda reservado para cuando ni siquiera
-  // la lectura direccional supera un mínimo razonable.
-  const learningAction=direction;
-  const learningSignalStrength=clamp(
-    conditionalGap*.55 +
-    (1-flat)*.25 +
-    safeNum(own.support,0)*.20,
-    0,1
-  );
+  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
+  const brierPenalty=clamp((safeNum(perf.brierEWMA,2/9)-(2/9))/.035,0,1);
+  const logPenalty=clamp((safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3))/.10,0,1);
+  const hitPenalty=clamp((.505-safeNum(perf.directionHitEWMA,.5))/.08,0,1);
+  const modelPenalty=Math.max(brierPenalty,logPenalty,hitPenalty);
+
+  // Adaptive AI threshold: support and recent predictive health change how much
+  // evidence is required. No DEMO/REAL rule exists here.
+  const directionFloor=clamp(.505+(1-own.support)*.018+modelPenalty*.022,.505,.555);
+  const gapFloor=clamp(.018+(1-own.support)*.014+modelPenalty*.012,.018,.044);
+  const flatCeiling=clamp(.56-own.support*.08-modelPenalty*.04,.44,.56);
 
   let action='WAIT';
-  const strictDirectionOk=conditionalDirectionProbability>=.535;
-  const strictGapOk=conditionalGap>=.035;
-  const strictFlatOk=flat<=.46;
-  if(directionProbability>=minDirectionalProbability&&strictDirectionOk&&strictGapOk&&strictFlatOk){
+  if(
+    conditionalDirectionProbability>=directionFloor &&
+    conditionalGap>=gapFloor &&
+    flat<=flatCeiling
+  ){
     action=direction;
   }
 
-  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
+  // Readiness means "enough market learning", not "enough demo/real trades".
+  const marketSamples=Math.min(
+    Math.max(0,safeNum(perf.resolved,0)),
+    Math.max(0,safeNum(riseFallMem.global?.[h]?.n,0))
+  );
+  const ready=marketSamples>=350 && own.support>=.10;
+
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
-  // Predictor y ejecución se validan por separado.
-  // Antes "ready" dependía de acciones estrictas, creando un círculo:
-  // no había acciones porque no estaba ready y nunca llegaba a ready.
-  const ready=
-    perf.resolved>=1200 &&
-    perf.directionHitEWMA>=.515 &&
-    perf.brierEWMA<=(2/9)-.0015 &&
-    perf.logLossEWMA<=Math.log(3)-.006;
+  const operationTelemetry=riseFallOperationGate(direction,h,directionProbability);
 
   return {
     horizon:h,
     signalEpoch:lastEpoch,
     generatedAt:Date.now(),
     action,
-    learningAction,
-    learningSignalStrength,
     direction,
     directionProbability,
     conditionalDirectionProbability,
     nonFlatProbability:nonFlat,
-    strictMinProbability:minDirectionalProbability,
-    learningMinProbability,
+    strictMinProbability:directionFloor,
     probabilities:{FALL:down,FLAT:flat,RISE:up},
-    confidence:clamp((directionProbability-.5)*2*(.55+.45*own.support),0,1),
+    confidence:clamp(
+      (conditionalDirectionProbability-.5)*2*
+      (.55+.45*own.support)*
+      (1-.30*modelPenalty),
+      0,1
+    ),
     support:clamp(own.support,0,1),
     phase:marketPhaseFromMotion(snap),
     motion:{
@@ -1118,8 +1159,16 @@ function riseFallPredict(h=1){
     reversalProbability:move?clamp(safeNum(move.reversalProbability,0),0,1):0,
     continuationProbability:move?clamp(safeNum(move.continuationProbability,0),0,1):0,
     ready,
-    operationalReady:ready&&operationGate.operationalReady,
-    operationLearning:operationGate,
+    operationalReady:ready,
+    operationLearning:operationTelemetry,
+    adaptation:{
+      fastWeight:clamp(safeNum(own.fastWeight,.30),0,1),
+      driftPressure:clamp(safeNum(own.driftPressure,0),0,1),
+      modelPenalty,
+      directionFloor,
+      gapFloor,
+      flatCeiling
+    },
     validation:{
       resolved:perf.resolved,
       actionSamples:perf.actionSamples,
