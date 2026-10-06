@@ -36,6 +36,8 @@ const RF_BOOTSTRAP_OPS=120;
 let rfNextStake=1;
 let rfSession={pnl:0,wins:0,losses:0,ops:0};
 let pollTimer=null;
+let rfLastTrainingAttemptAt=0;
+let rfTrainingAttempts=0;
 
 function selected(){
   return $('strategyMode')?.value==='RISE_FALL';
@@ -277,6 +279,7 @@ function applyContractsFor(data){
 function sendProposalForPending(p){
   if(!p||!rfSocket||rfSocket.readyState!==WebSocket.OPEN)return false;
   rfEffectiveHorizon=p.horizon;
+  if(p.learningDemo)setText('rfStatus','DEMO TRAINING · PROPUESTA '+p.action+' · '+p.horizon+'T');
   rfSocket.send(JSON.stringify({
     proposal:1,
     amount:Number(p.stake.toFixed(2)),
@@ -362,6 +365,7 @@ function onRfMessage(ev){
       bootstrapDemo:!!p.bootstrapDemo,
       contractId:''
     };
+    if(learningDemo)setText('rfStatus','DEMO TRAINING · PROPUESTA OK · COMPRANDO '+p.action+'…');
     rfSocket.send(JSON.stringify({buy:id,price:ask,req_id:++rfBuyReq}));
     p.resolve({bought:true,breakEven});
   }
@@ -490,7 +494,7 @@ function settleRfTrade(profit,t){
   }
 }
 
-async function evaluateAuto(pred){
+async function evaluateAuto(pred,forceTraining=false){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
   const opCount=Math.max(0,Number(pred.operationLearning?.totalOperations||0));
@@ -507,14 +511,18 @@ async function evaluateAuto(pred){
   }
 
   const epoch=Number(pred.signalEpoch||0);
-  if(!epoch||epoch===rfConfirm.lastEpoch)return;
+  if(!epoch)return;
+  if(!forceTraining&&epoch===rfConfirm.lastEpoch)return;
 
   // DEMO TRAINING: no filtros de entrada antes del aprendizaje.
   // Se toma la dirección que el modelo considera más probable, una operación
   // a la vez, stake base fijo, y el resultado se usa como nueva experiencia.
   if(trainingDemo){
-    const action=pred.direction==='FALL'?'FALL':'RISE';
+    const action=pred.learningAction==='FALL'||pred.direction==='FALL'?'FALL':'RISE';
     rfConfirm.lastEpoch=epoch;
+    rfLastTrainingAttemptAt=Date.now();
+    rfTrainingAttempts++;
+    setText('rfStatus','DEMO TRAINING · INTENTO #'+rfTrainingAttempts+' · SOLICITANDO '+action+'…');
     try{
       const out=await sendRfTrade({
         ...pred,
@@ -536,7 +544,7 @@ async function evaluateAuto(pred){
         setText('rfStatus','DEMO TRAINING · ESPERANDO CIERRE DE OPERACIÓN');
       }
     }catch(e){
-      setText('rfStatus','ERROR · '+(e?.message||e));
+      setText('rfStatus','ERROR DEMO TRAINING · '+(e?.message||e));
     }
     return;
   }
@@ -573,6 +581,18 @@ async function evaluateAuto(pred){
     setText('rfStatus','ERROR · '+(e?.message||e));
   }
 }
+async function trainingWatchdog(){
+  if(!selected()||!rfAuto||rfAccountType!=='demo'||!rfPrediction||rfPrediction.operationalReady)return;
+  if(rfActiveContract||rfPendingProposal||rfActiveTrade)return;
+  if(!rfReady){
+    setText('rfStatus','DEMO TRAINING · RECONECTANDO DERIV');
+    try{await connectRf()}catch(_){}
+    return;
+  }
+  if(Date.now()-rfLastTrainingAttemptAt<4500)return;
+  await evaluateAuto(rfPrediction,true);
+}
+
 async function poll(){
   try{
     const h=horizon();
@@ -588,6 +608,7 @@ async function poll(){
       rfLastEpoch=epoch;
       await evaluateAuto(rfPrediction);
     }
+    await trainingWatchdog();
   }catch(e){
     setText('rfCloudMode','OFFLINE');
     setText('rfStatus','CLOUD RISE/FALL NO DISPONIBLE');
@@ -609,10 +630,14 @@ async function startRf(){
   }
 
   rfAuto=true;
+  rfLastTrainingAttemptAt=0;
   const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
   const needsDemoTraining=rfAccountType==='demo'&&!rfPrediction?.operationalReady;
   if(needsDemoTraining){
-    setText('rfStatus','DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+' · HASTA VALIDACIÓN');
+    setText('rfStatus','DEMO TRAINING · INICIANDO PRIMERA OPERACIÓN · OPS '+ops);
+    if(rfPrediction){
+      setTimeout(()=>evaluateAuto(rfPrediction,true),50);
+    }
   }else if(rfPrediction?.operationalReady){
     setText('rfStatus','AUTO RISE/FALL VALIDADO · ESPERANDO ENTRADA');
   }else{
@@ -622,6 +647,7 @@ async function startRf(){
 
 function stopRf(){
   rfAuto=false;
+  rfLastTrainingAttemptAt=0;
   resetConfirmation();
   setText('rfStatus','DETENIDO · CLOUD SIGUE APRENDIENDO');
 }
