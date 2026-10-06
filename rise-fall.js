@@ -20,6 +20,13 @@ let rfPendingProposal=null;
 let rfActiveContract=null;
 let rfActiveTrade=null;
 let rfSettled=new Set();
+let rfContractSpec={
+  riseType:'CALL',
+  fallType:'PUT',
+  minTicks:null,
+  discovered:false
+};
+let rfEffectiveHorizon=1;
 
 let rfAuto=false;
 let rfPrediction=null;
@@ -40,7 +47,23 @@ function val(id,fallback){
 function stakeBase(){return Math.max(.01,val('rfStake',1))}
 function target(){return Math.max(.01,val('rfTarget',3))}
 function stopLoss(){return Math.max(.01,val('rfStopLoss',5))}
-function horizon(){return Math.max(1,Math.min(3,Math.round(val('rfHorizon',1))))}
+function horizon(){
+  const h=Math.round(val('rfHorizon',1));
+  return [1,2,3,5].includes(h)?h:1;
+}
+function parseTickDuration(v){
+  if(Number.isFinite(Number(v)))return Math.max(1,Math.round(Number(v)));
+  const m=String(v||'').match(/(\d+)\s*t/i);
+  return m?Math.max(1,Number(m[1])):null;
+}
+function effectiveHorizon(){
+  const requested=horizon();
+  const min=Number.isFinite(Number(rfContractSpec.minTicks))?Number(rfContractSpec.minTicks):null;
+  return min?Math.max(requested,min):requested;
+}
+function contractTypeFor(action){
+  return action==='RISE'?(rfContractSpec.riseType||'CALL'):(rfContractSpec.fallType||'PUT');
+}
 function setText(id,v){const e=$(id);if(e)e.textContent=v}
 function pct(x){return Number.isFinite(Number(x))?(Number(x)*100).toFixed(1)+'%':'—'}
 
@@ -72,7 +95,7 @@ function render(){
   const arrow=p.direction==='RISE'?'↑':'↓';
   const op=p.operationLearning||{};
   const opCount=Math.max(0,Number(op.totalOperations||0));
-  const trainingDemo=$('mode')?.value==='DEMO'&&(opCount<RF_BOOTSTRAP_OPS||!p.ready);
+  const trainingDemo=$('mode')?.value==='DEMO'&&!p.operationalReady;
   const visibleAction=trainingDemo?(p.direction||p.learningAction||p.action):p.action;
   const action=visibleAction==='RISE'?'RISE ↑':visibleAction==='FALL'?'FALL ↓':'ESPERAR';
   setText('rfDecision',action);
@@ -83,8 +106,8 @@ function render(){
   setText(
     'rfCloudMode',
     trainingDemo
-      ?('DEMO TRAINING '+Math.min(opCount,RF_BOOTSTRAP_OPS)+'/'+RF_BOOTSTRAP_OPS)
-      :(p.ready?'ACTIVO':'SHADOW')
+      ?('DEMO TRAINING · OPS '+opCount)
+      :(p.operationalReady?'ACTIVO':'SHADOW')
   );
   setText('rfPhase',String(p.phase||'—').replaceAll('_',' '));
   setText('rfTurn','GIRO '+pct(p.reversalProbability)+' · CONT '+pct(p.continuationProbability));
@@ -206,6 +229,11 @@ async function connectRf(){
     });
 
     rfSocket.onmessage=onRfMessage;
+    // Preguntamos a Deriv qué contratos CALL/PUT están realmente disponibles
+    // para R_75, en lugar de asumirlos a ciegas.
+    try{
+      rfSocket.send(JSON.stringify({contracts_for:'R_75',req_id:6001}));
+    }catch(_){}
     rfSocket.onclose=()=>{
       rfReady=false;
       clearInterval(rfPing);
@@ -219,13 +247,77 @@ async function connectRf(){
   }
 }
 
+function applyContractsFor(data){
+  const available=Array.isArray(data?.contracts_for?.available)?data.contracts_for.available:[];
+  if(!available.length)return;
+  const callputs=available.filter(x=>String(x?.contract_category||'').toLowerCase()==='callput'||['CALL','PUT'].includes(String(x?.contract_type||'').toUpperCase()));
+  const up=callputs.find(x=>String(x?.sentiment||'').toLowerCase()==='up')||callputs.find(x=>String(x?.contract_type||'').toUpperCase()==='CALL');
+  const down=callputs.find(x=>String(x?.sentiment||'').toLowerCase()==='down')||callputs.find(x=>String(x?.contract_type||'').toUpperCase()==='PUT');
+  if(up?.contract_type)rfContractSpec.riseType=String(up.contract_type).toUpperCase();
+  if(down?.contract_type)rfContractSpec.fallType=String(down.contract_type).toUpperCase();
+
+  const mins=callputs
+    .map(x=>parseTickDuration(x?.min_contract_duration))
+    .filter(x=>Number.isFinite(x)&&x>0);
+  if(mins.length)rfContractSpec.minTicks=Math.min(...mins);
+  rfContractSpec.discovered=true;
+
+  if(rfContractSpec.minTicks&&horizon()<rfContractSpec.minTicks){
+    const sel=$('rfHorizon');
+    if(sel&&[...sel.options].some(o=>Number(o.value)===rfContractSpec.minTicks)){
+      sel.value=String(rfContractSpec.minTicks);
+    }
+  }
+  setText(
+    'rfConnState',
+    rfAccountType.toUpperCase()+' CONECTADO · '+rfContractSpec.riseType+'/'+rfContractSpec.fallType+
+    (rfContractSpec.minTicks?' · MIN '+rfContractSpec.minTicks+'T':'')
+  );
+}
+function sendProposalForPending(p){
+  if(!p||!rfSocket||rfSocket.readyState!==WebSocket.OPEN)return false;
+  rfEffectiveHorizon=p.horizon;
+  rfSocket.send(JSON.stringify({
+    proposal:1,
+    amount:Number(p.stake.toFixed(2)),
+    basis:'stake',
+    contract_type:p.contractType,
+    currency:rfCurrency||'USD',
+    duration:p.horizon,
+    duration_unit:'t',
+    underlying_symbol:'R_75',
+    req_id:++rfProposalReq
+  }));
+  return true;
+}
+
 function onRfMessage(ev){
   let m;try{m=JSON.parse(ev.data)}catch(_){return}
 
+  if(m.msg_type==='contracts_for'){
+    applyContractsFor(m);
+    return;
+  }
+
   if(m.error){
     if(rfPendingProposal){
-      const p=rfPendingProposal;rfPendingProposal=null;
-      p.reject(new Error(m.error.message||'Error Deriv'));
+      const p=rfPendingProposal;
+      const message=String(m.error.message||m.error.code||'Error Deriv');
+      // Si el horizonte elegido no está permitido para Rise/Fall, hacemos un
+      // único fallback de entrenamiento a 5 ticks y lo hacemos visible.
+      const durationLike=/duration|tick|contract|available|minimum|min\b/i.test(message);
+      if(p.learningDemo&&durationLike&&Number(p.horizon)<5&&Number(p.retryCount||0)<1){
+        p.horizon=Math.max(5,Number(rfContractSpec.minTicks)||5);
+        p.retryCount=1;
+        rfPendingProposal=p;
+        const sel=$('rfHorizon');
+        if(sel&&[...sel.options].some(o=>Number(o.value)===p.horizon))sel.value=String(p.horizon);
+        setText('rfStatus','DEMO TRAINING · AJUSTANDO CONTRATO A '+p.horizon+'T');
+        sendProposalForPending(p);
+        return;
+      }
+      rfPendingProposal=null;
+      p.reject(new Error(message));
     }else{
       setText('rfStatus','ERROR DERIV · '+(m.error.message||''));
       rfActiveTrade=null;
@@ -265,6 +357,7 @@ function onRfMessage(ev){
       signalEpoch:p.signalEpoch,
       phase:p.phase,
       ready:p.ready,
+      operationalReady:!!p.operationalReady,
       learningDemo:!!p.learningDemo,
       bootstrapDemo:!!p.bootstrapDemo,
       contractId:''
@@ -319,36 +412,33 @@ function sendRfTrade(pred){
       resolve({bought:false});
       return;
     }
-    const stake=pred.bootstrapDemo
+    const stake=pred.learningDemo
       ?stakeBase()
       :Math.max(.01,Number(rfNextStake)||stakeBase());
-    const h=horizon();
-    rfPendingProposal={
+    const h=effectiveHorizon();
+    const p={
       resolve,reject,
       action,
+      contractType:contractTypeFor(action),
       probability:clamp(pred.directionProbability,0,1),
       stake,
       horizon:h,
+      requestedHorizon:horizon(),
+      retryCount:0,
       signalEpoch:Number(pred.signalEpoch||0),
       phase:String(pred.phase||'UNKNOWN'),
       ready:!!pred.ready,
+      operationalReady:!!pred.operationalReady,
       learningDemo:!!pred.learningDemo,
       bootstrapDemo:!!pred.bootstrapDemo
     };
-    rfSocket.send(JSON.stringify({
-      proposal:1,
-      amount:Number(stake.toFixed(2)),
-      basis:'stake',
-      contract_type:action==='RISE'?'CALL':'PUT',
-      currency:rfCurrency||'USD',
-      duration:h,
-      duration_unit:'t',
-      underlying_symbol:'R_75',
-      req_id:++rfProposalReq
-    }));
+    rfPendingProposal=p;
+    if(!sendProposalForPending(p)){
+      rfPendingProposal=null;
+      reject(new Error('No pude enviar propuesta Rise/Fall'));
+    }
   });
 }
-
 async function reportRfDemoExperience(t,profit){
   if(!t||rfAccountType!=='demo')return;
   const id=String(t.contractId||('RF:'+t.signalEpoch+':'+t.action+':'+t.horizon));
@@ -408,9 +498,9 @@ async function evaluateAuto(pred){
   // La madurez del predictor SHADOW no sustituye experiencia de contratos.
   // En DEMO continúa entrenando hasta tener suficientes operaciones reales
   // y, si el predictor aún no está listo, sigue entrenando después de ese punto.
-  const trainingDemo=demo&&(opCount<RF_BOOTSTRAP_OPS||!pred.ready);
+  const trainingDemo=demo&&!pred.operationalReady;
 
-  if(!pred.ready&&!demo){
+  if(!pred.operationalReady&&!demo){
     resetConfirmation();
     setText('rfStatus','SHADOW · REAL BLOQUEADO · ENTRENAMIENTO DEMO NECESARIO');
     return;
@@ -437,7 +527,7 @@ async function evaluateAuto(pred){
           'rfStatus',
           'DEMO TRAINING · '+action+
           ' · P '+pct(pred.directionProbability)+
-          ' · OPS '+opCount+
+          ' · '+effectiveHorizon()+'T · OPS '+opCount+
           ' · APRENDE AL CERRAR'
         );
       }else if(out?.busy){
@@ -518,11 +608,11 @@ async function startRf(){
 
   rfAuto=true;
   const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
-  const needsDemoTraining=rfAccountType==='demo'&&(ops<RF_BOOTSTRAP_OPS||!rfPrediction?.ready);
+  const needsDemoTraining=rfAccountType==='demo'&&!rfPrediction?.operationalReady;
   if(needsDemoTraining){
     setText('rfStatus','DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+'/'+RF_BOOTSTRAP_OPS);
-  }else if(rfPrediction?.ready){
-    setText('rfStatus','AUTO RISE/FALL ACTIVO · ESPERANDO CONFIRMACIÓN');
+  }else if(rfPrediction?.operationalReady){
+    setText('rfStatus','AUTO RISE/FALL VALIDADO · ESPERANDO ENTRADA');
   }else{
     setText('rfStatus','SHADOW ACTIVO · REAL BLOQUEADO HASTA VALIDACIÓN');
   }
