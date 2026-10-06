@@ -1478,44 +1478,6 @@ function committeeForCandidate(views,digit){
   };
 }
 
-function sessionRegressionGuard(nextOp){
-  nextOp=Math.max(1,Math.floor(safeNum(nextOp,1)));
-  const critical=nextOp>=2&&nextOp<=7;
-
-  let cloudN=0,cloudRate=UNIFORM;
-  if(cloudMasterFresh()&&Array.isArray(cloudMaster.sessionAnalytics?.byPosition)&&nextOp<=50){
-    const row=cloudMaster.sessionAnalytics.byPosition[nextOp-1]||{};
-    cloudN=Math.max(0,Math.floor(safeNum(row.trades,0)));
-    const m=Math.max(0,safeNum(row.matches,0));
-    cloudRate=(m+18*UNIFORM)/(cloudN+18);
-  }
-
-  const localPool=(mem.recentTrades||[])
-    .filter(t=>!t?.manual&&safeNum(t?.op,0)>=2&&safeNum(t?.op,0)<=7)
-    .slice(-36);
-  const localN=localPool.length;
-  const localMatches=localPool.reduce((n,t)=>n+(t?.loss?1:0),0);
-  const localRate=(localMatches+12*UNIFORM)/(localN+12);
-
-  let evidenceRate=UNIFORM;
-  if(cloudN>=20)evidenceRate=Math.max(evidenceRate,cloudRate);
-  if(localN>=8)evidenceRate=Math.max(evidenceRate,localRate);
-
-  let level=0;
-  if(critical){
-    level=clamp((evidenceRate-.10)/.055,0,1);
-    if(localN>=8&&localMatches>=2)level=Math.max(level,.45);
-    if(localN>=12&&localRate>=.16)level=Math.max(level,.72);
-  }
-
-  return {
-    nextOp,critical,level,
-    cloudN,cloudRate,
-    localN,localMatches,localRate,
-    evidenceRate
-  };
-}
-
 function predict(){
   if(hist.length<8)return null;
   const h=horizonNow();
@@ -1704,8 +1666,6 @@ function predict(){
   // Protección por posición de sesión: el problema reportado se concentra
   // en MATCH tempranos. Las primeras entradas reciben un poco más de cautela,
   // sin bloquear toda la sesión.
-  const nextSessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
-  const regressionGuard=sessionRegressionGuard(nextSessionOp);
   const earlyGuard=session.settled<=1?1:session.settled<7?.38:0;
 
   // El tiempo esperando NO vuelve más permisiva a la IA.
@@ -1746,7 +1706,7 @@ function predict(){
 
     const committee=committeeForCandidate(views,x.d);
     const riskCeiling=clamp(
-      learnedRiskCeiling-clusterGuard*.006-earlyGuard*.0025-regressionGuard.level*.0038,
+      learnedRiskCeiling-clusterGuard*.006-earlyGuard*.0025,
       .084,
       NORMAL_RISK_CEILING
     );
@@ -1760,24 +1720,23 @@ function predict(){
       recoveryRatio*.030+
       streakInfo.qualityPenalty*.45+
       clusterGuard*.055+
-      earlyGuard*.018+
-      regressionGuard.level*.026;
+      earlyGuard*.018;
 
     const minConf=Math.max(
       safeNum(researchProfile?.minConfidence,.22),
-      (driftActive?.27:.23)+recoveryRatio*.030+clusterGuard*.065+earlyGuard*.018+regressionGuard.level*.022
+      (driftActive?.27:.23)+recoveryRatio*.030+clusterGuard*.065+earlyGuard*.018
     );
 
     const minConsensus=Math.max(
       safeNum(researchProfile?.minConsensus,.54),
-      .54+clusterGuard*.05+earlyGuard*.040+regressionGuard.level*.045
+      .54+clusterGuard*.05+earlyGuard*.040
     );
 
     const robustCeiling=Math.min(
       safeNum(researchProfile?.robustCeiling,.114),
-      .114-clusterGuard*.005-earlyGuard*.003-regressionGuard.level*.0035
+      .114-clusterGuard*.005-earlyGuard*.003
     );
-    const maxOod=.80-clusterGuard*.07-earlyGuard*.035-regressionGuard.level*.030;
+    const maxOod=.80-clusterGuard*.07-earlyGuard*.035;
 
     const movementRisk=futureMove?.ready&&Array.isArray(futureMove.digitP)
       ?safeNum(futureMove.digitP[x.d],UNIFORM)
@@ -1825,8 +1784,6 @@ function predict(){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
     reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo ${fmtPct(selected.effectiveRisk)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
-  }else if(regressionGuard.level>.15){
-    reason=`GUARDIA ANTI-REGRESIÓN #${regressionGuard.nextOp}: la franja 2–7 está mostrando más MATCH de lo esperado; busco mejor candidato sin añadir espera artificial.`;
   }else if(clusterGuard>0){
     reason=`CAUTELA ANTI-MATCH: detecté ${recentMatches} MATCH en las últimas ${recentSettled.length} operaciones; sigo analizando pero exijo más calidad antes de comprar.`;
   }else if(recoveryRatio>0){
@@ -1850,11 +1807,10 @@ function predict(){
     h,p,best,second,
     confidence:selected.confidence,
     edge:selected.edge,
-    requiredEdge:Math.max(0,UNIFORM-clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.0025-regressionGuard.level*.0038,.084,NORMAL_RISK_CEILING)),
-    riskCeiling:clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.0025-regressionGuard.level*.0038,.084,NORMAL_RISK_CEILING),
+    requiredEdge:Math.max(0,UNIFORM-clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.0025,.084,NORMAL_RISK_CEILING)),
+    riskCeiling:clamp(learnedRiskCeiling-clusterGuard*.006-earlyGuard*.0025,.084,NORMAL_RISK_CEILING),
     clusterGuard,
     earlyGuard,
-    regressionGuard,
     adaptivePatience,
     waitTicks:autoWaitTicks,
     entryResearch:research?{
@@ -1930,11 +1886,8 @@ function renderDecision(d){
   }
   if($('researchState')){
     const er=d.entryResearch;
-    const rg=d.regressionGuard;
-    $('researchState').textContent=rg&&safeNum(rg.level,0)>.15
-      ?('ANTI-REG #'+rg.nextOp+' · '+Math.round(rg.level*100)+'% · PROTEGIENDO RACHA')
-      :(!er?'CLOUD APRENDE':
-        (String(er.recommended||'balanced').toUpperCase()+' · '+Math.round(safeNum(er.resolved,0))+' TESTS'+(er.ready?' · ACTIVO':' · SHADOW')));
+    $('researchState').textContent=!er?'CLOUD APRENDE':
+      (String(er.recommended||'balanced').toUpperCase()+' · '+Math.round(safeNum(er.resolved,0))+' TESTS'+(er.ready?' · ACTIVO':' · SHADOW'));
   }
   if($('motionState')){
     const m=d.motion;
