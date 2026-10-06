@@ -1691,10 +1691,15 @@ function predict(){
   // El laboratorio cloud solo puede endurecer la entrada; nunca volverla más permisiva.
   const research=cloudMasterFresh()?cloudMaster.entryResearch:null;
   const researchProfile=research?.ready?research.profile:null;
-  const learnedRiskCeiling=Math.min(
-    NORMAL_RISK_CEILING,
-    safeNum(researchProfile?.riskCeiling,NORMAL_RISK_CEILING)
-  );
+  // El laboratorio solo gana autoridad en proporción a la cobertura que
+  // realmente haya demostrado sobre datos futuros.
+  const researchCoverage=clamp(safeNum(researchProfile?.coverage,0),0,1);
+  const researchStrength=researchProfile
+    ?clamp((researchCoverage-.05)/.25,0,1)
+    :0;
+  const learnedRiskCeiling=
+    NORMAL_RISK_CEILING-
+    researchStrength*(NORMAL_RISK_CEILING-safeNum(researchProfile?.riskCeiling,NORMAL_RISK_CEILING));
 
   // Protección especial contra MATCH temprano: las primeras dos operaciones
   // necesitan evidencia más robusta, no simplemente más tiempo de espera.
@@ -1757,18 +1762,21 @@ function predict(){
       clusterGuard*.055+
       earlyGuard*.018;
 
+    const researchMinConf=.22+researchStrength*(safeNum(researchProfile?.minConfidence,.22)-.22);
     const minConf=Math.max(
-      safeNum(researchProfile?.minConfidence,.22),
+      researchMinConf,
       (driftActive?.27:.23)+recoveryRatio*.030+clusterGuard*.065+earlyGuard*.018
     );
 
+    const researchMinConsensus=.54+researchStrength*(safeNum(researchProfile?.minConsensus,.54)-.54);
     const minConsensus=Math.max(
-      safeNum(researchProfile?.minConsensus,.54),
+      researchMinConsensus,
       .54+clusterGuard*.05+earlyGuard*.040
     );
 
+    const researchRobust=.118-researchStrength*(.118-safeNum(researchProfile?.robustCeiling,.118));
     const robustCeiling=Math.min(
-      safeNum(researchProfile?.robustCeiling,.114),
+      researchRobust,
       .114-clusterGuard*.005-earlyGuard*.003
     );
     const maxOod=.80-clusterGuard*.07-earlyGuard*.035;
@@ -1852,7 +1860,9 @@ function predict(){
       ready:!!research.ready,
       recommended:String(research.recommended||'balanced'),
       resolved:safeNum(research.resolved,0),
-      riskCeiling:safeNum(research.profile?.riskCeiling,NORMAL_RISK_CEILING)
+      riskCeiling:safeNum(research.profile?.riskCeiling,NORMAL_RISK_CEILING),
+      coverage:researchCoverage,
+      strength:researchStrength
     }:null,
     recentMatches,
     health,
@@ -1922,7 +1932,8 @@ function renderDecision(d){
   if($('researchState')){
     const er=d.entryResearch;
     $('researchState').textContent=!er?'CLOUD APRENDE':
-      (String(er.recommended||'balanced').toUpperCase()+' · '+Math.round(safeNum(er.resolved,0))+' TESTS'+(er.ready?' · ACTIVO':' · SHADOW'));
+      (String(er.recommended||'balanced').toUpperCase()+' · '+Math.round(safeNum(er.resolved,0))+' TESTS'+
+        (er.ready?' · PESO '+Math.round(clamp(safeNum(er.strength,0),0,1)*100)+'%':' · SHADOW'));
   }
   if($('motionState')){
     const m=d.motion;
