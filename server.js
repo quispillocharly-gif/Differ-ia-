@@ -62,6 +62,14 @@ let rangeBootstrapDone = false;
 let riseFallBootstrapDone = false;
 let riseFallPending = [];
 let riseFallLastPrediction = null;
+let riseFallContractInfo={
+  discovered:false,
+  riseType:'CALL',
+  fallType:'PUT',
+  minTicks:null,
+  availableTypes:[],
+  updatedAt:0
+};
 let status = 'BOOTING';
 
 function blankP(){ return Array(10).fill(UNIFORM); }
@@ -613,6 +621,35 @@ function normalizeMemory(x){
   return m;
 }
 
+function parseTickDurationValue(v){
+  if(Number.isFinite(Number(v)))return Math.max(1,Math.round(Number(v)));
+  const m=String(v||'').match(/(\d+)\s*t/i);
+  return m?Math.max(1,Number(m[1])):null;
+}
+function updateRiseFallContractInfo(msg){
+  const available=Array.isArray(msg?.contracts_for?.available)?msg.contracts_for.available:[];
+  if(!available.length)return;
+  const cp=available.filter(x=>
+    String(x?.contract_category||'').toLowerCase()==='callput' ||
+    ['CALL','PUT'].includes(String(x?.contract_type||'').toUpperCase())
+  );
+  if(!cp.length)return;
+  const up=cp.find(x=>String(x?.sentiment||'').toLowerCase()==='up')||
+           cp.find(x=>String(x?.contract_type||'').toUpperCase()==='CALL');
+  const down=cp.find(x=>String(x?.sentiment||'').toLowerCase()==='down')||
+             cp.find(x=>String(x?.contract_type||'').toUpperCase()==='PUT');
+  const mins=cp.map(x=>parseTickDurationValue(x?.min_contract_duration)).filter(Number.isFinite);
+  riseFallContractInfo={
+    discovered:true,
+    riseType:String(up?.contract_type||'CALL').toUpperCase(),
+    fallType:String(down?.contract_type||'PUT').toUpperCase(),
+    minTicks:mins.length?Math.min(...mins):null,
+    availableTypes:[...new Set(cp.map(x=>String(x?.contract_type||'').toUpperCase()).filter(Boolean))],
+    updatedAt:Date.now()
+  };
+  console.log('Rise/Fall contracts:',JSON.stringify(riseFallContractInfo));
+}
+
 function freshRiseFallPerf(){
   return {
     resolved:0,
@@ -1120,6 +1157,7 @@ function riseFallStatus(){
     isolated:true,
     persistence:'cloud',
     learnsWhenBrowserClosed:true,
+    contractInfo:riseFallContractInfo,
     updatedAt:riseFallMem.updatedAt,
     tickCount:riseFallMem.tickCount,
     trainedSamples:riseFallMem.trainedSamples,
@@ -2655,6 +2693,7 @@ function connectDeriv(){
   ws.on('open',()=>{
     status='ONLINE';
     console.log('Connected to Deriv public feed');
+    ws.send(JSON.stringify({contracts_for:SYMBOL,req_id:41}));
     ws.send(JSON.stringify({ticks_history:SYMBOL,count:700,end:'latest',style:'ticks'}));
   });
 
@@ -2664,6 +2703,11 @@ function connectDeriv(){
 
     if(m.error){
       console.error('Deriv error:',m.error.message||m.error);
+      return;
+    }
+
+    if(m.contracts_for){
+      updateRiseFallContractInfo(m);
       return;
     }
 
@@ -3026,6 +3070,7 @@ app.get('/api/rise-fall/prediction',(req,res)=>{
     symbol:SYMBOL,
     isolated:true,
     learnsWhenBrowserClosed:true,
+    contractInfo:riseFallContractInfo,
     prediction:riseFallPredict(h),
     updatedAt:riseFallMem.updatedAt
   });
