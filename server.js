@@ -28,6 +28,8 @@ const TOURNAMENT_NAMES = ['coreStable','base','recentFocus','contextFocus','robu
 const TOURNAMENT_MIN_SAMPLES = 2000;
 const TOURNAMENT_RECENT = 900;
 const TOURNAMENT_COOLDOWN_TICKS = 1200;
+const TOURNAMENT_REVIEW_TICKS = 60;
+const TOURNAMENT_CONFIRM_REVIEWS = 3;
 const MASTER_BRAIN_VERSION = 'NEXUS-MASTER-2';
 const MOVE_BUCKETS = ['DOWN_JUMP','DOWN_MED','DOWN_SMALL','FLAT','UP_SMALL','UP_MED','UP_JUMP'];
 const MOVE_CENTERS = [-14,-6,-2,0,2,6,14];
@@ -382,6 +384,9 @@ function freshTournament(){
     promotions:0,
     lastPromotionAt:0,
     lastPromotionTick:0,
+    lastReviewTick:0,
+    pendingChallenger:'',
+    pendingCount:0,
     candidates
   };
 }
@@ -647,6 +652,9 @@ function normalizeMemory(x){
   tournament.promotions=Math.max(0,Math.floor(safeNum(tournament.promotions,0)));
   tournament.lastPromotionAt=Math.max(0,safeNum(tournament.lastPromotionAt,0));
   tournament.lastPromotionTick=Math.max(0,safeNum(tournament.lastPromotionTick,0));
+  tournament.lastReviewTick=Math.max(0,safeNum(tournament.lastReviewTick,0));
+  tournament.pendingChallenger=TOURNAMENT_NAMES.includes(String(tournament.pendingChallenger||''))?String(tournament.pendingChallenger):'';
+  tournament.pendingCount=Math.max(0,Math.min(TOURNAMENT_CONFIRM_REVIEWS,Math.floor(safeNum(tournament.pendingCount,0))));
   tournament.candidates={};
   TOURNAMENT_NAMES.forEach(name=>{
     const raw=rawTournament.candidates?.[name]||{};
@@ -760,6 +768,13 @@ function freshRiseFallOperationLearning(){
     seen:{},updatedAt:0
   };
 }
+function freshRiseFallSignalState(){
+  const out={};
+  RF_HORIZONS.forEach(h=>{
+    out[h]={action:'WAIT',age:0,lastEpoch:0,switches:0,holds:0};
+  });
+  return out;
+}
 function freshRiseFallMemory(){
   const models={},global={},performance={};
   RF_HORIZONS.forEach(h=>{
@@ -778,6 +793,7 @@ function freshRiseFallMemory(){
     performance,
     expertPerformance:freshRiseFallExpertPerformance(),
     drift:freshRiseFallDrift(),
+    signalState:freshRiseFallSignalState(),
     operationLearning:freshRiseFallOperationLearning(),
     lastEpoch:0,
     saves:0
@@ -792,6 +808,7 @@ function normalizeRiseFallMemory(x){
   m.performance=m.performance&&typeof m.performance==='object'?m.performance:base.performance;
   m.expertPerformance=m.expertPerformance&&typeof m.expertPerformance==='object'?m.expertPerformance:base.expertPerformance;
   m.drift=m.drift&&typeof m.drift==='object'?m.drift:base.drift;
+  m.signalState=m.signalState&&typeof m.signalState==='object'?m.signalState:base.signalState;
 
   RF_HORIZONS.forEach(h=>{
     m.models[h]=m.models[h]&&typeof m.models[h]==='object'?m.models[h]:{};
@@ -839,6 +856,15 @@ function normalizeRiseFallMemory(x){
       lossWindow:Array.isArray(rawDrift.lossWindow)
         ?rawDrift.lossWindow.map(v=>clamp(safeNum(v,0),0,1)).slice(-RF_DRIFT_MAX_WINDOW)
         :[]
+    };
+    const rawSignal=m.signalState[h]&&typeof m.signalState[h]==='object'?m.signalState[h]:{};
+    const signalAction=['RISE','FALL'].includes(String(rawSignal.action||''))?String(rawSignal.action):'WAIT';
+    m.signalState[h]={
+      action:signalAction,
+      age:Math.max(0,Math.min(12,Math.floor(safeNum(rawSignal.age,0)))),
+      lastEpoch:Math.max(0,Math.floor(safeNum(rawSignal.lastEpoch,0))),
+      switches:Math.max(0,Math.floor(safeNum(rawSignal.switches,0))),
+      holds:Math.max(0,Math.floor(safeNum(rawSignal.holds,0)))
     };
   });
 
@@ -1318,13 +1344,48 @@ function riseFallPredict(h=1){
   const gapFloor=clamp(.018+(1-own.support)*.014+modelPenalty*.012,.018,.044);
   const flatCeiling=clamp(.56-own.support*.08-modelPenalty*.04,.44,.56);
 
-  let action='WAIT';
+  let rawAction='WAIT';
   if(
     conditionalDirectionProbability>=directionFloor &&
     conditionalGap>=gapFloor &&
     flat<=flatCeiling
   ){
-    action=direction;
+    rawAction=direction;
+  }
+
+  // Soft hysteresis inside the predictor. It does NOT alter the 2-confirmation
+  // execution rule. It only prevents a strong RISE/FALL signal from disappearing
+  // one tick later because of a tiny probability wobble.
+  const state=riseFallMem.signalState?.[h]||{action:'WAIT',age:0,lastEpoch:0,switches:0,holds:0};
+  let action=rawAction;
+  let hysteresis='RAW';
+
+  if(state.action==='RISE'||state.action==='FALL'){
+    if(rawAction==='WAIT'&&direction===state.action){
+      const holdDirectionFloor=Math.max(.502,directionFloor-.007);
+      const holdGapFloor=Math.max(.008,gapFloor*.58);
+      const holdFlatCeiling=Math.min(.60,flatCeiling+.030);
+      const holdOk=
+        conditionalDirectionProbability>=holdDirectionFloor &&
+        conditionalGap>=holdGapFloor &&
+        flat<=holdFlatCeiling &&
+        safeNum(state.age,0)<=3;
+      if(holdOk){
+        action=state.action;
+        hysteresis='HOLD';
+      }
+    }else if((rawAction==='RISE'||rawAction==='FALL')&&rawAction!==state.action){
+      const strongSwitch=
+        conditionalDirectionProbability>=directionFloor+.010 &&
+        conditionalGap>=gapFloor+.010 &&
+        flat<=Math.max(.38,flatCeiling-.012);
+      if(!strongSwitch){
+        action='WAIT';
+        hysteresis='BLOCK_WEAK_SWITCH';
+      }else{
+        hysteresis='STRONG_SWITCH';
+      }
+    }
   }
 
   const marketSamples=Math.min(
@@ -1343,6 +1404,7 @@ function riseFallPredict(h=1){
     signalEpoch:lastEpoch,
     generatedAt:Date.now(),
     action,
+    rawAction,
     direction,
     directionProbability,
     conditionalDirectionProbability,
@@ -1381,7 +1443,12 @@ function riseFallPredict(h=1){
       modelPenalty,
       directionFloor,
       gapFloor,
-      flatCeiling
+      flatCeiling,
+      hysteresis,
+      previousAction:state.action,
+      signalAge:safeNum(state.age,0),
+      signalSwitches:safeNum(state.switches,0),
+      signalHolds:safeNum(state.holds,0)
     },
     validation:{
       resolved:perf.resolved,
@@ -1453,6 +1520,26 @@ function riseFallSchedule(counter){
   for(const h of RF_HORIZONS){
     const pred=riseFallPredict(h);
     if(!pred||!priceHist.length)continue;
+
+    const state=riseFallMem.signalState[h]||(riseFallMem.signalState[h]={
+      action:'WAIT',age:0,lastEpoch:0,switches:0,holds:0
+    });
+
+    if(pred.action==='RISE'||pred.action==='FALL'){
+      if(state.action===pred.action){
+        state.age=Math.min(12,Math.max(1,safeNum(state.age,0)+1));
+      }else{
+        if(state.action==='RISE'||state.action==='FALL')state.switches++;
+        state.action=pred.action;
+        state.age=1;
+      }
+      if(pred.adaptation?.hysteresis==='HOLD')state.holds++;
+    }else{
+      state.action='WAIT';
+      state.age=0;
+    }
+    state.lastEpoch=Math.max(0,Math.floor(safeNum(pred.signalEpoch,0)));
+
     riseFallPending.push({
       due:counter+h,
       h,
@@ -2524,16 +2611,50 @@ function calibrateRisk(rawRisk){
   const raw=clamp(safeNum(rawRisk,UNIFORM),.005,.30);
   const c=mem.shadow.calibration;
   const b=c.bins[calibrationBin(raw)];
-  const prior=70;
+
+  // Local reliability for this probability band.
+  const prior=90;
   const posterior=(safeNum(b.matches,0)+prior*raw)/(safeNum(b.n,0)+prior);
-  const evidence=1-Math.exp(-safeNum(b.n,0)/90);
-  const globalRatio=clamp(
-    safeNum(c.observedEWMA,UNIFORM)/Math.max(.01,safeNum(c.predictedEWMA,UNIFORM)),
-    .65,1.55
-  );
-  const globalAdjusted=raw*globalRatio;
-  const blended=(1-evidence)*globalAdjusted+evidence*posterior;
-  return clamp(blended,Math.max(.005,raw*.55),Math.min(.30,raw*1.65));
+  const binEvidence=1-Math.exp(-safeNum(b.n,0)/120);
+
+  // Global under/over-prediction. Under-estimation is corrected more strongly
+  // because calling a 14% MATCH environment "8%" is exactly the failure we want to avoid.
+  const predicted=clamp(safeNum(c.predictedEWMA,UNIFORM),.01,.30);
+  const observed=clamp(safeNum(c.observedEWMA,UNIFORM),.01,.30);
+  const ratio=clamp(observed/Math.max(.01,predicted),.78,2.25);
+  const bias=clamp(observed-predicted,-.025,.085);
+  const ratioAdjusted=raw*ratio;
+  const biasAdjusted=raw+bias;
+  const globalAdjusted=bias>0
+    ?Math.max(ratioAdjusted,biasAdjusted)
+    :.55*ratioAdjusted+.45*biasAdjusted;
+
+  // Null-model shrinkage: if rank #1 has not proved a durable edge below 10%
+  // out of sample, extreme "low risk" estimates are pulled back toward 10%.
+  // This prevents the AI from manufacturing confidence from random fluctuations.
+  const rank0=mem.master?.rankStats?.[0]||{n:0,matches:0};
+  const rankN=Math.max(0,safeNum(rank0.n,0));
+  const rankRate=(safeNum(rank0.matches,0)+80*UNIFORM)/(rankN+80);
+  const rankEvidence=1-Math.exp(-rankN/2500);
+  const provenEdge=Math.max(0,UNIFORM-rankRate)*rankEvidence;
+  const structureTrust=clamp(.12+provenEdge/.010*.88,.12,1);
+  const shrunkRaw=UNIFORM+(raw-UNIFORM)*structureTrust;
+
+  let calibrated=(1-binEvidence)*globalAdjusted+binEvidence*posterior;
+  calibrated=Math.max(calibrated,shrunkRaw);
+
+  // A short recent window is only used as a one-sided safety floor.
+  // It never fabricates a lower risk; it only reacts when recent MATCH frequency rises.
+  const recent=(mem.shadow.recent||[]).slice(-140);
+  if(recent.length>=45){
+    const recentMatches=recent.reduce((n,x)=>n+(x?.match?1:0),0);
+    const recentPosterior=(recentMatches+45*UNIFORM)/(recent.length+45);
+    const recentEvidence=1-Math.exp(-recent.length/85);
+    const recentFloor=UNIFORM+Math.max(0,recentPosterior-UNIFORM)*recentEvidence*.72;
+    if(observed>predicted)calibrated=Math.max(calibrated,recentFloor);
+  }
+
+  return clamp(calibrated,.005,.30);
 }
 function updateCalibration(rawRisk,match){
   const c=mem.shadow.calibration;
@@ -2726,6 +2847,7 @@ function tournamentScore(stat){
 function updateTournament(candidateSet,actual){
   const t=mem.shadow.tournament;
   if(!candidateSet||!t)return;
+
   TOURNAMENT_NAMES.forEach(name=>{
     const pred=candidateSet[name],st=t.candidates[name];
     if(!pred||!st||!Array.isArray(pred.probabilities))return;
@@ -2749,42 +2871,77 @@ function updateTournament(candidateSet,actual){
 
   const current=t.candidates[t.champion];
   if(!current||current.samples<TOURNAMENT_MIN_SAMPLES)return;
-  const cooldownActive=mem.tickCount-safeNum(t.lastPromotionTick,0)<TOURNAMENT_COOLDOWN_TICKS;
 
+  // Do not reconsider the champion every tick. Repeated reviews on overlapping
+  // noisy samples were causing model flip-flopping.
+  if(mem.tickCount-safeNum(t.lastReviewTick,0)<TOURNAMENT_REVIEW_TICKS)return;
+  t.lastReviewTick=mem.tickCount;
+
+  const cooldownActive=mem.tickCount-safeNum(t.lastPromotionTick,0)<TOURNAMENT_COOLDOWN_TICKS;
   let bestName=t.champion,bestScore=tournamentScore(current);
+
   for(const name of TOURNAMENT_NAMES){
     if(name===t.champion)continue;
     const st=t.candidates[name];
     if(!st||st.samples<TOURNAMENT_MIN_SAMPLES||st.recent.length<TOURNAMENT_RECENT)continue;
+
     const score=tournamentScore(st);
     const recentGain=tournamentRecentRate(current)-tournamentRecentRate(st);
-    const brierOkay=st.brierEWMA<=current.brierEWMA+.0015;
-    const logOkay=st.logLossEWMA<=current.logLossEWMA+.025;
-    const longRunOkay=st.matchRate<=current.matchRate+.0002;
+    const brierOkay=st.brierEWMA<=current.brierEWMA+.0012;
+    const logOkay=st.logLossEWMA<=current.logLossEWMA+.020;
+    const longRunOkay=st.matchRate<=current.matchRate+.0001;
+
     const fastLane=
-      recentGain>=.009 &&
+      recentGain>=.011 &&
       longRunOkay &&
       brierOkay &&
       logOkay &&
-      score<bestScore-.004;
+      score<bestScore-.0050;
+
     const normalLane=
       !cooldownActive &&
-      recentGain>=.006 &&
+      recentGain>=.0065 &&
       longRunOkay &&
       brierOkay &&
       logOkay &&
-      score<bestScore-.0035;
+      score<bestScore-.0038;
+
     if(fastLane||normalLane){
-      bestName=name;bestScore=score;
+      bestName=name;
+      bestScore=score;
     }
   }
-  if(bestName!==t.champion){
-    console.log('Champion promoted:',{from:t.champion,to:bestName,tick:mem.tickCount});
-    t.champion=bestName;
-    t.promotions++;
-    t.lastPromotionAt=Date.now();
-    t.lastPromotionTick=mem.tickCount;
+
+  if(bestName===t.champion){
+    t.pendingChallenger='';
+    t.pendingCount=0;
+    return;
   }
+
+  // Hysteresis: the same challenger must remain superior across several
+  // separated reviews before it can replace the current champion.
+  if(t.pendingChallenger===bestName)t.pendingCount++;
+  else{
+    t.pendingChallenger=bestName;
+    t.pendingCount=1;
+  }
+
+  if(t.pendingCount<TOURNAMENT_CONFIRM_REVIEWS)return;
+  if(cooldownActive){
+    const st=t.candidates[bestName];
+    const recentGain=tournamentRecentRate(current)-tournamentRecentRate(st);
+    if(recentGain<.011)return;
+  }
+
+  console.log('Champion promoted after hysteresis:',{
+    from:t.champion,to:bestName,tick:mem.tickCount,reviews:t.pendingCount
+  });
+  t.champion=bestName;
+  t.promotions++;
+  t.lastPromotionAt=Date.now();
+  t.lastPromotionTick=mem.tickCount;
+  t.pendingChallenger='';
+  t.pendingCount=0;
 }
 function tournamentSummary(){
   const t=mem.shadow.tournament;
