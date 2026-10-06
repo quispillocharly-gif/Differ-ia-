@@ -57,7 +57,7 @@ let cloudMaster={
   counterfactualTicks:0,digitCalibration:null,rankStats:null,errorContexts:[],
   streakStats:null,expertWeights:{},expertPerformance:{},prequential:null,drift:null,champion:'',
   shadowMatchRate:UNIFORM,collaborativeAccepted:0,collaborativeMatchRate:UNIFORM,
-  sessionAnalytics:null,movementPredictor:null,rangePredictor:null,entryResearch:null
+  sessionAnalytics:null,movementPredictor:null,rangePredictor:null,entryResearch:null,calibration:null
 };
 
 function blankP(){return Array(10).fill(UNIFORM)}
@@ -374,6 +374,16 @@ function normalizeCloudMaster(x){
       brierEWMA:clamp(safeNum(x.prequential?.brierEWMA,BASELINE_BRIER),0,1),
       logLossEWMA:clamp(safeNum(x.prequential?.logLossEWMA,BASELINE_LOGLOSS),.01,12)
     },
+    calibration:(()=>{
+      const q=x.calibration&&typeof x.calibration==='object'?x.calibration:{};
+      return {
+        samples:Math.max(0,Math.floor(safeNum(q.samples,0))),
+        brierEWMA:clamp(safeNum(q.brierEWMA,BASELINE_BRIER),0,1),
+        predictedEWMA:clamp(safeNum(q.predictedEWMA,UNIFORM),0,.5),
+        observedEWMA:clamp(safeNum(q.observedEWMA,UNIFORM),0,.5),
+        ece:clamp(safeNum(q.ece,0),0,.5)
+      };
+    })(),
     drift:{
       active:!!x.drift?.active,
       events:Math.max(0,Math.floor(safeNum(x.drift?.events,0))),
@@ -468,7 +478,12 @@ function renderMasterState(){
     if(study)study.textContent='ESPERANDO MASTER';
     return;
   }
-  if(el)el.textContent=(cloudMaster.version||'MASTER')+' · R'+cloudMaster.revision+' · '+cloudMaster.cloudTicks+'T';
+  if(el){
+    const cal=cloudMaster.calibration||{};
+    const bias=safeNum(cal.observedEWMA,UNIFORM)-safeNum(cal.predictedEWMA,UNIFORM);
+    el.textContent=(cloudMaster.version||'MASTER')+' · R'+cloudMaster.revision+' · '+cloudMaster.cloudTicks+'T'+
+      (safeNum(cal.samples,0)>100?(' · CAL '+(bias>0?'+':'')+(bias*100).toFixed(1)+'pp'):'');
+  }
   if(study){
     const s=cloudMaster.sessionAnalytics||{};
     if(safeNum(s.matches,0)>0){
@@ -1584,7 +1599,13 @@ function predict(){
     const cpp=normalizeDist(cp.probabilities);
     const freshness=clamp(1-(Date.now()-cp.generatedAt)/3500,.35,1);
     const strength=clamp((.62+.18*clamp(safeNum(cp.confidence,0),0,1))*freshness,.35,.82);
-    cloudAnchor={p:cpp,strength};
+    cloudAnchor={
+      p:cpp,
+      strength,
+      calibratedRisks:Array.isArray(cp.calibratedRisks)&&cp.calibratedRisks.length===10
+        ?cp.calibratedRisks.slice()
+        :null
+    };
     modelViews.push({name:'cloud',p:cpp,w:1.35*strength,n:safeNum(cloudMaster.prequential?.samples,mem.prequential.samples)});
   }
 
@@ -1631,7 +1652,13 @@ function predict(){
   const contextCoverage=clamp(contextNodes.length/3,0,1);
   const recoveryRatio=clamp(safeNum(mem.recovery?.remaining,0)/12,0,1);
   const streakInfo=streakRiskInfo(session.streak);
-  const health=clamp(1-recentLoss*3.3-calibrationPenalty*2.2-Math.max(0,brier-BASELINE_BRIER)*6-(driftActive?.10:0),0,1);
+  const cloudCalBias=cloudMasterFresh()
+    ?Math.max(0,safeNum(cloudMaster.calibration?.observedEWMA,UNIFORM)-safeNum(cloudMaster.calibration?.predictedEWMA,UNIFORM))
+    :0;
+  const health=clamp(
+    1-recentLoss*3.3-calibrationPenalty*2.2-Math.max(0,brier-BASELINE_BRIER)*6-cloudCalBias*2.4-(driftActive?.10:0),
+    0,1
+  );
 
   // Cautela adaptativa: si aparecen varios MATCH recientes, no seguimos comprando
   // con el mismo umbral. Se vuelve temporalmente más exigente sin bloquear para siempre.
@@ -1645,10 +1672,18 @@ function predict(){
   const maxExp=Math.max(1,...exposure);
   const preliminary=p.map((rawRisk,d)=>{
     const fixation=exposure[d]/maxExp;
-    const risk=digitCalibratedRisk(d,rawRisk);
+    const localRisk=digitCalibratedRisk(d,rawRisk);
+    const cloudRiskCal=Array.isArray(cloudAnchor?.calibratedRisks)
+      ?safeNum(cloudAnchor.calibratedRisks[d],NaN)
+      :NaN;
+    // El riesgo no puede verse artificialmente bajo si el validador cloud
+    // ya observó que esa probabilidad estaba subestimada.
+    const risk=Number.isFinite(cloudRiskCal)
+      ?Math.max(localRisk,cloudRiskCal)
+      :localRisk;
     const errorPenalty=contextErrorPenalty(d);
     const baseAdjusted=risk+fixation*.0025+errorPenalty;
-    return {d,risk,rawRisk,fixation,errorPenalty,baseAdjusted};
+    return {d,risk,rawRisk,localRisk,cloudRiskCal,fixation,errorPenalty,baseAdjusted};
   }).sort((a,b)=>a.baseAdjusted-b.baseAdjusted||a.risk-b.risk);
   preliminary.forEach((x,i)=>x.rawRank=i);
   const counterfactualRanking=preliminary.map(x=>x.d);
@@ -1783,7 +1818,7 @@ function predict(){
   }else if(usableCount>0){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
-    reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo ${fmtPct(selected.effectiveRisk)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
+    reason=`Compra D${selected.d}: score ${(selected.score*100).toFixed(0)}/100 · riesgo CAL ${fmtPct(selected.effectiveRisk)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)} · revisé 10 candidatos${skipped?'; descarté '+skipped+' opción'+(skipped===1?'':'es')+' de menor riesgo bruto por peor contexto/consenso':''}.`;
   }else if(clusterGuard>0){
     reason=`CAUTELA ANTI-MATCH: detecté ${recentMatches} MATCH en las últimas ${recentSettled.length} operaciones; sigo analizando pero exijo más calidad antes de comprar.`;
   }else if(recoveryRatio>0){
@@ -2134,6 +2169,9 @@ async function syncCloudPrediction(){
     cloudLive={prediction:{
       ...p,
       probabilities:normalizeDist(p.probabilities),
+      calibratedRisks:Array.isArray(p.calibratedRisks)&&p.calibratedRisks.length===10
+        ?p.calibratedRisks.map(x=>clamp(safeNum(x,UNIFORM),.005,.30))
+        :null,
       signalEpoch,
       generatedAt,
       confidence:clamp(safeNum(p.confidence,0),0,1),
