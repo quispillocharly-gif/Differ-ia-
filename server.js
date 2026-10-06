@@ -816,15 +816,24 @@ function riseFallOperationGate(action,h,probability){
   const samples=Math.max(a.n,hz.n,bin.n);
 
   let minProbability=.56;
+  let learningMinProbability=.515;
   if(samples>=30){
-    if(learnedRate<.49)minProbability=.62;
-    else if(learnedRate<.515)minProbability=.60;
-    else if(learnedRate<.535)minProbability=.58;
+    if(learnedRate<.49){
+      minProbability=.62;
+      learningMinProbability=.56;
+    }else if(learnedRate<.515){
+      minProbability=.60;
+      learningMinProbability=.545;
+    }else if(learnedRate<.535){
+      minProbability=.58;
+      learningMinProbability=.53;
+    }
   }
   return {
     samples,
     learnedWinRate:clamp(learnedRate,0,1),
     minProbability,
+    learningMinProbability,
     totalOperations:ops.total,
     totalWins:ops.wins,
     totalLosses:ops.losses,
@@ -900,9 +909,16 @@ function riseFallPredict(h=1){
   const gap=Math.abs(up-down);
   const operationGate=riseFallOperationGate(direction,h,directionProbability);
   const minDirectionalProbability=Math.max(.56,safeNum(operationGate.minProbability,.56));
+  const learningMinProbability=Math.max(.515,safeNum(operationGate.learningMinProbability,.515));
   let action='WAIT';
   if(up>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='RISE';
   else if(down>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='FALL';
+
+  // DEMO learning signal: intentionally less strict than REAL, but still directional.
+  // This lets the model collect contract outcomes instead of staying forever in WAIT.
+  let learningAction='WAIT';
+  if(up>=learningMinProbability&&gap>=.030&&flat<=.40)learningAction='RISE';
+  else if(down>=learningMinProbability&&gap>=.030&&flat<=.40)learningAction='FALL';
 
   const perf=riseFallMem.performance[h]||freshRiseFallPerf();
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
@@ -919,8 +935,11 @@ function riseFallPredict(h=1){
     signalEpoch:lastEpoch,
     generatedAt:Date.now(),
     action,
+    learningAction,
     direction,
     directionProbability,
+    strictMinProbability:minDirectionalProbability,
+    learningMinProbability,
     probabilities:{FALL:down,FLAT:flat,RISE:up},
     confidence:clamp((directionProbability-.5)*2*(.55+.45*own.support),0,1),
     support:clamp(own.support,0,1),
