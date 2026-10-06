@@ -3068,6 +3068,21 @@ app.listen(PORT,()=>{
   console.log('Entry research restored:',mem.entryResearch.resolved,'resolved forecasts · recommendation',mem.entryResearch.recommended);
   console.log('Range Intelligence restored:',mem.rangePerf[1].samples,'validated 1T range forecasts');
   console.log('Rise/Fall memory restored:',riseFallMem.trainedSamples,'training samples ·',riseFallMem.performance[1].resolved,'validated 1T forecasts');
+  try{
+    const sa=mem.master.sessionAnalytics||freshSessionAnalytics();
+    const pos=sa.byPosition.slice(0,12).map((x,i)=>({
+      op:i+1,
+      trades:safeNum(x?.trades,0),
+      matches:safeNum(x?.matches,0),
+      rate:safeNum(x?.trades,0)?safeNum(x?.matches,0)/safeNum(x?.trades,1):0
+    }));
+    const rfOps=riseFallMem.operationLearning||freshRiseFallOperationLearning();
+    console.log('DIAG tournament:',JSON.stringify(tournamentSummary()));
+    console.log('DIAG session positions 1-12:',JSON.stringify(pos));
+    console.log('DIAG shadow:',JSON.stringify({total:mem.shadow.total,matches:mem.shadow.matches,matchRate:mem.shadow.matchRate,calibration:calibrationSummary(),drift:driftSummary()}));
+    console.log('DIAG RF operations:',JSON.stringify({total:rfOps.total,wins:rfOps.wins,losses:rfOps.losses,winRate:rfOps.total?rfOps.wins/rfOps.total:0,byAction:rfOps.byAction,byHorizon:rfOps.byHorizon}));
+    console.log('DIAG RF perf1:',JSON.stringify(riseFallMem.performance[1]));
+  }catch(e){console.log('DIAG error:',e.message)}
   prepareShadow();
   connectDeriv();
 });
