@@ -909,16 +909,16 @@ function riseFallPredict(h=1){
   const gap=Math.abs(up-down);
   const operationGate=riseFallOperationGate(direction,h,directionProbability);
   const minDirectionalProbability=Math.max(.56,safeNum(operationGate.minProbability,.56));
-  const learningMinProbability=Math.max(.515,safeNum(operationGate.learningMinProbability,.515));
+  const learningMinProbability=Math.max(.50,safeNum(operationGate.learningMinProbability,.50));
   let action='WAIT';
   if(up>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='RISE';
   else if(down>=minDirectionalProbability&&gap>=.065&&flat<=.30)action='FALL';
 
-  // DEMO learning signal: intentionally less strict than REAL, but still directional.
-  // This lets the model collect contract outcomes instead of staying forever in WAIT.
-  let learningAction='WAIT';
-  if(up>=learningMinProbability&&gap>=.030&&flat<=.40)learningAction='RISE';
-  else if(down>=learningMinProbability&&gap>=.030&&flat<=.40)learningAction='FALL';
+  // DEMO training no necesita "aprobar" una señal antes de haber aprendido.
+  // Siempre produce una dirección de entrenamiento; los resultados del contrato
+  // son precisamente las etiquetas que luego permiten aprender a seleccionar.
+  const learningAction=direction;
+  const learningSignalStrength=clamp(gap*(1-flat)*2.5,0,1);
 
   const perf=riseFallMem.performance[h]||freshRiseFallPerf();
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
@@ -936,6 +936,7 @@ function riseFallPredict(h=1){
     generatedAt:Date.now(),
     action,
     learningAction,
+    learningSignalStrength,
     direction,
     directionProbability,
     strictMinProbability:minDirectionalProbability,
