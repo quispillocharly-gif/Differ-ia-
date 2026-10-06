@@ -25,6 +25,7 @@ let rfAuto=false;
 let rfPrediction=null;
 let rfLastEpoch=0;
 let rfConfirm={action:null,count:0,lastEpoch:0};
+const RF_BOOTSTRAP_OPS=30;
 let rfNextStake=1;
 let rfSession={pnl:0,wins:0,losses:0,ops:0};
 let pollTimer=null;
@@ -78,7 +79,12 @@ function render(){
   const v=p.validation||{};
   const op=p.operationLearning||{};
   setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS · OPS '+Number(op.totalOperations||0).toLocaleString());
-  setText('rfCloudMode',p.ready?'ACTIVO':(($('mode')?.value==='DEMO')?'SHADOW + DEMO LEARNING':'SHADOW'));
+  const opCount=Math.max(0,Number(op.totalOperations||0));
+  const bootstrapDemo=!p.ready&&$('mode')?.value==='DEMO'&&opCount<RF_BOOTSTRAP_OPS;
+  setText(
+    'rfCloudMode',
+    p.ready?'ACTIVO':bootstrapDemo?'BOOTSTRAP DEMO':(($('mode')?.value==='DEMO')?'SHADOW + DEMO LEARNING':'SHADOW')
+  );
   setText('rfPhase',String(p.phase||'—').replaceAll('_',' '));
   setText('rfTurn','GIRO '+pct(p.reversalProbability)+' · CONT '+pct(p.continuationProbability));
 }
@@ -238,9 +244,13 @@ function onRfMessage(ev){
 
     const breakEven=ask/payout;
     const learningDemo=rfAccountType==='demo'&&!!p.learningDemo;
+    const bootstrapDemo=learningDemo&&!!p.bootstrapDemo;
     const safetyMargin=learningDemo?.004:.025;
-    if(p.probability<breakEven+safetyMargin){
-      p.resolve({bought:false,breakEven,required:breakEven+safetyMargin,learningDemo});
+
+    // En BOOTSTRAP DEMO todavía no existe experiencia suficiente para justificar
+    // un filtro de entrada. La operación se usa precisamente para generar esa experiencia.
+    if(!bootstrapDemo && p.probability<breakEven+safetyMargin){
+      p.resolve({bought:false,breakEven,required:breakEven+safetyMargin,learningDemo,bootstrapDemo});
       return;
     }
 
@@ -254,6 +264,7 @@ function onRfMessage(ev){
       phase:p.phase,
       ready:p.ready,
       learningDemo:!!p.learningDemo,
+      bootstrapDemo:!!p.bootstrapDemo,
       contractId:''
     };
     rfSocket.send(JSON.stringify({buy:id,price:ask,req_id:++rfBuyReq}));
@@ -306,7 +317,9 @@ function sendRfTrade(pred){
       resolve({bought:false});
       return;
     }
-    const stake=Math.max(.01,Number(rfNextStake)||stakeBase());
+    const stake=pred.bootstrapDemo
+      ?stakeBase()
+      :Math.max(.01,Number(rfNextStake)||stakeBase());
     const h=horizon();
     rfPendingProposal={
       resolve,reject,
@@ -317,7 +330,8 @@ function sendRfTrade(pred){
       signalEpoch:Number(pred.signalEpoch||0),
       phase:String(pred.phase||'UNKNOWN'),
       ready:!!pred.ready,
-      learningDemo:!!pred.learningDemo
+      learningDemo:!!pred.learningDemo,
+      bootstrapDemo:!!pred.bootstrapDemo
     };
     rfSocket.send(JSON.stringify({
       proposal:1,
@@ -382,11 +396,47 @@ function settleRfTrade(profit,t){
 async function evaluateAuto(pred){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
-  const learningDemo=!pred.ready && rfAccountType==='demo';
+  const opCount=Math.max(0,Number(pred.operationLearning?.totalOperations||0));
+  const demo=rfAccountType==='demo';
+  const learningDemo=!pred.ready&&demo;
+  const bootstrapDemo=learningDemo&&opCount<RF_BOOTSTRAP_OPS;
+  const developingDemo=learningDemo&&opCount>=RF_BOOTSTRAP_OPS&&opCount<100;
 
-  if(!pred.ready && !learningDemo){
+  if(!pred.ready && !demo){
     resetConfirmation();
-    setText('rfStatus','SHADOW · APRENDIENDO · REAL BLOQUEADO HASTA VALIDACIÓN');
+    setText('rfStatus','SHADOW · REAL BLOQUEADO · PRIMERO DEBE APRENDER EN DEMO');
+    return;
+  }
+
+  const epoch=Number(pred.signalEpoch||0);
+  if(!epoch)return;
+
+  // PRIMERA ETAPA: todavía no sabe qué señales operativas sirven.
+  // En DEMO compra la dirección que el propio modelo considere más probable,
+  // sin umbral, sin confirmación y sin filtro de break-even.
+  if(bootstrapDemo){
+    const action=pred.direction==='FALL'?'FALL':'RISE';
+    resetConfirmation();
+    try{
+      const out=await sendRfTrade({
+        ...pred,
+        action,
+        learningDemo:true,
+        bootstrapDemo:true
+      });
+      if(out?.bought){
+        setText(
+          'rfStatus',
+          'BOOTSTRAP DEMO · '+action+
+          ' · OPS '+opCount+'/'+RF_BOOTSTRAP_OPS+
+          ' · APRENDIENDO DE CADA RESULTADO'
+        );
+      }else if(out?.busy){
+        setText('rfStatus','BOOTSTRAP DEMO · ESPERANDO CIERRE DE OPERACIÓN');
+      }
+    }catch(e){
+      setText('rfStatus','ERROR · '+(e?.message||e));
+    }
     return;
   }
 
@@ -396,50 +446,43 @@ async function evaluateAuto(pred){
 
   if(effectiveAction!=='RISE'&&effectiveAction!=='FALL'){
     resetConfirmation();
-    const p=pct(pred.directionProbability);
-    const min=pct(learningDemo?pred.learningMinProbability:pred.strictMinProbability);
     setText(
       'rfStatus',
-      (learningDemo?'DEMO APRENDIENDO · ':'')+
-      'ESPERANDO · P '+p+' / MIN '+min
+      learningDemo
+        ?'DEMO APRENDIENDO · OPS '+opCount+' · BUSCANDO DIRECCIÓN ÚTIL'
+        :'ESPERANDO DIRECCIÓN VALIDADA'
     );
     return;
   }
 
-  const epoch=Number(pred.signalEpoch||0);
-  if(!epoch||epoch===rfConfirm.lastEpoch)return;
-
-  if(rfConfirm.action===effectiveAction){
+  // SEGUNDA ETAPA: ya tiene algo de experiencia y comienza a seleccionar.
+  // Entre 30 y 99 operaciones basta una lectura; después usa confirmación normal.
+  const needed=developingDemo?1:2;
+  if(rfConfirm.action===effectiveAction && rfConfirm.lastEpoch===epoch-1){
     rfConfirm.count++;
   }else{
     rfConfirm={action:effectiveAction,count:1,lastEpoch:epoch};
   }
   rfConfirm.lastEpoch=epoch;
 
-  // Dos lecturas bastan: queremos confirmar dirección, no congelar la IA.
-  const needed=2;
   if(rfConfirm.count<needed){
-    setText(
-      'rfStatus',
-      (learningDemo?'DEMO APRENDIENDO · ':'')+
-      'CONFIRMANDO '+effectiveAction+' · '+rfConfirm.count+'/'+needed
-    );
+    setText('rfStatus','CONFIRMANDO '+effectiveAction+' · '+rfConfirm.count+'/'+needed);
     return;
   }
 
   resetConfirmation();
   try{
-    const tradePred={
+    const out=await sendRfTrade({
       ...pred,
       action:effectiveAction,
-      learningDemo
-    };
-    const out=await sendRfTrade(tradePred);
+      learningDemo,
+      bootstrapDemo:false
+    });
     if(out?.bought){
       setText(
         'rfStatus',
         (learningDemo?'DEMO LEARNING · ':'')+
-        'ENVIANDO '+effectiveAction+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven)
+        'ENVIANDO '+effectiveAction+' · P '+pct(pred.directionProbability)+' · OPS '+opCount
       );
     }else if(Number.isFinite(out?.breakEven)){
       setText(
@@ -491,7 +534,13 @@ async function startRf(){
   if(rfPrediction?.ready){
     setText('rfStatus','AUTO RISE/FALL ACTIVO · ESPERANDO CONFIRMACIÓN');
   }else if(rfAccountType==='demo'){
-    setText('rfStatus','SHADOW + DEMO · APRENDE DEL MERCADO Y DE CADA OPERACIÓN');
+    const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
+    setText(
+      'rfStatus',
+      ops<RF_BOOTSTRAP_OPS
+        ?'BOOTSTRAP DEMO · OPERARÁ PARA APRENDER · OPS '+ops+'/'+RF_BOOTSTRAP_OPS
+        :'SHADOW + DEMO · APRENDE DEL MERCADO Y DE CADA OPERACIÓN'
+    );
   }else{
     setText('rfStatus','SHADOW ACTIVO · REAL BLOQUEADO HASTA VALIDACIÓN');
   }
