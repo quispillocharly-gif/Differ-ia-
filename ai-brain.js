@@ -26,6 +26,7 @@ const STRONG_RISK_CEILING=.0880;
 const AUTO_CONFIRM_TICKS=2;
 const ADAPTIVE_WAIT_START=8;
 const ADAPTIVE_WAIT_FULL=28;
+const DIFFER_POLICY_VERSION='DIFFER-RISK-FIRST-V1';
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -1091,15 +1092,19 @@ function rangeForecast(h=1){
   const masterDigit=cloudMasterFresh()?cloudMaster.expertPerformance?.range:null;
   const digitPerf=masterDigit&&safeNum(masterDigit.samples,0)>safeNum(localDigit.samples,0)?masterDigit:localDigit;
   const activeRange=snap.phase==='RANGE'||snap.lateralScore>=.56;
-  const ready=(masterPerf?.ready===true)||(
+  // Range puede estudiar desde el primer tick, pero no influye en compras
+  // hasta demostrar utilidad FUERA de muestra con margen real sobre 10%.
+  const ready=(masterPerf?.ready===true&&
+      safeNum(masterPerf.samples,0)>=1200&&
+      safeNum(masterPerf.accuracyEWMA,1/3)>=.42) || (
     activeRange &&
-    safeNum(perf.samples,0)>=300 &&
-    safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS)<=1.08 &&
-    safeNum(perf.brierEWMA,RANGE_BASE_BRIER)<=.218 &&
-    safeNum(perf.accuracyEWMA,1/3)>=.40 &&
-    safeNum(digitPerf.samples,0)>=300 &&
-    safeNum(digitPerf.matchEWMA,UNIFORM)<=.1005 &&
-    safeNum(digitPerf.logLossEWMA,BASELINE_LOGLOSS)<=BASELINE_LOGLOSS+.015
+    safeNum(perf.samples,0)>=1200 &&
+    safeNum(perf.logLossEWMA,RANGE_BASE_LOGLOSS)<=RANGE_BASE_LOGLOSS-.008 &&
+    safeNum(perf.brierEWMA,RANGE_BASE_BRIER)<=RANGE_BASE_BRIER-.004 &&
+    safeNum(perf.accuracyEWMA,1/3)>=.42 &&
+    safeNum(digitPerf.samples,0)>=1200 &&
+    safeNum(digitPerf.matchEWMA,UNIFORM)<=.0975 &&
+    safeNum(digitPerf.logLossEWMA,BASELINE_LOGLOSS)<=BASELINE_LOGLOSS-.002
   );
   const exposed=Array.from({length:10},(_,d)=>({d,p:digitP[d]})).sort((a,b)=>b.p-a.p).slice(0,3);
   return {
@@ -1585,7 +1590,9 @@ function predict(){
     const samples=safeNum(range.perf?.samples,0);
     const maturity=clamp((samples-300)/1800,0,1);
     const persistence=clamp((safeNum(range.stayProbability,.5)-.40)/.45,0,1);
-    const rw=(.07+.17*maturity)*(.65+.35*persistence)*range.support*expertWeight('range');
+    // Incluso ya validado, Range entra con peso moderado: una capa nueva
+    // nunca debe dominar a los expertos que ya estaban funcionando.
+    const rw=(.04+.10*maturity)*(.70+.30*persistence)*range.support*expertWeight('range');
     if(rw>.01){
       for(let d=0;d<10;d++){dist[d]+=range.digitP[d]*rw;denom[d]+=rw}
       modelViews.push({name:'range',p:range.digitP.slice(),w:rw,n:range.n,forecast:range});
@@ -1810,7 +1817,15 @@ function predict(){
       committee,minConsensus,robustCeiling,movementRisk,cloudRisk,
       movementConflict,cloudConflict,expertVeto
     };
-  }).sort((a,b)=>b.score-a.score||a.effectiveRisk-b.effectiveRisk);
+  // Para DIFFER el objetivo directo es NO coincidir con el próximo dígito.
+  // Por eso, entre señales que ya pasaron los filtros, manda el menor riesgo
+  // calibrado de MATCH. Score/consenso solo desempatan: nunca justifican
+  // escoger un candidato con mayor riesgo estimado.
+  }).sort((a,b)=>
+    a.effectiveRisk-b.effectiveRisk ||
+    safeNum(a.committee?.robustRisk,.30)-safeNum(b.committee?.robustRisk,.30) ||
+    b.score-a.score
+  );
 
   let selected=candidates.find(x=>x.usable)||candidates[0];
   const usableCount=candidates.filter(x=>x.usable).length;
@@ -2127,12 +2142,12 @@ function enterTrade(decision,manual=false){
   autoWaitTicks=0;
   const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
   const sessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
-  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual};
+  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual,policy:DIFFER_POLICY_VERSION};
   if(!manual)resetAutoSignal();
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
-  log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)}`);
+  log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)} · ${DIFFER_POLICY_VERSION}`);
   renderSession();
   window.nexusTradeEffect?.('buy',{digit,stake,mode,manual});
   window.sendDemoTrade(digit,stake).catch(tradeError);
@@ -2224,7 +2239,8 @@ function shareExperience(t,loss,elapsed,sessionEnd=''){
     sessionOp:Math.max(1,Math.min(500,Math.floor(safeNum(t.sessionOp,1)))),
     sessionEnd:(sessionEnd==='TARGET'||sessionEnd==='STOP')?sessionEnd:'',
     context:Array.isArray(t.context)?t.context.slice(-6):[],
-    manual:!!t.manual
+    manual:!!t.manual,
+    policy:String(t.policy||DIFFER_POLICY_VERSION).slice(0,48)
   };
 
   fetch(CLOUD_URL+'/api/cloud/experience',{
