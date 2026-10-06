@@ -500,85 +500,126 @@ function settleRfTrade(profit,t){
 async function evaluateAuto(pred,forceTraining=false){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
-  const opCount=Math.max(0,Number(pred.operationLearning?.totalOperations||0));
   const demo=rfAccountType==='demo';
-  // La madurez del predictor SHADOW no sustituye experiencia de contratos.
-  // En DEMO continúa entrenando hasta tener suficientes operaciones reales
-  // y, si el predictor aún no está listo, sigue entrenando después de ese punto.
+  const predictorReady=!!pred.ready;
+  const operationalReady=!!pred.operationalReady;
   const strictAction=pred.action||'WAIT';
-  const trainingDemo=demo&&(!pred.operationalReady||(forceTraining&&strictAction==='WAIT'));
-
-  if(!pred.operationalReady&&!demo){
-    resetConfirmation();
-    setText('rfStatus','SHADOW · REAL BLOQUEADO · ENTRENAMIENTO DEMO NECESARIO');
-    return;
-  }
-
   const epoch=Number(pred.signalEpoch||0);
+  const opCount=Math.max(0,Number(pred.operationLearning?.totalOperations||0));
+
   if(!epoch)return;
   if(!forceTraining&&epoch===rfConfirm.lastEpoch)return;
 
-  // DEMO TRAINING: no filtros de entrada antes del aprendizaje.
-  // Se toma la dirección que el modelo considera más probable, una operación
-  // a la vez, stake base fijo, y el resultado se usa como nueva experiencia.
-  if(trainingDemo){
+  // REAL nunca explora. Solo funciona cuando la validación de contratos
+  // estrictamente seleccionados ya superó el punto de equilibrio.
+  if(!demo&&!operationalReady){
+    resetConfirmation();
+    setText('rfStatus','SHADOW · REAL BLOQUEADO · FALTA VALIDACIÓN DEMO ESTRICTA');
+    return;
+  }
+
+  // ETAPA 1: predictor aún inmaduro -> exploración DEMO controlada.
+  // Produce etiquetas de contrato, pero estas NO cuentan para aprobar REAL.
+  if(demo&&!predictorReady){
     const action=pred.learningAction==='FALL'||pred.direction==='FALL'?'FALL':'RISE';
     rfConfirm.lastEpoch=epoch;
     rfLastTrainingAttemptAt=Date.now();
     rfTrainingAttempts++;
-    setText('rfStatus','DEMO TRAINING · INTENTO #'+rfTrainingAttempts+' · SOLICITANDO '+action+'…');
+    setText('rfStatus','DEMO BOOTSTRAP · INTENTO #'+rfTrainingAttempts+' · '+action+' · APRENDE AL CERRAR');
     try{
       const out=await sendRfTrade({
         ...pred,
         action,
         learningDemo:true,
-        bootstrapDemo:opCount<RF_BOOTSTRAP_OPS,
-        explorationDemo:!!pred.operationalReady
+        bootstrapDemo:true,
+        explorationDemo:true
       });
       if(out?.bought){
-        setText(
-          'rfStatus',
-          'DEMO TRAINING · '+action+
-          ' · P '+pct(pred.directionProbability)+
-          ' · '+effectiveHorizon()+'T · OPS '+opCount+
-          ' · APRENDE AL CERRAR'
-        );
+        setText('rfStatus','DEMO BOOTSTRAP · '+action+' · '+effectiveHorizon()+'T · CONTRATO ENVIADO');
       }else if(out?.retryHorizon){
-        setText('rfStatus','DEMO TRAINING · AJUSTADO A '+out.retryHorizon+'T · SIGUIENTE SEÑAL');
+        setText('rfStatus','DEMO BOOTSTRAP · AJUSTADO A '+out.retryHorizon+'T');
       }else if(out?.busy){
-        setText('rfStatus','DEMO TRAINING · ESPERANDO CIERRE DE OPERACIÓN');
+        setText('rfStatus','DEMO BOOTSTRAP · ESPERANDO CIERRE');
       }
     }catch(e){
-      setText('rfStatus','ERROR DEMO TRAINING · '+(e?.message||e));
+      setText('rfStatus','ERROR DEMO BOOTSTRAP · '+(e?.message||e));
     }
     return;
   }
 
-  // Modelo ya validado: aquí sí selecciona y confirma antes de comprar.
-  const action=strictAction;
-  if(action!=='RISE'&&action!=='FALL'){
-    resetConfirmation();
-    setText('rfStatus','MODELO VALIDADO · ESPERANDO DIRECCIÓN CON VENTAJA');
+  // ETAPA 2: predictor ya maduro pero REAL aún no aprobado.
+  // Las señales ESTRICTAS sí se compran en DEMO y son las únicas que cuentan
+  // para medir si el sistema supera el break-even de los contratos.
+  if(demo&&!operationalReady&&strictAction!=='WAIT'){
+    rfConfirm.lastEpoch=epoch;
+    rfLastTrainingAttemptAt=Date.now();
+    try{
+      const out=await sendRfTrade({
+        ...pred,
+        action:strictAction,
+        learningDemo:true,
+        bootstrapDemo:false,
+        explorationDemo:false
+      });
+      if(out?.bought){
+        const selected=Number(pred.operationLearning?.selectedOperations||0);
+        setText('rfStatus','DEMO VALIDACIÓN · '+strictAction+' · P '+pct(pred.directionProbability)+' · SELECT '+selected);
+      }else if(out?.busy){
+        setText('rfStatus','DEMO VALIDACIÓN · ESPERANDO CIERRE');
+      }
+    }catch(e){
+      setText('rfStatus','ERROR DEMO VALIDACIÓN · '+(e?.message||e));
+    }
     return;
   }
 
-  if(rfConfirm.action===action&&rfConfirm.lastEpoch===epoch-1){
+  // Si el predictor está listo pero no hay señal estricta, en DEMO el watchdog
+  // puede pedir una exploración ocasional para seguir aprendiendo.
+  if(demo&&strictAction==='WAIT'&&forceTraining){
+    const action=pred.learningAction==='FALL'||pred.direction==='FALL'?'FALL':'RISE';
+    rfConfirm.lastEpoch=epoch;
+    rfLastTrainingAttemptAt=Date.now();
+    rfTrainingAttempts++;
+    setText('rfStatus','DEMO EXPLORACIÓN · '+action+' · SIN SEÑAL ESTRICTA');
+    try{
+      const out=await sendRfTrade({
+        ...pred,
+        action,
+        learningDemo:true,
+        bootstrapDemo:false,
+        explorationDemo:true
+      });
+      if(out?.bought)setText('rfStatus','DEMO EXPLORACIÓN · '+action+' · APRENDE AL CERRAR');
+    }catch(e){
+      setText('rfStatus','ERROR DEMO EXPLORACIÓN · '+(e?.message||e));
+    }
+    return;
+  }
+
+  // Modo validado: DEMO o REAL solo opera señales estrictas.
+  if(strictAction!=='RISE'&&strictAction!=='FALL'){
+    resetConfirmation();
+    setText('rfStatus',demo?'VALIDADO · ESPERANDO DIRECCIÓN CON VENTAJA':'REAL · ESPERANDO DIRECCIÓN CON VENTAJA');
+    return;
+  }
+
+  if(rfConfirm.action===strictAction&&rfConfirm.lastEpoch===epoch-1){
     rfConfirm.count++;
   }else{
-    rfConfirm={action,count:1,lastEpoch:epoch};
+    rfConfirm={action:strictAction,count:1,lastEpoch:epoch};
   }
   rfConfirm.lastEpoch=epoch;
 
   if(rfConfirm.count<2){
-    setText('rfStatus','CONFIRMANDO '+action+' · '+rfConfirm.count+'/2');
+    setText('rfStatus','CONFIRMANDO '+strictAction+' · '+rfConfirm.count+'/2');
     return;
   }
 
   resetConfirmation();
   try{
-    const out=await sendRfTrade({...pred,action,learningDemo:false,bootstrapDemo:false});
+    const out=await sendRfTrade({...pred,action:strictAction,learningDemo:false,bootstrapDemo:false,explorationDemo:false});
     if(out?.bought){
-      setText('rfStatus','ENVIANDO '+action+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
+      setText('rfStatus','ENVIANDO '+strictAction+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
     }else if(Number.isFinite(out?.breakEven)){
       setText('rfStatus','SIN COMPRA · P '+pct(pred.directionProbability)+' < REQUERIDO '+pct(out.required||out.breakEven));
     }
@@ -590,20 +631,32 @@ async function trainingWatchdog(){
   if(!selected()||!rfAuto||rfAccountType!=='demo'||!rfPrediction)return;
   if(rfActiveContract||rfPendingProposal||rfActiveTrade)return;
   if(!rfReady){
-    setText('rfStatus','DEMO TRAINING · RECONECTANDO DERIV');
+    setText('rfStatus','DEMO · RECONECTANDO DERIV');
     try{await connectRf()}catch(_){}
     return;
   }
 
   const strictAction=rfPrediction.action||'WAIT';
-  const needsLearning=!rfPrediction.operationalReady;
-  const needsExploration=rfPrediction.operationalReady&&strictAction==='WAIT';
-  if(!needsLearning&&!needsExploration)return;
+  const predictorReady=!!rfPrediction.ready;
+  const operationalReady=!!rfPrediction.operationalReady;
 
-  const delay=needsLearning?4500:7000;
-  if(Date.now()-rfLastTrainingAttemptAt<delay)return;
+  // Antes de madurar: bootstrap frecuente.
+  // Después: las señales estrictas se ejecutan desde poll(); si hay WAIT,
+  // una exploración ocasional mantiene el aprendizaje vivo sin contaminar
+  // la validación operacional.
+  let needsForce=false,delay=7000;
+  if(!predictorReady){
+    needsForce=true;delay=4500;
+  }else if(strictAction==='WAIT'){
+    needsForce=true;delay=7000;
+  }
 
-  if(needsExploration)setText('rfStatus','DEMO EXPLORACIÓN · SIN SEÑAL ESTRICTA · GENERANDO EXPERIENCIA');
+  if(!needsForce||Date.now()-rfLastTrainingAttemptAt<delay)return;
+  if(predictorReady&&strictAction==='WAIT'){
+    setText('rfStatus','DEMO EXPLORACIÓN · SIN SEÑAL ESTRICTA · GENERANDO EXPERIENCIA');
+  }else if(!operationalReady){
+    setText('rfStatus','DEMO BOOTSTRAP · GENERANDO EXPERIENCIA');
+  }
   await evaluateAuto(rfPrediction,true);
 }
 
@@ -646,13 +699,15 @@ async function startRf(){
   rfAuto=true;
   rfLastTrainingAttemptAt=0;
   const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
-  const needsDemoTraining=rfAccountType==='demo'&&!rfPrediction?.operationalReady;
-  if(needsDemoTraining){
-    setText('rfStatus','DEMO TRAINING · INICIANDO PRIMERA OPERACIÓN · OPS '+ops);
-    if(rfPrediction){
-      setTimeout(()=>evaluateAuto(rfPrediction,true),50);
-    }
-  }else if(rfPrediction?.operationalReady){
+  const predictorReady=!!rfPrediction?.ready;
+  const operationalReady=!!rfPrediction?.operationalReady;
+  if(rfAccountType==='demo'&&!predictorReady){
+    setText('rfStatus','DEMO BOOTSTRAP · INICIANDO · OPS '+ops);
+    if(rfPrediction)setTimeout(()=>evaluateAuto(rfPrediction,true),50);
+  }else if(rfAccountType==='demo'&&!operationalReady){
+    setText('rfStatus','DEMO VALIDACIÓN · BUSCANDO SEÑALES ESTRICTAS · OPS '+ops);
+    if(rfPrediction)setTimeout(()=>evaluateAuto(rfPrediction,false),50);
+  }else if(operationalReady){
     setText('rfStatus','AUTO RISE/FALL VALIDADO · ESPERANDO ENTRADA');
   }else{
     setText('rfStatus','SHADOW ACTIVO · REAL BLOQUEADO HASTA VALIDACIÓN');
