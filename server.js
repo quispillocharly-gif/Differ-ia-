@@ -3063,7 +3063,8 @@ app.get('/api/rise-fall/status',(req,res)=>{
 
 app.get('/api/rise-fall/prediction',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
-  const h=clamp(Math.round(safeNum(req.query.h,1)),1,3);
+  let h=Math.round(safeNum(req.query.h,1));
+  if(!RF_HORIZONS.includes(h))h=1;
   res.json({
     ok:true,
     status,
