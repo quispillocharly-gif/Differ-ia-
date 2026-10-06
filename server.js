@@ -2,6 +2,7 @@ const express = require('express');
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -215,6 +216,25 @@ function updatePolicyAnalytics(name,loss,sessionOp){
   pa.updatedAt=st.lastAt;
 }
 
+function freshUniversalLab(){
+  return {
+    version:1,updatedAt:0,tick:0,runs:0,
+    differ:{
+      samples:0,logLoss:Math.log(10),brier:.09,
+      minRiskTrials:0,minRiskMatches:0,minRiskRate:.10,minRiskUpper95:1,
+      edgeConfirmed:false,improvementVsUniform:0,maxOrder:6
+    },
+    riseFall:{
+      samples:0,logLoss:Math.log(3),brier:2/9,
+      directionalTrials:0,directionalWins:0,directionalHitRate:.5,
+      strongTrials:0,strongWins:0,strongHitRate:.5,maxOrder:5
+    },
+    fingerprint:{
+      sampleSize:0,observed:null,references:{},closestReference:'UNKNOWN',
+      note:'Similarity is a statistical fingerprint only; it does not identify the generator.'
+    }
+  };
+}
 function freshScienceAudit(){
   return {
     updatedAt:0,tick:0,status:'BOOTING',alerts:[],
@@ -235,7 +255,8 @@ function freshMasterBrain(){
     streakStats:freshStreakStats(),
     sessionAnalytics:freshSessionAnalytics(),
     policyAnalytics:freshPolicyAnalytics(),
-    scienceAudit:freshScienceAudit()
+    scienceAudit:freshScienceAudit(),
+    universalLab:freshUniversalLab()
   };
 }
 
@@ -559,6 +580,13 @@ function normalizeMemory(x){
     const sa=master.scienceAudit&&typeof master.scienceAudit==='object'?master.scienceAudit:freshScienceAudit();
     master.scienceAudit={...freshScienceAudit(),...sa};
     master.scienceAudit.alerts=Array.isArray(sa.alerts)?sa.alerts.map(x=>String(x).slice(0,180)).slice(-8):[];
+  }
+  {
+    const ul=master.universalLab&&typeof master.universalLab==='object'?master.universalLab:freshUniversalLab();
+    master.universalLab={...freshUniversalLab(),...ul};
+    master.universalLab.differ={...freshUniversalLab().differ,...(ul.differ||{})};
+    master.universalLab.riseFall={...freshUniversalLab().riseFall,...(ul.riseFall||{})};
+    master.universalLab.fingerprint={...freshUniversalLab().fingerprint,...(ul.fingerprint||{})};
   }
   master.digitCalibration=Array.from({length:10},(_,d)=>{
     const x=Array.isArray(rawMaster.digitCalibration)?rawMaster.digitCalibration[d]:null;
@@ -3182,6 +3210,204 @@ function categoricalAuditDigits(xs){
     mutualInfoLag1:Math.max(0,mi/Math.log(10))
   };
 }
+function universalNode(map,key,alphabet){
+  let node=map.get(key);
+  if(!node){node={n:0,counts:Array(alphabet).fill(0)};map.set(key,node)}
+  return node;
+}
+function universalPredict(seq,index,maps,alphabet,maxOrder){
+  const num=Array(alphabet).fill(0);
+  let den=0;
+  for(let order=0;order<=maxOrder;order++){
+    if(index<order)continue;
+    const key=order===0?'*':seq.slice(index-order,index).join(',');
+    const node=maps[order].get(key);
+    if(!node||node.n<1)continue;
+    const support=1-Math.exp(-node.n/Math.max(4,6+order*3));
+    const complexityPenalty=1/(1+.10*order*order);
+    const w=(.45+.55*support)*(1+.20*order)*complexityPenalty;
+    const ktDen=node.n+.5*alphabet;
+    for(let a=0;a<alphabet;a++)num[a]+=w*(node.counts[a]+.5)/ktDen;
+    den+=w;
+  }
+  if(den<=0)return Array(alphabet).fill(1/alphabet);
+  const p=num.map(x=>x/den),sum=p.reduce((a,b)=>a+b,0)||1;
+  return p.map(x=>x/sum);
+}
+function universalUpdate(seq,index,maps,alphabet,maxOrder){
+  const actual=seq[index];
+  for(let order=0;order<=maxOrder;order++){
+    if(index<order)continue;
+    const key=order===0?'*':seq.slice(index-order,index).join(',');
+    const node=universalNode(maps[order],key,alphabet);
+    node.n++;node.counts[actual]++;
+  }
+}
+function universalPrequentialBenchmark(seq,alphabet,maxOrder,warmup){
+  const arr=Array.isArray(seq)?seq.filter(x=>Number.isInteger(x)&&x>=0&&x<alphabet):[];
+  const maps=Array.from({length:maxOrder+1},()=>new Map());
+  let samples=0,logLoss=0,brier=0,minTrials=0,minMatches=0;
+  let directionalTrials=0,directionalWins=0,strongTrials=0,strongWins=0;
+
+  for(let i=0;i<arr.length;i++){
+    const p=universalPredict(arr,i,maps,alphabet,maxOrder);
+    if(i>=warmup){
+      const actual=arr[i];
+      const prob=clamp(safeNum(p[actual],1/alphabet),.000001,.999999);
+      logLoss+=-Math.log(prob);
+      let br=0;
+      for(let a=0;a<alphabet;a++){
+        const y=a===actual?1:0,e=safeNum(p[a],1/alphabet)-y;
+        br+=e*e;
+      }
+      brier+=br/alphabet;
+      samples++;
+
+      if(alphabet===10){
+        let minD=0;
+        for(let d=1;d<10;d++)if(p[d]<p[minD])minD=d;
+        minTrials++;
+        if(actual===minD)minMatches++;
+      }else if(alphabet===3&&actual!==1){
+        const direction=p[2]>=p[0]?2:0;
+        directionalTrials++;
+        if(direction===actual)directionalWins++;
+        const nonFlat=Math.max(.000001,p[0]+p[2]);
+        const cond=Math.max(p[0],p[2])/nonFlat;
+        const gap=Math.abs(p[2]-p[0])/nonFlat;
+        if(cond>=.535&&gap>=.035){
+          strongTrials++;
+          if(direction===actual)strongWins++;
+        }
+      }
+    }
+    universalUpdate(arr,i,maps,alphabet,maxOrder);
+  }
+
+  return {
+    samples,
+    logLoss:samples?logLoss/samples:Math.log(alphabet),
+    brier:samples?brier/samples:(alphabet-1)/(alphabet*alphabet),
+    minRiskTrials:minTrials,minRiskMatches:minMatches,
+    minRiskRate:minTrials?minMatches/minTrials:1/alphabet,
+    minRiskUpper95:minTrials?wilsonUpper95(minMatches,minTrials):1,
+    directionalTrials,directionalWins,
+    directionalHitRate:directionalTrials?directionalWins/directionalTrials:.5,
+    strongTrials,strongWins,strongHitRate:strongTrials?strongWins/strongTrials:.5
+  };
+}
+function directionSymbols(prices){
+  const out=[];
+  for(let i=1;i<prices.length;i++){
+    const a=safeNum(prices[i-1],NaN),b=safeNum(prices[i],NaN);
+    if(!Number.isFinite(a)||!Number.isFinite(b))continue;
+    out.push(b>a?2:b<a?0:1);
+  }
+  return out;
+}
+function hmacReferenceDigits(n,label){
+  const out=[],key=crypto.createHash('sha256').update('DIFFER-IA-REFERENCE|'+String(label)).digest();
+  let counter=0;
+  while(out.length<n){
+    const msg=Buffer.allocUnsafe(8);
+    msg.writeBigUInt64BE(BigInt(counter++));
+    const block=crypto.createHmac('sha256',key).update(msg).digest();
+    for(const byte of block){
+      if(byte>=250)continue;
+      out.push(byte%10);
+      if(out.length>=n)break;
+    }
+  }
+  return out;
+}
+function lcgReferenceDigits(n,seed){
+  let x=(seed>>>0)||1;const out=[];
+  for(let i=0;i<n;i++){x=(Math.imul(1664525,x)+1013904223)>>>0;out.push(x%10)}
+  return out;
+}
+function xorshiftReferenceDigits(n,seed){
+  let x=(seed>>>0)||2463534242;const out=[];
+  for(let i=0;i<n;i++){
+    x^=(x<<13);x>>>=0;x^=(x>>>17);x>>>=0;x^=(x<<5);x>>>=0;
+    out.push(x%10);
+  }
+  return out;
+}
+function fingerprintSummary(generator,n,reps,label){
+  const rows=[];
+  for(let r=0;r<reps;r++)rows.push(categoricalAuditDigits(generator(n,r+1)));
+  const out={label};
+  for(const f of ['entropy','maxDeviation','mutualInfoLag1']){
+    const vals=rows.map(x=>safeNum(x[f],0)),mu=mean(vals);
+    const v=mean(vals.map(x=>(x-mu)*(x-mu)));
+    out[f]={mean:mu,sd:Math.sqrt(Math.max(0,v))};
+  }
+  return out;
+}
+function fingerprintDistance(obs,ref){
+  const z=(field,floor)=>{
+    const r=ref?.[field]||{mean:0,sd:floor};
+    return Math.abs(safeNum(obs?.[field],0)-safeNum(r.mean,0))/Math.max(floor,safeNum(r.sd,0));
+  };
+  return (z('entropy',.0007)+z('maxDeviation',.0015)+z('mutualInfoLag1',.0007))/3;
+}
+function universalLabRun(force=false){
+  if(!force&&mem.tickCount%500!==0)return;
+  if(hist.length<1200||priceHist.length<1200)return;
+
+  const master=mem.master||(mem.master=freshMasterBrain());
+  const digits=hist.slice(-5000);
+  const directions=directionSymbols(priceHist.slice(-5001));
+
+  const db=universalPrequentialBenchmark(digits,10,6,Math.min(800,Math.floor(digits.length*.25)));
+  const rb=universalPrequentialBenchmark(directions,3,5,Math.min(800,Math.floor(directions.length*.25)));
+  const observed=categoricalAuditDigits(digits);
+
+  const n=Math.min(5000,digits.length),reps=5;
+  const refs={
+    hmacSha256:fingerprintSummary((m,r)=>hmacReferenceDigits(m,'run-'+mem.tickCount+'-'+r),n,reps,'HMAC-SHA256 reference'),
+    lcg32:fingerprintSummary((m,r)=>lcgReferenceDigits(m,(mem.tickCount+r*2654435761)>>>0),n,reps,'LCG32 weak reference'),
+    xorshift32:fingerprintSummary((m,r)=>xorshiftReferenceDigits(m,(mem.tickCount+r*2246822519)>>>0),n,reps,'XORSHIFT32 reference')
+  };
+  const distances=Object.fromEntries(Object.entries(refs).map(([k,v])=>[k,fingerprintDistance(observed,v)]));
+  const closestReference=Object.entries(distances).sort((a,b)=>a[1]-b[1])[0]?.[0]||'UNKNOWN';
+
+  const prior=master.universalLab||freshUniversalLab();
+  master.universalLab={
+    version:1,updatedAt:Date.now(),tick:mem.tickCount,runs:safeNum(prior.runs,0)+1,
+    differ:{
+      samples:db.samples,logLoss:db.logLoss,brier:db.brier,
+      minRiskTrials:db.minRiskTrials,minRiskMatches:db.minRiskMatches,
+      minRiskRate:db.minRiskRate,minRiskUpper95:db.minRiskUpper95,
+      edgeConfirmed:db.minRiskTrials>=1200&&db.minRiskUpper95<UNIFORM,
+      improvementVsUniform:Math.log(10)-db.logLoss,maxOrder:6
+    },
+    riseFall:{
+      samples:rb.samples,logLoss:rb.logLoss,brier:rb.brier,
+      directionalTrials:rb.directionalTrials,directionalWins:rb.directionalWins,
+      directionalHitRate:rb.directionalHitRate,
+      strongTrials:rb.strongTrials,strongWins:rb.strongWins,strongHitRate:rb.strongHitRate,
+      maxOrder:5
+    },
+    fingerprint:{
+      sampleSize:n,observed,references:refs,distances,closestReference,
+      note:'Similarity is a statistical fingerprint only; it does not identify the generator.'
+    }
+  };
+
+  console.log('Universal shadow lab:',JSON.stringify({
+    tick:mem.tickCount,
+    differMinRisk:Number(db.minRiskRate.toFixed(5)),
+    differUpper95:Number(db.minRiskUpper95.toFixed(5)),
+    differLogGain:Number((Math.log(10)-db.logLoss).toFixed(5)),
+    rfHit:Number(rb.directionalHitRate.toFixed(5)),
+    rfStrongHit:Number(rb.strongHitRate.toFixed(5)),
+    closestReference,
+    referenceDistance:Number(safeNum(distances[closestReference],0).toFixed(3))
+  }));
+  master.revision++;
+  master.updatedAt=Date.now();
+}
 function scienceAuditRun(force=false){
   if(!force&&mem.tickCount%100!==0)return;
   const master=mem.master||(mem.master=freshMasterBrain());
@@ -3330,6 +3556,7 @@ function processDigit(d,epoch,quote){
   lastDigit=d;
 
   scienceAuditRun(false);
+  universalLabRun(false);
   if(mem.tickCount%250===0) pruneModels();
   if(mem.tickCount%25===0){
     mem.deepHistory=hist.slice(-MAX_HIST);
@@ -3453,6 +3680,7 @@ function masterPublic(){
     errorContexts:master.errorContexts.slice(-160),
     streakStats:master.streakStats,
     scienceAudit:master.scienceAudit||freshScienceAudit(),
+    universalLab:master.universalLab||freshUniversalLab(),
     policyAnalytics:(()=>{
       const pa=master.policyAnalytics||freshPolicyAnalytics();
       const policies={};
@@ -3734,11 +3962,13 @@ app.post('/api/cloud/experience',(req,res)=>{
 app.get('/api/ai-health',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   scienceAuditRun(true);
+  universalLabRun(true);
   res.json({
     ok:true,
     status,
     symbol:SYMBOL,
     scienceAudit:mem.master?.scienceAudit||freshScienceAudit(),
+    universalLab:mem.master?.universalLab||freshUniversalLab(),
     differ:{
       shadowMatchRate:clamp(safeNum(mem.shadow.matchRate,UNIFORM),0,1),
       calibration:calibrationSummary(),
