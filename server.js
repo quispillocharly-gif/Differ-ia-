@@ -13,6 +13,9 @@ const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
 const RF_HORIZONS = [1,2,3,5];
+const RF_EXPERTS = ['globalSlow','globalFast','contextSlow','contextFast','movement'];
+const RF_HEDGE_ETA = 0.30;
+const RF_DRIFT_MAX_WINDOW = 300;
 const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
@@ -703,6 +706,26 @@ function freshRiseFallPerf(){
     lastAt:0
   };
 }
+function freshRiseFallExpertPerformance(){
+  const out={};
+  RF_HORIZONS.forEach(h=>{
+    out[h]={};
+    RF_EXPERTS.forEach(name=>{
+      out[h][name]={samples:0,logLossEWMA:Math.log(3),weight:1,cumulativeLoss:0};
+    });
+  });
+  return out;
+}
+function freshRiseFallDrift(){
+  const out={};
+  RF_HORIZONS.forEach(h=>{
+    out[h]={
+      events:0,active:false,boostRemaining:0,lastAt:0,lastTick:0,
+      score:0,epsilon:0,cut:0,lossWindow:[]
+    };
+  });
+  return out;
+}
 function freshRfOpStat(){
   return {
     n:0,wins:0,priced:0,breakEvenSum:0,probabilitySum:0,profitSum:0,
@@ -753,6 +776,8 @@ function freshRiseFallMemory(){
     models,
     global,
     performance,
+    expertPerformance:freshRiseFallExpertPerformance(),
+    drift:freshRiseFallDrift(),
     operationLearning:freshRiseFallOperationLearning(),
     lastEpoch:0,
     saves:0
@@ -765,6 +790,9 @@ function normalizeRiseFallMemory(x){
   m.models=m.models&&typeof m.models==='object'?m.models:base.models;
   m.global=m.global&&typeof m.global==='object'?m.global:base.global;
   m.performance=m.performance&&typeof m.performance==='object'?m.performance:base.performance;
+  m.expertPerformance=m.expertPerformance&&typeof m.expertPerformance==='object'?m.expertPerformance:base.expertPerformance;
+  m.drift=m.drift&&typeof m.drift==='object'?m.drift:base.drift;
+
   RF_HORIZONS.forEach(h=>{
     m.models[h]=m.models[h]&&typeof m.models[h]==='object'?m.models[h]:{};
     const g=m.global[h]||{};
@@ -773,6 +801,7 @@ function normalizeRiseFallMemory(x){
       fast:riseFallNorm3(Array.isArray(g.fast)&&g.fast.length===3?g.fast:g.counts),
       n:Math.max(0,Math.floor(safeNum(g.n,0)))
     };
+
     const p=m.performance[h]||{};
     m.performance[h]={
       resolved:Math.max(0,Math.floor(safeNum(p.resolved,0))),
@@ -783,7 +812,36 @@ function normalizeRiseFallMemory(x){
       logLossEWMA:clamp(safeNum(p.logLossEWMA,Math.log(3)),.01,8),
       lastAt:Math.max(0,safeNum(p.lastAt,0))
     };
+
+    const rawExperts=m.expertPerformance[h]&&typeof m.expertPerformance[h]==='object'?m.expertPerformance[h]:{};
+    const cleanExperts={};
+    RF_EXPERTS.forEach(name=>{
+      const e=rawExperts[name]||{};
+      cleanExperts[name]={
+        samples:Math.max(0,Math.floor(safeNum(e.samples,0))),
+        logLossEWMA:clamp(safeNum(e.logLossEWMA,Math.log(3)),.01,8),
+        weight:clamp(safeNum(e.weight,1),.08,8),
+        cumulativeLoss:Math.max(0,safeNum(e.cumulativeLoss,0))
+      };
+    });
+    m.expertPerformance[h]=cleanExperts;
+
+    const rawDrift=m.drift[h]&&typeof m.drift[h]==='object'?m.drift[h]:{};
+    m.drift[h]={
+      events:Math.max(0,Math.floor(safeNum(rawDrift.events,0))),
+      active:!!rawDrift.active,
+      boostRemaining:Math.max(0,Math.floor(safeNum(rawDrift.boostRemaining,0))),
+      lastAt:Math.max(0,safeNum(rawDrift.lastAt,0)),
+      lastTick:Math.max(0,Math.floor(safeNum(rawDrift.lastTick,0))),
+      score:Math.max(0,safeNum(rawDrift.score,0)),
+      epsilon:Math.max(0,safeNum(rawDrift.epsilon,0)),
+      cut:Math.max(0,Math.floor(safeNum(rawDrift.cut,0))),
+      lossWindow:Array.isArray(rawDrift.lossWindow)
+        ?rawDrift.lossWindow.map(v=>clamp(safeNum(v,0),0,1)).slice(-RF_DRIFT_MAX_WINDOW)
+        :[]
+    };
   });
+
   const rawOps=m.operationLearning&&typeof m.operationLearning==='object'?m.operationLearning:{};
   const ops=freshRiseFallOperationLearning();
   ops.total=Math.max(0,Math.floor(safeNum(rawOps.total,0)));
@@ -892,23 +950,30 @@ function riseFallLearnOne(h,snap,outcome){
   });
   riseFallMem.trainedSamples++;
 }
-function riseFallOwnDistribution(h,snap){
+function riseFallExpertWeight(h,name){
+  const perf=riseFallMem.expertPerformance?.[h]?.[name];
+  let w=clamp(safeNum(perf?.weight,1),.08,8);
+  const drift=riseFallMem.drift?.[h];
+  if(drift?.boostRemaining>0){
+    if(name==='globalFast')w*=1.38;
+    else if(name==='contextFast')w*=1.32;
+    else if(name==='globalSlow')w*=.76;
+    else if(name==='contextSlow')w*=.88;
+    else if(name==='movement')w*=1.06;
+  }
+  return clamp(w,.06,10);
+}
+function riseFallExpertViews(h,snap){
+  const views=[];
   const g=riseFallMem.global[h];
-  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
-  const slowGlobal=riseFallNorm3(g.counts);
-  const fastGlobal=riseFallNorm3(Array.isArray(g.fast)&&g.fast.length===3?g.fast:g.counts);
+  const globalSupport=clamp(1-Math.exp(-safeNum(g?.n,0)/180),0,1);
+  const slowGlobal=riseFallNorm3(g?.counts);
+  const fastGlobal=riseFallNorm3(Array.isArray(g?.fast)&&g.fast.length===3?g.fast:g?.counts);
+  views.push({name:'globalSlow',p:slowGlobal,support:globalSupport,base:.72});
+  views.push({name:'globalFast',p:fastGlobal,support:globalSupport,base:.64});
 
-  // When recent prequential error worsens, recent memory gets more influence.
-  // Long-term memory is never discarded, preventing catastrophic forgetting.
-  const brierDrift=clamp((safeNum(perf.brierEWMA,2/9)-(2/9)+.004)/.035,0,1);
-  const logDrift=clamp((safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3)+.008)/.10,0,1);
-  const driftPressure=Math.max(brierDrift,logDrift);
-  const fastWeight=clamp(.30+.35*driftPressure,.30,.65);
-
-  const gp=riseFallNorm3(slowGlobal.map((x,i)=>(1-fastWeight)*x+fastWeight*fastGlobal[i]));
-  const acc=gp.map(x=>x*.38),den=Array(3).fill(.38);
-  let supportSum=0,used=0,totalN=0;
-
+  const slowNum=Array(3).fill(0),fastNum=Array(3).fill(0),den=Array(3).fill(0);
+  let supportSum=0,totalN=0,used=0;
   riseFallContextKeys(snap).forEach(k=>{
     const node=riseFallMem.models[h]?.[k.key];
     if(!node)return;
@@ -916,21 +981,175 @@ function riseFallOwnDistribution(h,snap){
     const w=k.w*support;
     const slow=riseFallNorm3(node.counts);
     const fast=riseFallNorm3(Array.isArray(node.fast)&&node.fast.length===3?node.fast:node.counts);
-    const localFast=clamp(fastWeight+(1-support)*.08,.30,.72);
-    const p=riseFallNorm3(slow.map((x,i)=>(1-localFast)*x+localFast*fast[i]));
-    for(let i=0;i<3;i++){acc[i]+=p[i]*w;den[i]+=w}
+    for(let i=0;i<3;i++){
+      slowNum[i]+=slow[i]*w;
+      fastNum[i]+=fast[i]*w;
+      den[i]+=w;
+    }
     supportSum+=support;
-    used++;
     totalN+=safeNum(node.n,0);
+    used++;
   });
+  const contextSupport=used?clamp(supportSum/used,0,1):0;
+  if(used){
+    views.push({
+      name:'contextSlow',
+      p:riseFallNorm3(slowNum.map((x,i)=>x/(den[i]||1))),
+      support:contextSupport,
+      base:1.05
+    });
+    views.push({
+      name:'contextFast',
+      p:riseFallNorm3(fastNum.map((x,i)=>x/(den[i]||1))),
+      support:contextSupport,
+      base:1.10
+    });
+  }
 
-  const p=riseFallNorm3(acc.map((x,i)=>x/(den[i]||1)));
+  const move=movementForecast(h<=3?h:3);
+  if(move){
+    views.push({
+      name:'movement',
+      p:riseFallNorm3([move.down,move.flat,move.up]),
+      support:clamp(safeNum(move.support,0),0,1),
+      base:.56
+    });
+  }
+
+  return {views,move,contextSupport,totalN};
+}
+function riseFallBlendExperts(h,views){
+  const num=Array(3).fill(0);
+  let total=0;
+  const used=[];
+  for(const v of views){
+    if(!Array.isArray(v?.p)||v.p.length!==3)continue;
+    const ew=riseFallExpertWeight(h,v.name);
+    const support=clamp(safeNum(v.support,0),0,1);
+    const w=Math.max(.0001,safeNum(v.base,1))*(.25+.75*support)*ew;
+    for(let i=0;i<3;i++)num[i]+=v.p[i]*w;
+    total+=w;
+    used.push({name:v.name,p:v.p.slice(),support,weight:w,expertWeight:ew});
+  }
   return {
-    p,
-    support:used?supportSum/used:0,
-    n:totalN+safeNum(g.n,0),
+    p:riseFallNorm3(num.map(x=>x/(total||1))),
+    views:used,
+    totalWeight:total
+  };
+}
+function riseFallNormalizeExpertWeights(h,names,share){
+  const uniq=[...new Set(names)].filter(name=>RF_EXPERTS.includes(name));
+  if(!uniq.length)return;
+  const vals=uniq.map(name=>clamp(safeNum(riseFallMem.expertPerformance[h]?.[name]?.weight,1),.0001,100));
+  const avg=mean(vals)||1;
+  const s=clamp(safeNum(share,.01),0,.12);
+  uniq.forEach(name=>{
+    const perf=riseFallMem.expertPerformance[h][name];
+    const normalized=clamp(safeNum(perf.weight,1)/avg,.04,12);
+    // Fixed-share: a small pull toward neutral keeps old experts recoverable
+    // when a previously seen regime returns.
+    perf.weight=clamp((1-s)*normalized+s,.08,8);
+  });
+}
+function riseFallUpdateExperts(h,expertViews,actual){
+  if(!Array.isArray(expertViews)||!RF_HORIZONS.includes(h))return;
+  const drift=riseFallMem.drift?.[h];
+  const eta=RF_HEDGE_ETA*(drift?.boostRemaining>0?1.35:1);
+  const active=[];
+  expertViews.forEach(v=>{
+    if(!RF_EXPERTS.includes(v?.name)||!Array.isArray(v?.p)||v.p.length!==3)return;
+    const perf=riseFallMem.expertPerformance[h][v.name];
+    const p=riseFallNorm3(v.p);
+    const prob=clamp(safeNum(p[actual],1/3),.0001,.9999);
+    const loss=-Math.log(prob);
+    const normalizedLoss=clamp(loss/(3*Math.log(3)),0,1);
+    perf.samples++;
+    perf.cumulativeLoss+=normalizedLoss;
+    const a=perf.samples<120?.035:.014;
+    perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,Math.log(3))+a*loss;
+    perf.weight=clamp(safeNum(perf.weight,1)*Math.exp(-eta*normalizedLoss),.0001,100);
+    active.push(v.name);
+  });
+  riseFallNormalizeExpertWeights(h,active,drift?.boostRemaining>0?.035:.008);
+}
+function riseFallDetectDrift(h,p,actual){
+  const d=riseFallMem.drift?.[h];
+  if(!d||!Array.isArray(p)||p.length!==3)return;
+  const prob=clamp(safeNum(p[actual],1/3),.0001,.9999);
+  const normalizedLoss=clamp((-Math.log(prob))/(3*Math.log(3)),0,1);
+  d.lossWindow.push(normalizedLoss);
+  if(d.lossWindow.length>RF_DRIFT_MAX_WINDOW)d.lossWindow.shift();
+
+  if(d.boostRemaining>0){
+    d.boostRemaining--;
+    if(d.boostRemaining===0)d.active=false;
+  }
+
+  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
+  if(d.lossWindow.length<120||safeNum(perf.resolved,0)%15!==0)return;
+
+  const w=d.lossWindow;
+  let best=null;
+  const delta=.06;
+  for(let cut=45;cut<=w.length-45;cut+=15){
+    const left=w.slice(0,cut),right=w.slice(cut);
+    const diff=Math.abs(mean(left)-mean(right));
+    const eps=Math.sqrt(.5*Math.log(4/delta)*(1/left.length+1/right.length));
+    const score=diff-eps;
+    if(!best||score>best.score)best={cut,diff,eps,score};
+  }
+  if(!best)return;
+  d.score=Math.max(0,best.diff);
+  d.epsilon=best.eps;
+  d.cut=best.cut;
+
+  if(best.score>0&&riseFallMem.tickCount-safeNum(d.lastTick,0)>120){
+    d.events++;
+    d.active=true;
+    d.boostRemaining=180;
+    d.lastAt=Date.now();
+    d.lastTick=riseFallMem.tickCount;
+    d.lossWindow=w.slice(best.cut);
+
+    RF_EXPERTS.forEach(name=>{
+      const perf=riseFallMem.expertPerformance[h][name];
+      perf.weight=.65*safeNum(perf.weight,1)+.35;
+    });
+    console.log('Rise/Fall drift detected:',{
+      horizon:h,tick:riseFallMem.tickCount,
+      score:Number(best.diff.toFixed(4)),
+      epsilon:Number(best.eps.toFixed(4)),
+      events:d.events
+    });
+  }
+}
+function riseFallOwnDistribution(h,snap){
+  const info=riseFallExpertViews(h,snap);
+  const blend=riseFallBlendExperts(h,info.views);
+  const perf=riseFallMem.performance[h]||freshRiseFallPerf();
+  const drift=riseFallMem.drift?.[h]||{};
+  const brierDrift=clamp((safeNum(perf.brierEWMA,2/9)-(2/9)+.004)/.035,0,1);
+  const logDrift=clamp((safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3)+.008)/.10,0,1);
+  const detectorPressure=drift.active
+    ?clamp(safeNum(drift.score,0)/Math.max(.015,safeNum(drift.epsilon,.015)*1.5),0,1)
+    :0;
+  const driftPressure=Math.max(brierDrift,logDrift,detectorPressure);
+
+  const fastNames=new Set(['globalFast','contextFast']);
+  const fastW=blend.views.reduce((s,v)=>s+(fastNames.has(v.name)?v.weight:0),0);
+  const fastWeight=blend.totalWeight?clamp(fastW/blend.totalWeight,0,1):.5;
+  const support=blend.views.length
+    ?blend.views.reduce((s,v)=>s+v.support*v.weight,0)/Math.max(.0001,blend.totalWeight)
+    :0;
+
+  return {
+    p:blend.p,
+    support:clamp(support,0,1),
+    n:info.totalN+safeNum(riseFallMem.global?.[h]?.n,0),
     fastWeight,
-    driftPressure
+    driftPressure,
+    expertViews:blend.views,
+    move:info.move
   };
 }
 function riseFallPosterior(stat,priorRate=.52,priorN=18){
@@ -1078,16 +1297,8 @@ function riseFallPredict(h=1){
   if(!snap)return null;
 
   const own=riseFallOwnDistribution(h,snap);
-  let p=own.p.slice();
-
-  // Rise/Fall may read the movement predictor as evidence, but never writes
-  // back into DIFFER and never depends on account type or execution mode.
-  const move=movementForecast(h<=3?h:3);
-  if(move){
-    const ext=riseFallNorm3([move.down,move.flat,move.up]);
-    const readOnlyWeight=clamp(.10+.18*safeNum(move.support,0),.10,.28);
-    p=riseFallNorm3(p.map((x,i)=>(1-readOnlyWeight)*x+readOnlyWeight*ext[i]));
-  }
+  const p=own.p.slice();
+  const move=own.move;
 
   const down=p[0],flat=p[1],up=p[2];
   const direction=up>=down?'RISE':'FALL';
@@ -1103,8 +1314,6 @@ function riseFallPredict(h=1){
   const hitPenalty=clamp((.505-safeNum(perf.directionHitEWMA,.5))/.08,0,1);
   const modelPenalty=Math.max(brierPenalty,logPenalty,hitPenalty);
 
-  // Adaptive AI threshold: support and recent predictive health change how much
-  // evidence is required. No DEMO/REAL rule exists here.
   const directionFloor=clamp(.505+(1-own.support)*.018+modelPenalty*.022,.505,.555);
   const gapFloor=clamp(.018+(1-own.support)*.014+modelPenalty*.012,.018,.044);
   const flatCeiling=clamp(.56-own.support*.08-modelPenalty*.04,.44,.56);
@@ -1118,15 +1327,16 @@ function riseFallPredict(h=1){
     action=direction;
   }
 
-  // Readiness means "enough market learning", not "enough demo/real trades".
   const marketSamples=Math.min(
     Math.max(0,safeNum(perf.resolved,0)),
     Math.max(0,safeNum(riseFallMem.global?.[h]?.n,0))
   );
-  const ready=marketSamples>=350 && own.support>=.10;
+  const ready=marketSamples>=350&&own.support>=.10;
 
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
   const operationTelemetry=riseFallOperationGate(direction,h,directionProbability);
+  const expertWeights={};
+  (own.expertViews||[]).forEach(v=>{expertWeights[v.name]=Number(safeNum(v.expertWeight,1).toFixed(4))});
 
   return {
     horizon:h,
@@ -1161,9 +1371,13 @@ function riseFallPredict(h=1){
     ready,
     operationalReady:ready,
     operationLearning:operationTelemetry,
+    expertViews:(own.expertViews||[]).map(v=>({name:v.name,p:v.p.slice(),support:v.support})),
     adaptation:{
       fastWeight:clamp(safeNum(own.fastWeight,.30),0,1),
       driftPressure:clamp(safeNum(own.driftPressure,0),0,1),
+      driftActive:!!riseFallMem.drift?.[h]?.active,
+      driftEvents:Math.max(0,safeNum(riseFallMem.drift?.[h]?.events,0)),
+      expertWeights,
       modelPenalty,
       directionFloor,
       gapFloor,
@@ -1198,6 +1412,11 @@ function riseFallResolve(targetPrice,counter){
       brier+=e*e;
     }
     brier/=3;
+
+    // Test first, then learn: expert weights and drift are updated strictly
+    // from predictions made before this outcome was seen.
+    riseFallUpdateExperts(item.h,item.experts||[],actual);
+    riseFallDetectDrift(item.h,p,actual);
 
     perf.resolved++;
     const a=perf.resolved<300?.025:.0075;
@@ -1241,7 +1460,10 @@ function riseFallSchedule(counter){
       p:[pred.probabilities.FALL,pred.probabilities.FLAT,pred.probabilities.RISE],
       up:pred.probabilities.RISE,
       down:pred.probabilities.FALL,
-      action:pred.action
+      action:pred.action,
+      experts:Array.isArray(pred.expertViews)
+        ?pred.expertViews.map(v=>({name:v.name,p:Array.isArray(v.p)?v.p.slice():[1/3,1/3,1/3]}))
+        :[]
     });
     if(h===1)riseFallLastPrediction=pred;
   }
@@ -2328,21 +2550,28 @@ function updateCalibration(rawRisk,match){
   c.ece=calibrationECE();
 }
 
-function normalizeHedgeWeights(activeNames){
-  if(!activeNames.length) return;
-  const vals=activeNames.map(name=>clamp(safeNum(mem.shadow.performance[name]?.weight,1),.0001,100));
+function normalizeHedgeWeights(activeNames,share=.008){
+  if(!activeNames.length)return;
+  const uniq=[...new Set(activeNames)];
+  const vals=uniq.map(name=>clamp(safeNum(mem.shadow.performance[name]?.weight,1),.0001,100));
   const avg=mean(vals)||1;
-  activeNames.forEach(name=>{
+  const s=clamp(safeNum(share,.008),0,.12);
+  uniq.forEach(name=>{
     const p=mem.shadow.performance[name];
-    p.weight=clamp(p.weight/avg,.12,5);
+    const normalized=clamp(p.weight/avg,.04,12);
+    // Fixed-share prevents an expert from becoming permanently irrelevant;
+    // this is useful when old market regimes recur.
+    p.weight=clamp((1-s)*normalized+s,.12,5);
   });
 }
 function hedgeUpdate(pending,actual){
   const active=[];
+  const drifting=mem.shadow.drift.boostRemaining>0;
+  const eta=HEDGE_ETA*(drifting?1.35:1);
   for(const mv of pending.modelVotes||[]){
     const perf=mem.shadow.performance[mv.name];
     const dist=(pending.modelDistributions||{})[mv.name];
-    if(!perf||!Array.isArray(dist)||dist.length!==10) continue;
+    if(!perf||!Array.isArray(dist)||dist.length!==10)continue;
 
     const prob=clamp(safeNum(dist[actual],UNIFORM),.0001,.9999);
     const logLoss=-Math.log(prob);
@@ -2355,10 +2584,10 @@ function hedgeUpdate(pending,actual){
     const a=perf.samples<100?.045:.016;
     perf.logLossEWMA=(1-a)*safeNum(perf.logLossEWMA,Math.log(10))+a*logLoss;
     perf.matchEWMA=(1-a)*safeNum(perf.matchEWMA,UNIFORM)+a*ownMatch;
-    perf.weight=clamp(safeNum(perf.weight,1)*Math.exp(-HEDGE_ETA*hedgeLoss),.0001,100);
+    perf.weight=clamp(safeNum(perf.weight,1)*Math.exp(-eta*hedgeLoss),.0001,100);
     active.push(mv.name);
   }
-  normalizeHedgeWeights(active);
+  normalizeHedgeWeights(active,drifting?.030:.006);
 }
 
 function detectDrift(pending,actual){
