@@ -363,6 +363,7 @@ function onRfMessage(ev){
       operationalReady:!!p.operationalReady,
       learningDemo:!!p.learningDemo,
       bootstrapDemo:!!p.bootstrapDemo,
+      explorationDemo:!!p.explorationDemo,
       contractId:''
     };
     if(learningDemo)setText('rfStatus','DEMO TRAINING · PROPUESTA OK · COMPRANDO '+p.action+'…');
@@ -434,7 +435,8 @@ function sendRfTrade(pred){
       ready:!!pred.ready,
       operationalReady:!!pred.operationalReady,
       learningDemo:!!pred.learningDemo,
-      bootstrapDemo:!!pred.bootstrapDemo
+      bootstrapDemo:!!pred.bootstrapDemo,
+      explorationDemo:!!pred.explorationDemo
     };
     rfPendingProposal=p;
     if(!sendProposalForPending(p)){
@@ -459,6 +461,7 @@ async function reportRfDemoExperience(t,profit){
         breakEven:t.breakEven,
         signalEpoch:t.signalEpoch,
         phase:t.phase,
+        explorationDemo:!!t.explorationDemo,
         profit:Number(profit)||0
       })
     });
@@ -502,7 +505,8 @@ async function evaluateAuto(pred,forceTraining=false){
   // La madurez del predictor SHADOW no sustituye experiencia de contratos.
   // En DEMO continúa entrenando hasta tener suficientes operaciones reales
   // y, si el predictor aún no está listo, sigue entrenando después de ese punto.
-  const trainingDemo=demo&&!pred.operationalReady;
+  const strictAction=pred.action||'WAIT';
+  const trainingDemo=demo&&(!pred.operationalReady||(forceTraining&&strictAction==='WAIT'));
 
   if(!pred.operationalReady&&!demo){
     resetConfirmation();
@@ -528,7 +532,8 @@ async function evaluateAuto(pred,forceTraining=false){
         ...pred,
         action,
         learningDemo:true,
-        bootstrapDemo:opCount<RF_BOOTSTRAP_OPS
+        bootstrapDemo:opCount<RF_BOOTSTRAP_OPS,
+        explorationDemo:!!pred.operationalReady
       });
       if(out?.bought){
         setText(
@@ -550,7 +555,7 @@ async function evaluateAuto(pred,forceTraining=false){
   }
 
   // Modelo ya validado: aquí sí selecciona y confirma antes de comprar.
-  const action=pred.action||'WAIT';
+  const action=strictAction;
   if(action!=='RISE'&&action!=='FALL'){
     resetConfirmation();
     setText('rfStatus','MODELO VALIDADO · ESPERANDO DIRECCIÓN CON VENTAJA');
@@ -582,14 +587,23 @@ async function evaluateAuto(pred,forceTraining=false){
   }
 }
 async function trainingWatchdog(){
-  if(!selected()||!rfAuto||rfAccountType!=='demo'||!rfPrediction||rfPrediction.operationalReady)return;
+  if(!selected()||!rfAuto||rfAccountType!=='demo'||!rfPrediction)return;
   if(rfActiveContract||rfPendingProposal||rfActiveTrade)return;
   if(!rfReady){
     setText('rfStatus','DEMO TRAINING · RECONECTANDO DERIV');
     try{await connectRf()}catch(_){}
     return;
   }
-  if(Date.now()-rfLastTrainingAttemptAt<4500)return;
+
+  const strictAction=rfPrediction.action||'WAIT';
+  const needsLearning=!rfPrediction.operationalReady;
+  const needsExploration=rfPrediction.operationalReady&&strictAction==='WAIT';
+  if(!needsLearning&&!needsExploration)return;
+
+  const delay=needsLearning?4500:7000;
+  if(Date.now()-rfLastTrainingAttemptAt<delay)return;
+
+  if(needsExploration)setText('rfStatus','DEMO EXPLORACIÓN · SIN SEÑAL ESTRICTA · GENERANDO EXPERIENCIA');
   await evaluateAuto(rfPrediction,true);
 }
 
