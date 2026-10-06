@@ -70,20 +70,21 @@ function render(){
   }
 
   const arrow=p.direction==='RISE'?'↑':'↓';
-  const learningDemo=!p.ready&&$('mode')?.value==='DEMO';
-  const visibleAction=learningDemo?(p.direction||p.learningAction||p.action):p.action;
+  const op=p.operationLearning||{};
+  const opCount=Math.max(0,Number(op.totalOperations||0));
+  const trainingDemo=$('mode')?.value==='DEMO'&&(opCount<RF_BOOTSTRAP_OPS||!p.ready);
+  const visibleAction=trainingDemo?(p.direction||p.learningAction||p.action):p.action;
   const action=visibleAction==='RISE'?'RISE ↑':visibleAction==='FALL'?'FALL ↓':'ESPERAR';
   setText('rfDecision',action);
   setText('rfProbability',pct(p.directionProbability));
   setText('rfMove',arrow+' '+(Number(p.expectedUnits)>=0?'+':'')+Number(p.expectedUnits||0).toFixed(1)+'U');
   const v=p.validation||{};
-  const op=p.operationLearning||{};
-  setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS · OPS '+Number(op.totalOperations||0).toLocaleString());
-  const opCount=Math.max(0,Number(op.totalOperations||0));
-  const bootstrapDemo=!p.ready&&$('mode')?.value==='DEMO'&&opCount<RF_BOOTSTRAP_OPS;
+  setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS · OPS '+opCount.toLocaleString());
   setText(
     'rfCloudMode',
-    p.ready?'ACTIVO':bootstrapDemo?'BOOTSTRAP DEMO':(($('mode')?.value==='DEMO')?'SHADOW + DEMO LEARNING':'SHADOW')
+    trainingDemo
+      ?('DEMO TRAINING '+Math.min(opCount,RF_BOOTSTRAP_OPS)+'/'+RF_BOOTSTRAP_OPS)
+      :(p.ready?'ACTIVO':'SHADOW')
   );
   setText('rfPhase',String(p.phase||'—').replaceAll('_',' '));
   setText('rfTurn','GIRO '+pct(p.reversalProbability)+' · CONT '+pct(p.continuationProbability));
@@ -404,7 +405,10 @@ async function evaluateAuto(pred){
 
   const opCount=Math.max(0,Number(pred.operationLearning?.totalOperations||0));
   const demo=rfAccountType==='demo';
-  const trainingDemo=!pred.ready&&demo;
+  // La madurez del predictor SHADOW no sustituye experiencia de contratos.
+  // En DEMO continúa entrenando hasta tener suficientes operaciones reales
+  // y, si el predictor aún no está listo, sigue entrenando después de ese punto.
+  const trainingDemo=demo&&(opCount<RF_BOOTSTRAP_OPS||!pred.ready);
 
   if(!pred.ready&&!demo){
     resetConfirmation();
@@ -513,15 +517,12 @@ async function startRf(){
   }
 
   rfAuto=true;
-  if(rfPrediction?.ready){
+  const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
+  const needsDemoTraining=rfAccountType==='demo'&&(ops<RF_BOOTSTRAP_OPS||!rfPrediction?.ready);
+  if(needsDemoTraining){
+    setText('rfStatus','DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+'/'+RF_BOOTSTRAP_OPS);
+  }else if(rfPrediction?.ready){
     setText('rfStatus','AUTO RISE/FALL ACTIVO · ESPERANDO CONFIRMACIÓN');
-  }else if(rfAccountType==='demo'){
-    const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
-    setText(
-      'rfStatus',
-      'DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+
-      (ops<RF_BOOTSTRAP_OPS?'/'+RF_BOOTSTRAP_OPS:'')
-    );
   }else{
     setText('rfStatus','SHADOW ACTIVO · REAL BLOQUEADO HASTA VALIDACIÓN');
   }
