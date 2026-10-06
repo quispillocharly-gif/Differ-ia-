@@ -307,13 +307,13 @@ function onRfMessage(ev){
       // único fallback de entrenamiento a 5 ticks y lo hacemos visible.
       const durationLike=/duration|tick|contract|available|minimum|min\b/i.test(message);
       if(p.learningDemo&&durationLike&&Number(p.horizon)<5&&Number(p.retryCount||0)<1){
-        p.horizon=Math.max(5,Number(rfContractSpec.minTicks)||5);
-        p.retryCount=1;
-        rfPendingProposal=p;
+        const fallback=Math.max(5,Number(rfContractSpec.minTicks)||5);
+        rfPendingProposal=null;
         const sel=$('rfHorizon');
-        if(sel&&[...sel.options].some(o=>Number(o.value)===p.horizon))sel.value=String(p.horizon);
-        setText('rfStatus','DEMO TRAINING · AJUSTANDO CONTRATO A '+p.horizon+'T');
-        sendProposalForPending(p);
+        if(sel&&[...sel.options].some(o=>Number(o.value)===fallback))sel.value=String(fallback);
+        rfEffectiveHorizon=fallback;
+        setText('rfStatus','DEMO TRAINING · CAMBIO A '+fallback+'T · ESPERANDO PREDICCIÓN ALINEADA');
+        p.resolve({bought:false,retryHorizon:fallback});
         return;
       }
       rfPendingProposal=null;
@@ -530,6 +530,8 @@ async function evaluateAuto(pred){
           ' · '+effectiveHorizon()+'T · OPS '+opCount+
           ' · APRENDE AL CERRAR'
         );
+      }else if(out?.retryHorizon){
+        setText('rfStatus','DEMO TRAINING · AJUSTADO A '+out.retryHorizon+'T · SIGUIENTE SEÑAL');
       }else if(out?.busy){
         setText('rfStatus','DEMO TRAINING · ESPERANDO CIERRE DE OPERACIÓN');
       }
@@ -610,7 +612,7 @@ async function startRf(){
   const ops=Math.max(0,Number(rfPrediction?.operationLearning?.totalOperations||0));
   const needsDemoTraining=rfAccountType==='demo'&&!rfPrediction?.operationalReady;
   if(needsDemoTraining){
-    setText('rfStatus','DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+'/'+RF_BOOTSTRAP_OPS);
+    setText('rfStatus','DEMO TRAINING · OPERARÁ PARA APRENDER · OPS '+ops+' · HASTA VALIDACIÓN');
   }else if(rfPrediction?.operationalReady){
     setText('rfStatus','AUTO RISE/FALL VALIDADO · ESPERANDO ENTRADA');
   }else{
