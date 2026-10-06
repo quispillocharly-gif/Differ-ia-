@@ -704,7 +704,11 @@ function freshRiseFallPerf(){
   };
 }
 function freshRfOpStat(){
-  return {n:0,wins:0,priced:0,breakEvenSum:0,probabilitySum:0,profitSum:0};
+  return {
+    n:0,wins:0,priced:0,breakEvenSum:0,probabilitySum:0,profitSum:0,
+    selectedN:0,selectedWins:0,selectedPriced:0,selectedBreakEvenSum:0,
+    explorationN:0
+  };
 }
 function normalizeRfOpStat(x){
   x=x&&typeof x==='object'?x:{};
@@ -714,7 +718,12 @@ function normalizeRfOpStat(x){
     priced:Math.max(0,Math.floor(safeNum(x.priced,0))),
     breakEvenSum:Math.max(0,safeNum(x.breakEvenSum,0)),
     probabilitySum:Math.max(0,safeNum(x.probabilitySum,0)),
-    profitSum:safeNum(x.profitSum,0)
+    profitSum:safeNum(x.profitSum,0),
+    selectedN:Math.max(0,Math.floor(safeNum(x.selectedN,0))),
+    selectedWins:Math.max(0,Math.floor(safeNum(x.selectedWins,0))),
+    selectedPriced:Math.max(0,Math.floor(safeNum(x.selectedPriced,0))),
+    selectedBreakEvenSum:Math.max(0,safeNum(x.selectedBreakEvenSum,0)),
+    explorationN:Math.max(0,Math.floor(safeNum(x.explorationN,0)))
   };
 }
 function freshRiseFallOperationLearning(){
@@ -924,14 +933,20 @@ function riseFallOperationGate(action,h,probability){
     else if(learnedRate<.535){minProbability=.58;learningMinProbability=.515}
   }
 
-  const priced=Math.max(0,safeNum(hz.priced,0));
-  const averageBreakEven=priced?safeNum(hz.breakEvenSum,0)/priced:.50;
-  const observedWinRate=hz.n?safeNum(hz.wins,0)/hz.n:.50;
-  const conservativeWinRate=wilsonLower(hz.wins,hz.n);
+  // La preparación para operar NO se calcula con operaciones exploratorias.
+  // Esas operaciones sirven para aprender, pero no deben aprobar el sistema.
+  const selectedN=Math.max(0,safeNum(hz.selectedN,0));
+  const selectedWins=Math.max(0,safeNum(hz.selectedWins,0));
+  const selectedPriced=Math.max(0,safeNum(hz.selectedPriced,0));
+  const averageBreakEven=selectedPriced
+    ?safeNum(hz.selectedBreakEvenSum,0)/selectedPriced
+    :.50;
+  const observedWinRate=selectedN?selectedWins/selectedN:.50;
+  const conservativeWinRate=wilsonLower(selectedWins,selectedN);
   const operationalReady=
-    hz.n>=150 &&
-    priced>=100 &&
-    conservativeWinRate>=averageBreakEven+.008;
+    selectedN>=80 &&
+    selectedPriced>=60 &&
+    conservativeWinRate>=averageBreakEven+.005;
 
   return {
     samples,
@@ -943,7 +958,10 @@ function riseFallOperationGate(action,h,probability){
     totalLosses:ops.losses,
     overallWinRate:ops.total?ops.wins/ops.total:.5,
     horizonOperations:hz.n,
-    pricedOperations:priced,
+    explorationOperations:Math.max(0,safeNum(hz.explorationN,0)),
+    selectedOperations:selectedN,
+    selectedWins,
+    selectedPricedOperations:selectedPriced,
     averageBreakEven:clamp(averageBreakEven,0,1),
     observedWinRate:clamp(observedWinRate,0,1),
     conservativeWinRate,
@@ -959,6 +977,7 @@ function recordRiseFallDemoOperation(b){
   const profit=safeNum(b.profit,NaN);
   const breakEven=safeNum(b.breakEven,NaN);
   const signalEpoch=Math.floor(safeNum(b.signalEpoch,0));
+  const explorationDemo=b.explorationDemo===true||b.explorationDemo===1;
 
   if(b.mode!=='demo'||!id||!action||!RF_HORIZONS.includes(h)||
      !Number.isFinite(probability)||probability<.45||probability>1||
@@ -986,6 +1005,14 @@ function recordRiseFallDemoOperation(b){
     st.breakEvenSum+=breakEven;
     st.probabilitySum+=probability;
     st.profitSum+=profit;
+    if(explorationDemo){
+      st.explorationN++;
+    }else{
+      st.selectedN++;
+      if(win)st.selectedWins++;
+      st.selectedPriced++;
+      st.selectedBreakEvenSum+=breakEven;
+    }
   };
   updateOpStat(ops.byAction[action]);
 
