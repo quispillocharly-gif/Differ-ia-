@@ -215,6 +215,14 @@ function updatePolicyAnalytics(name,loss,sessionOp){
   pa.updatedAt=st.lastAt;
 }
 
+function freshScienceAudit(){
+  return {
+    updatedAt:0,tick:0,status:'BOOTING',alerts:[],
+    digit:{sampleSize:0,entropy:1,maxDeviation:0,uniformityChi2:0,uniformityP:1,transitionChi2:0,transitionP:1,mutualInfoLag1:0},
+    differ:{predictedEWMA:.10,observedEWMA:.10,calibrationGap:0,rank0N:0,rank0Rate:.10,rank0Upper95:1,edgeConfirmed:false},
+    riseFall:{horizon:1,resolved:0,directionHitEWMA:.5,brierEWMA:2/9,logLossEWMA:Math.log(3),signalAction:'WAIT',signalAge:0,switches:0,holds:0}
+  };
+}
 function freshMasterBrain(){
   return {
     version:MASTER_BRAIN_VERSION,
@@ -226,7 +234,8 @@ function freshMasterBrain(){
     errorContexts:[],
     streakStats:freshStreakStats(),
     sessionAnalytics:freshSessionAnalytics(),
-    policyAnalytics:freshPolicyAnalytics()
+    policyAnalytics:freshPolicyAnalytics(),
+    scienceAudit:freshScienceAudit()
   };
 }
 
@@ -546,6 +555,11 @@ function normalizeMemory(x){
   master.revision=Math.max(0,Math.floor(safeNum(master.revision,0)));
   master.updatedAt=Math.max(0,safeNum(master.updatedAt,0));
   master.counterfactualTicks=Math.max(0,Math.floor(safeNum(master.counterfactualTicks,0)));
+  {
+    const sa=master.scienceAudit&&typeof master.scienceAudit==='object'?master.scienceAudit:freshScienceAudit();
+    master.scienceAudit={...freshScienceAudit(),...sa};
+    master.scienceAudit.alerts=Array.isArray(sa.alerts)?sa.alerts.map(x=>String(x).slice(0,180)).slice(-8):[];
+  }
   master.digitCalibration=Array.from({length:10},(_,d)=>{
     const x=Array.isArray(rawMaster.digitCalibration)?rawMaster.digitCalibration[d]:null;
     return {
@@ -3107,6 +3121,136 @@ function updateMasterSessionAnalytics(sessionId,sessionOp,loss,sessionEnd){
   return true;
 }
 
+function normalCdfApprox(z){
+  const x=Math.abs(safeNum(z,0));
+  const t=1/(1+.3275911*x);
+  const a1=.254829592,a2=-.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429;
+  const erf=1-(((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+  const signed=z<0?-erf:erf;
+  return .5*(1+signed);
+}
+function chiSquareSurvivalApprox(x,df){
+  x=Math.max(0,safeNum(x,0));df=Math.max(1,safeNum(df,1));
+  if(x===0)return 1;
+  const z=(Math.pow(x/df,1/3)-(1-2/(9*df)))/Math.sqrt(2/(9*df));
+  return clamp(1-normalCdfApprox(z),0,1);
+}
+function wilsonUpper95(successes,n){
+  n=Math.max(0,safeNum(n,0));successes=Math.max(0,safeNum(successes,0));
+  if(n<1)return 1;
+  const z=1.96,z2=z*z,p=successes/n,den=1+z2/n;
+  const centre=p+z2/(2*n);
+  const margin=z*Math.sqrt((p*(1-p)+z2/(4*n))/n);
+  return clamp((centre+margin)/den,0,1);
+}
+function categoricalAuditDigits(xs){
+  const arr=Array.isArray(xs)?xs.filter(d=>Number.isInteger(d)&&d>=0&&d<=9):[];
+  const n=arr.length;
+  if(n<20)return {sampleSize:n,entropy:1,maxDeviation:0,uniformityChi2:0,uniformityP:1,transitionChi2:0,transitionP:1,mutualInfoLag1:0};
+  const counts=Array(10).fill(0);arr.forEach(d=>counts[d]++);
+  const probs=counts.map(c=>c/n);
+  const entropy=-probs.reduce((s,p)=>s+(p>0?p*Math.log(p):0),0)/Math.log(10);
+  const maxDeviation=Math.max(...probs.map(p=>Math.abs(p-UNIFORM)));
+  const expected=n/10;
+  const uniformityChi2=counts.reduce((s,c)=>s+(c-expected)*(c-expected)/expected,0);
+  const uniformityP=chiSquareSurvivalApprox(uniformityChi2,9);
+
+  const joint=Array.from({length:10},()=>Array(10).fill(0));
+  const rows=Array(10).fill(0),cols=Array(10).fill(0);
+  for(let i=1;i<n;i++){
+    const a=arr[i-1],b=arr[i];
+    joint[a][b]++;rows[a]++;cols[b]++;
+  }
+  const tn=Math.max(1,n-1);
+  let transitionChi2=0,mi=0;
+  for(let a=0;a<10;a++)for(let b=0;b<10;b++){
+    const obs=joint[a][b],exp=rows[a]*cols[b]/tn;
+    if(exp>0)transitionChi2+=(obs-exp)*(obs-exp)/exp;
+    if(obs>0&&rows[a]>0&&cols[b]>0){
+      const pab=obs/tn,pa=rows[a]/tn,pb=cols[b]/tn;
+      mi+=pab*Math.log(pab/(pa*pb));
+    }
+  }
+  return {
+    sampleSize:n,
+    entropy:clamp(entropy,0,1),
+    maxDeviation,
+    uniformityChi2,
+    uniformityP:chiSquareSurvivalApprox(uniformityChi2,9),
+    transitionChi2,
+    transitionP:chiSquareSurvivalApprox(transitionChi2,81),
+    mutualInfoLag1:Math.max(0,mi/Math.log(10))
+  };
+}
+function scienceAuditRun(force=false){
+  if(!force&&mem.tickCount%100!==0)return;
+  const master=mem.master||(mem.master=freshMasterBrain());
+  const prev=master.scienceAudit||freshScienceAudit();
+  const digit=categoricalAuditDigits(hist.slice(-5000));
+  const cal=mem.shadow.calibration||freshCalibration();
+  const predicted=clamp(safeNum(cal.predictedEWMA,UNIFORM),0,1);
+  const observed=clamp(safeNum(cal.observedEWMA,UNIFORM),0,1);
+  const gap=observed-predicted;
+  const rank0=master.rankStats?.[0]||{n:0,matches:0};
+  const rank0N=Math.max(0,safeNum(rank0.n,0));
+  const rank0Rate=(safeNum(rank0.matches,0)+80*UNIFORM)/(rank0N+80);
+  const rank0Upper95=wilsonUpper95(safeNum(rank0.matches,0),rank0N);
+  const edgeConfirmed=rank0N>=1500&&rank0Upper95<UNIFORM;
+
+  const rfPerf=riseFallMem.performance?.[1]||freshRiseFallPerf();
+  const rfState=riseFallMem.signalState?.[1]||{action:'WAIT',age:0,switches:0,holds:0};
+  const alerts=[];
+  if(gap>=.030)alerts.push('DIFFER_CRITICAL_OVERCONFIDENCE');
+  else if(gap>=.015)alerts.push('DIFFER_OVERCONFIDENCE');
+  if(rank0N>=1500&&!edgeConfirmed)alerts.push('DIFFER_EDGE_NOT_CONFIRMED');
+  if(digit.uniformityP<.001)alerts.push('DIGIT_UNIFORMITY_ANOMALY');
+  if(digit.transitionP<.001)alerts.push('DIGIT_TRANSITION_ANOMALY');
+  if(safeNum(rfPerf.resolved,0)>=500&&safeNum(rfPerf.directionHitEWMA,.5)<.49)alerts.push('RISE_FALL_DIRECTION_WEAK');
+  if(safeNum(rfPerf.brierEWMA,2/9)>(2/9)+.025)alerts.push('RISE_FALL_CALIBRATION_WEAK');
+
+  const status=alerts.some(x=>/CRITICAL/.test(x))?'CRITICAL':alerts.length?'WATCH':'OK';
+  master.scienceAudit={
+    updatedAt:Date.now(),
+    tick:mem.tickCount,
+    status,
+    alerts,
+    digit,
+    differ:{
+      predictedEWMA:predicted,
+      observedEWMA:observed,
+      calibrationGap:gap,
+      rank0N,
+      rank0Rate,
+      rank0Upper95,
+      edgeConfirmed
+    },
+    riseFall:{
+      horizon:1,
+      resolved:safeNum(rfPerf.resolved,0),
+      directionHitEWMA:clamp(safeNum(rfPerf.directionHitEWMA,.5),0,1),
+      brierEWMA:clamp(safeNum(rfPerf.brierEWMA,2/9),0,1),
+      logLossEWMA:clamp(safeNum(rfPerf.logLossEWMA,Math.log(3)),.01,8),
+      signalAction:String(rfState.action||'WAIT'),
+      signalAge:safeNum(rfState.age,0),
+      switches:safeNum(rfState.switches,0),
+      holds:safeNum(rfState.holds,0)
+    }
+  };
+
+  if(prev.status!==status||JSON.stringify(prev.alerts||[])!==JSON.stringify(alerts)){
+    console.log('AI science audit:',JSON.stringify({
+      status,alerts,
+      digitUniformityP:Number(digit.uniformityP.toFixed(5)),
+      transitionP:Number(digit.transitionP.toFixed(5)),
+      entropy:Number(digit.entropy.toFixed(5)),
+      differGap:Number(gap.toFixed(5)),
+      rank0Upper95:Number(rank0Upper95.toFixed(5)),
+      riseFallHit:Number(safeNum(rfPerf.directionHitEWMA,.5).toFixed(5))
+    }));
+  }
+  master.revision++;
+  master.updatedAt=Date.now();
+}
 function evaluateShadow(actual){
   const p=shadowPending;
   if(!p) return;
@@ -3185,6 +3329,7 @@ function processDigit(d,epoch,quote){
   lastTickAt=Date.now();
   lastDigit=d;
 
+  scienceAuditRun(false);
   if(mem.tickCount%250===0) pruneModels();
   if(mem.tickCount%25===0){
     mem.deepHistory=hist.slice(-MAX_HIST);
@@ -3307,6 +3452,7 @@ function masterPublic(){
     rankStats:master.rankStats,
     errorContexts:master.errorContexts.slice(-160),
     streakStats:master.streakStats,
+    scienceAudit:master.scienceAudit||freshScienceAudit(),
     policyAnalytics:(()=>{
       const pa=master.policyAnalytics||freshPolicyAnalytics();
       const policies={};
@@ -3582,6 +3728,27 @@ app.post('/api/cloud/experience',(req,res)=>{
     sharedAccepted:col.accepted,
     sharedWins:col.wins,
     sharedMatches:col.matches
+  });
+});
+
+app.get('/api/ai-health',(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  scienceAuditRun(true);
+  res.json({
+    ok:true,
+    status,
+    symbol:SYMBOL,
+    scienceAudit:mem.master?.scienceAudit||freshScienceAudit(),
+    differ:{
+      shadowMatchRate:clamp(safeNum(mem.shadow.matchRate,UNIFORM),0,1),
+      calibration:calibrationSummary(),
+      tournament:tournamentSummary()
+    },
+    riseFall:{
+      prediction:riseFallPredict(1),
+      performance:riseFallMem.performance?.[1]||freshRiseFallPerf()
+    },
+    generatedAt:Date.now()
   });
 });
 
