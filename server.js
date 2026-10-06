@@ -924,7 +924,8 @@ function recordRiseFallDemoOperation(b){
 }
 
 function riseFallPredict(h=1){
-  h=clamp(Math.round(safeNum(h,1)),1,3);
+  h=Math.round(safeNum(h,1));
+  if(!RF_HORIZONS.includes(h))h=1;
   const snap=motionSnapshot();
   if(!snap)return null;
   const own=riseFallOwnDistribution(h,snap);
@@ -932,7 +933,7 @@ function riseFallPredict(h=1){
 
   // Lectura unidireccional del predictor de movimiento de DIFFER.
   // Rise/Fall puede usarla como evidencia, pero nunca escribe de regreso en DIFFER.
-  const move=movementForecast(h);
+  const move=movementForecast(h<=3?h:3);
   if(move){
     const ext=riseFallNorm3([move.down,move.flat,move.up]);
     const readOnlyWeight=clamp(.12+.20*safeNum(move.support,0),.12,.32);
@@ -958,13 +959,14 @@ function riseFallPredict(h=1){
 
   const perf=riseFallMem.performance[h]||freshRiseFallPerf();
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
+  // Predictor y ejecución se validan por separado.
+  // Antes "ready" dependía de acciones estrictas, creando un círculo:
+  // no había acciones porque no estaba ready y nunca llegaba a ready.
   const ready=
-    perf.resolved>=900 &&
-    perf.actionSamples>=450 &&
-    perf.directionHitEWMA>=.535 &&
-    perf.brierEWMA<=(2/9)-.004 &&
-    perf.logLossEWMA<=Math.log(3)-.010 &&
-    actionWinRate>=.53;
+    perf.resolved>=1200 &&
+    perf.directionHitEWMA>=.515 &&
+    perf.brierEWMA<=(2/9)-.0015 &&
+    perf.logLossEWMA<=Math.log(3)-.006;
 
   return {
     horizon:h,
