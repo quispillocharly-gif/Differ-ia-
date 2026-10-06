@@ -31,8 +31,12 @@ let rfEffectiveHorizon=1;
 let rfAuto=false;
 let rfPrediction=null;
 let rfLastEpoch=0;
-let rfConfirm={action:null,count:0,lastEpoch:0};
+let rfConfirm={action:null,count:0,lastEpoch:0,firstEpoch:0};
 const RF_BOOTSTRAP_OPS=120;
+const RF_CONFIRM_NEEDED=2;
+const RF_CONFIRM_MAX_GAP=3;
+const RF_CONFIRM_WAIT_TTL=3;
+const RF_POLL_MS=500;
 let rfNextStake=1;
 let rfSession={pnl:0,wins:0,losses:0,ops:0};
 let pollTimer=null;
@@ -107,7 +111,7 @@ function render(){
 }
 
 function resetConfirmation(){
-  rfConfirm={action:null,count:0,lastEpoch:0};
+  rfConfirm={action:null,count:0,lastEpoch:0,firstEpoch:0};
 }
 
 function stopDifferSafely(){
@@ -315,8 +319,19 @@ function onRfMessage(ev){
     }
 
     const breakEven=ask/payout;
-    if(p.probability<breakEven+.025){
-      p.resolve({bought:false,breakEven});
+    // Equal exit spot loses on standard Rise/Fall, so use the marginal
+    // RISE/FALL probability (not the conditional probability that ignores FLAT).
+    // Keep a small adaptive margin instead of the old fixed +2.5 percentage points.
+    const edgeMargin=.004+.008*clamp(p.modelPenalty,0,1);
+    const requiredProbability=breakEven+edgeMargin;
+    if(p.probability<requiredProbability){
+      p.resolve({
+        bought:false,
+        breakEven,
+        requiredProbability,
+        modelProbability:p.probability,
+        edgeMargin
+      });
       return;
     }
 
@@ -332,7 +347,7 @@ function onRfMessage(ev){
       contractId:''
     };
     rfSocket.send(JSON.stringify({buy:id,price:ask,req_id:++rfBuyReq}));
-    p.resolve({bought:true,breakEven});
+    p.resolve({bought:true,breakEven,requiredProbability,modelProbability:p.probability,edgeMargin});
   }
 
   if(m.msg_type==='buy'&&m.buy?.contract_id){
@@ -388,6 +403,8 @@ function sendRfTrade(pred){
       action,
       contractType:contractTypeFor(action),
       probability:clamp(pred.directionProbability,0,1),
+      conditionalProbability:clamp(pred.conditionalDirectionProbability,0,1),
+      modelPenalty:clamp(pred.adaptation?.modelPenalty,0,1),
       stake,
       horizon:h,
       requestedHorizon:horizon(),
@@ -435,34 +452,77 @@ async function evaluateAuto(pred){
     return;
   }
 
-  if(pred.action!=='RISE'&&pred.action!=='FALL'){
+  const epoch=Number(pred.signalEpoch||0);
+  if(!epoch||epoch===rfConfirm.lastEpoch)return;
+
+  const isDirectional=pred.action==='RISE'||pred.action==='FALL';
+
+  // A brief WAIT no longer destroys a valid 1/2 confirmation immediately.
+  // The candidate survives only a few signal epochs and any real opposite
+  // directional signal starts a new confirmation.
+  if(!isDirectional){
+    if(
+      rfConfirm.count>0 &&
+      rfConfirm.action &&
+      epoch-rfConfirm.lastEpoch<=RF_CONFIRM_WAIT_TTL
+    ){
+      setText(
+        'rfStatus',
+        'CONFIRMACIÓN '+rfConfirm.action+' · '+rfConfirm.count+'/'+RF_CONFIRM_NEEDED+
+        ' · ESPERANDO CONTINUIDAD'
+      );
+      return;
+    }
     resetConfirmation();
     setText('rfStatus','ESPERANDO MEJOR DIRECCIÓN');
     return;
   }
 
-  const epoch=Number(pred.signalEpoch||0);
-  if(!epoch||epoch===rfConfirm.lastEpoch)return;
-
-  if(rfConfirm.action===pred.action&&rfConfirm.lastEpoch===epoch-1){
-    rfConfirm.count++;
+  if(
+    rfConfirm.action===pred.action &&
+    rfConfirm.lastEpoch>0 &&
+    epoch>rfConfirm.lastEpoch &&
+    epoch-rfConfirm.lastEpoch<=RF_CONFIRM_MAX_GAP
+  ){
+    rfConfirm.count=Math.min(RF_CONFIRM_NEEDED,rfConfirm.count+1);
+    rfConfirm.lastEpoch=epoch;
   }else{
-    rfConfirm={action:pred.action,count:1,lastEpoch:epoch};
+    rfConfirm={
+      action:pred.action,
+      count:1,
+      lastEpoch:epoch,
+      firstEpoch:epoch
+    };
   }
-  rfConfirm.lastEpoch=epoch;
 
-  if(rfConfirm.count<2){
-    setText('rfStatus','CONFIRMANDO '+pred.action+' · '+rfConfirm.count+'/2');
+  if(rfConfirm.count<RF_CONFIRM_NEEDED){
+    setText(
+      'rfStatus',
+      'CONFIRMANDO '+pred.action+' · '+rfConfirm.count+'/'+RF_CONFIRM_NEEDED
+    );
     return;
   }
 
+  setText('rfStatus','CONFIRMADA '+pred.action+' · 2/2 · VERIFICANDO PROPUESTA');
   resetConfirmation();
+
   try{
     const out=await sendRfTrade(pred);
     if(out?.bought){
-      setText('rfStatus','ENVIANDO '+pred.action+' · P '+pct(pred.directionProbability)+' · BE '+pct(out.breakEven));
+      setText(
+        'rfStatus',
+        'ENVIANDO '+pred.action+
+        ' · IA '+pct(out.modelProbability??pred.directionProbability)+
+        ' · BE '+pct(out.breakEven)
+      );
     }else if(Number.isFinite(out?.breakEven)){
-      setText('rfStatus','SIN COMPRA · PROBABILIDAD NO SUPERA PUNTO DE EQUILIBRIO');
+      setText(
+        'rfStatus',
+        '2/2 CONFIRMADA · SIN COMPRA · IA '+pct(out.modelProbability)+
+        ' < REQUERIDO '+pct(out.requiredProbability)
+      );
+    }else if(out?.busy){
+      setText('rfStatus','2/2 CONFIRMADA · ESPERANDO OPERACIÓN ACTIVA');
     }
   }catch(e){
     setText('rfStatus','ERROR · '+(e?.message||e));
@@ -535,7 +595,7 @@ function init(){
   applyStrategy();
   poll();
   clearInterval(pollTimer);
-  pollTimer=setInterval(poll,1200);
+  pollTimer=setInterval(poll,RF_POLL_MS);
 }
 
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
