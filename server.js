@@ -12,6 +12,7 @@ const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
 
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
+const RF_HORIZONS = [1,2,3,5];
 const UNIFORM = 0.10;
 const MAX_HIST = 20000;
 const SHADOW_RECENT_MAX = 500;
@@ -20,10 +21,10 @@ const MODEL_NAMES = ['global','recent25','recent100','recent300','ctx1','ctx2','
 const HEDGE_ETA = 0.34;
 const CAL_BINS = 20;
 const DRIFT_MAX_WINDOW = 360;
-const TOURNAMENT_NAMES = ['base','recentFocus','contextFocus','robust'];
+const TOURNAMENT_NAMES = ['coreStable','base','recentFocus','contextFocus','robust'];
 const TOURNAMENT_MIN_SAMPLES = 2000;
 const TOURNAMENT_RECENT = 900;
-const TOURNAMENT_COOLDOWN_TICKS = 3600;
+const TOURNAMENT_COOLDOWN_TICKS = 1200;
 const MASTER_BRAIN_VERSION = 'NEXUS-MASTER-2';
 const MOVE_BUCKETS = ['DOWN_JUMP','DOWN_MED','DOWN_SMALL','FLAT','UP_SMALL','UP_MED','UP_JUMP'];
 const MOVE_CENTERS = [-14,-6,-2,0,2,6,14];
@@ -623,22 +624,38 @@ function freshRiseFallPerf(){
     lastAt:0
   };
 }
+function freshRfOpStat(){
+  return {n:0,wins:0,priced:0,breakEvenSum:0,probabilitySum:0,profitSum:0};
+}
+function normalizeRfOpStat(x){
+  x=x&&typeof x==='object'?x:{};
+  return {
+    n:Math.max(0,Math.floor(safeNum(x.n,0))),
+    wins:Math.max(0,Math.floor(safeNum(x.wins,0))),
+    priced:Math.max(0,Math.floor(safeNum(x.priced,0))),
+    breakEvenSum:Math.max(0,safeNum(x.breakEvenSum,0)),
+    probabilitySum:Math.max(0,safeNum(x.probabilitySum,0)),
+    profitSum:safeNum(x.profitSum,0)
+  };
+}
 function freshRiseFallOperationLearning(){
+  const byHorizon={};
+  RF_HORIZONS.forEach(h=>byHorizon[h]=freshRfOpStat());
   return {
     total:0,wins:0,losses:0,
-    byAction:{RISE:{n:0,wins:0},FALL:{n:0,wins:0}},
-    byHorizon:{1:{n:0,wins:0},2:{n:0,wins:0},3:{n:0,wins:0}},
-    confidenceBins:Array.from({length:10},()=>({n:0,wins:0})),
+    byAction:{RISE:freshRfOpStat(),FALL:freshRfOpStat()},
+    byHorizon,
+    confidenceBins:Array.from({length:10},()=>freshRfOpStat()),
     seen:{},updatedAt:0
   };
 }
 function freshRiseFallMemory(){
-  const models={1:{},2:{},3:{}};
-  const global={
-    1:{counts:[1,1,1],n:0},
-    2:{counts:[1,1,1],n:0},
-    3:{counts:[1,1,1],n:0}
-  };
+  const models={},global={},performance={};
+  RF_HORIZONS.forEach(h=>{
+    models[h]={};
+    global[h]={counts:[1,1,1],n:0};
+    performance[h]=freshRiseFallPerf();
+  });
   return {
     version:1,
     createdAt:Date.now(),
@@ -647,7 +664,7 @@ function freshRiseFallMemory(){
     trainedSamples:0,
     models,
     global,
-    performance:{1:freshRiseFallPerf(),2:freshRiseFallPerf(),3:freshRiseFallPerf()},
+    performance,
     operationLearning:freshRiseFallOperationLearning(),
     lastEpoch:0,
     saves:0
@@ -660,7 +677,7 @@ function normalizeRiseFallMemory(x){
   m.models=m.models&&typeof m.models==='object'?m.models:base.models;
   m.global=m.global&&typeof m.global==='object'?m.global:base.global;
   m.performance=m.performance&&typeof m.performance==='object'?m.performance:base.performance;
-  HORIZONS.forEach(h=>{
+  RF_HORIZONS.forEach(h=>{
     m.models[h]=m.models[h]&&typeof m.models[h]==='object'?m.models[h]:{};
     const g=m.global[h]||{};
     m.global[h]={
@@ -684,17 +701,14 @@ function normalizeRiseFallMemory(x){
   ops.wins=Math.max(0,Math.floor(safeNum(rawOps.wins,0)));
   ops.losses=Math.max(0,Math.floor(safeNum(rawOps.losses,Math.max(0,ops.total-ops.wins))));
   ['RISE','FALL'].forEach(name=>{
-    const x=rawOps.byAction?.[name]||{};
-    ops.byAction[name]={n:Math.max(0,Math.floor(safeNum(x.n,0))),wins:Math.max(0,Math.floor(safeNum(x.wins,0)))};
+    ops.byAction[name]=normalizeRfOpStat(rawOps.byAction?.[name]);
   });
-  [1,2,3].forEach(h=>{
-    const x=rawOps.byHorizon?.[h]||{};
-    ops.byHorizon[h]={n:Math.max(0,Math.floor(safeNum(x.n,0))),wins:Math.max(0,Math.floor(safeNum(x.wins,0)))};
+  RF_HORIZONS.forEach(h=>{
+    ops.byHorizon[h]=normalizeRfOpStat(rawOps.byHorizon?.[h]);
   });
-  ops.confidenceBins=Array.from({length:10},(_,i)=>{
-    const x=Array.isArray(rawOps.confidenceBins)?rawOps.confidenceBins[i]:null;
-    return {n:Math.max(0,Math.floor(safeNum(x?.n,0))),wins:Math.max(0,Math.floor(safeNum(x?.wins,0)))};
-  });
+  ops.confidenceBins=Array.from({length:10},(_,i)=>
+    normalizeRfOpStat(Array.isArray(rawOps.confidenceBins)?rawOps.confidenceBins[i]:null)
+  );
   const seen=rawOps.seen&&typeof rawOps.seen==='object'?rawOps.seen:{};
   ops.seen=Object.fromEntries(
     Object.entries(seen)
@@ -797,12 +811,20 @@ function riseFallPosterior(stat,priorRate=.52,priorN=18){
   const wins=Math.max(0,safeNum(stat?.wins,0));
   return (wins+priorN*priorRate)/(n+priorN);
 }
+function wilsonLower(wins,n,z=1.645){
+  n=Math.max(0,safeNum(n,0));wins=Math.max(0,safeNum(wins,0));
+  if(n<1)return 0;
+  const phat=wins/n,z2=z*z,den=1+z2/n;
+  const centre=phat+z2/(2*n);
+  const margin=z*Math.sqrt((phat*(1-phat)+z2/(4*n))/n);
+  return clamp((centre-margin)/den,0,1);
+}
 function riseFallOperationGate(action,h,probability){
   const ops=riseFallMem.operationLearning||freshRiseFallOperationLearning();
-  const a=ops.byAction?.[action]||{n:0,wins:0};
-  const hz=ops.byHorizon?.[h]||{n:0,wins:0};
+  const a=ops.byAction?.[action]||freshRfOpStat();
+  const hz=ops.byHorizon?.[h]||freshRfOpStat();
   const binIndex=clamp(Math.floor(clamp(safeNum(probability,.5),.5,.999)*10),0,9);
-  const bin=ops.confidenceBins?.[binIndex]||{n:0,wins:0};
+  const bin=ops.confidenceBins?.[binIndex]||freshRfOpStat();
 
   const parts=[
     {n:a.n,rate:riseFallPosterior(a)},
@@ -816,19 +838,22 @@ function riseFallOperationGate(action,h,probability){
   const samples=Math.max(a.n,hz.n,bin.n);
 
   let minProbability=.56;
-  let learningMinProbability=.515;
+  let learningMinProbability=.50;
   if(samples>=30){
-    if(learnedRate<.49){
-      minProbability=.62;
-      learningMinProbability=.56;
-    }else if(learnedRate<.515){
-      minProbability=.60;
-      learningMinProbability=.545;
-    }else if(learnedRate<.535){
-      minProbability=.58;
-      learningMinProbability=.53;
-    }
+    if(learnedRate<.49){minProbability=.62;learningMinProbability=.54}
+    else if(learnedRate<.515){minProbability=.60;learningMinProbability=.525}
+    else if(learnedRate<.535){minProbability=.58;learningMinProbability=.515}
   }
+
+  const priced=Math.max(0,safeNum(hz.priced,0));
+  const averageBreakEven=priced?safeNum(hz.breakEvenSum,0)/priced:.50;
+  const observedWinRate=hz.n?safeNum(hz.wins,0)/hz.n:.50;
+  const conservativeWinRate=wilsonLower(hz.wins,hz.n);
+  const operationalReady=
+    hz.n>=150 &&
+    priced>=100 &&
+    conservativeWinRate>=averageBreakEven+.008;
+
   return {
     samples,
     learnedWinRate:clamp(learnedRate,0,1),
@@ -837,7 +862,13 @@ function riseFallOperationGate(action,h,probability){
     totalOperations:ops.total,
     totalWins:ops.wins,
     totalLosses:ops.losses,
-    overallWinRate:ops.total?ops.wins/ops.total:.5
+    overallWinRate:ops.total?ops.wins/ops.total:.5,
+    horizonOperations:hz.n,
+    pricedOperations:priced,
+    averageBreakEven:clamp(averageBreakEven,0,1),
+    observedWinRate:clamp(observedWinRate,0,1),
+    conservativeWinRate,
+    operationalReady
   };
 }
 function recordRiseFallDemoOperation(b){
@@ -850,7 +881,7 @@ function recordRiseFallDemoOperation(b){
   const breakEven=safeNum(b.breakEven,NaN);
   const signalEpoch=Math.floor(safeNum(b.signalEpoch,0));
 
-  if(b.mode!=='demo'||!id||!action||h<1||h>3||
+  if(b.mode!=='demo'||!id||!action||!RF_HORIZONS.includes(h)||
      !Number.isFinite(probability)||probability<.45||probability>1||
      !Number.isFinite(profit)||Math.abs(profit)>100000||
      !Number.isFinite(breakEven)||breakEven<=0||breakEven>1||
@@ -870,15 +901,20 @@ function recordRiseFallDemoOperation(b){
   ops.total++;
   if(win)ops.wins++;else ops.losses++;
 
-  const a=ops.byAction[action];
-  a.n++; if(win)a.wins++;
+  const updateOpStat=st=>{
+    st.n++; if(win)st.wins++;
+    st.priced++;
+    st.breakEvenSum+=breakEven;
+    st.probabilitySum+=probability;
+    st.profitSum+=profit;
+  };
+  updateOpStat(ops.byAction[action]);
 
-  const hz=ops.byHorizon[h];
-  hz.n++; if(win)hz.wins++;
+  const hz=ops.byHorizon[h]||(ops.byHorizon[h]=freshRfOpStat());
+  updateOpStat(hz);
 
   const binIndex=clamp(Math.floor(clamp(probability,.5,.999)*10),0,9);
-  const bin=ops.confidenceBins[binIndex];
-  bin.n++; if(win)bin.wins++;
+  updateOpStat(ops.confidenceBins[binIndex]);
 
   ops.updatedAt=Date.now();
   riseFallMem.updatedAt=Date.now();
@@ -957,6 +993,7 @@ function riseFallPredict(h=1){
     reversalProbability:move?clamp(safeNum(move.reversalProbability,0),0,1):0,
     continuationProbability:move?clamp(safeNum(move.continuationProbability,0),0,1):0,
     ready,
+    operationalReady:ready&&operationGate.operationalReady,
     operationLearning:operationGate,
     validation:{
       resolved:perf.resolved,
@@ -1008,7 +1045,7 @@ function riseFallResolve(targetPrice,counter){
 }
 function riseFallLearnOutcome(targetPrice){
   const n=Math.min(hist.length,priceHist.length,motionHist.length);
-  for(const h of HORIZONS){
+  for(const h of RF_HORIZONS){
     const signalIndex=n-h;
     if(signalIndex<0)continue;
     const sourcePrice=Number(priceHist[signalIndex]);
@@ -1020,7 +1057,7 @@ function riseFallLearnOutcome(targetPrice){
   riseFallMem.tickCount++;
 }
 function riseFallSchedule(counter){
-  for(const h of HORIZONS){
+  for(const h of RF_HORIZONS){
     const pred=riseFallPredict(h);
     if(!pred||!priceHist.length)continue;
     riseFallPending.push({
@@ -1034,21 +1071,23 @@ function riseFallSchedule(counter){
     });
     if(h===1)riseFallLastPrediction=pred;
   }
-  if(riseFallPending.length>30)riseFallPending=riseFallPending.slice(-30);
+  if(riseFallPending.length>60)riseFallPending=riseFallPending.slice(-60);
 }
 function bootstrapRiseFall(){
   if(riseFallBootstrapDone)return;
   riseFallBootstrapDone=true;
-  if(riseFallMem.trainedSamples>500)return;
   const n=Math.min(hist.length,priceHist.length,motionHist.length);
   if(n<120)return;
+
+  const missing=RF_HORIZONS.filter(h=>safeNum(riseFallMem.global?.[h]?.n,0)<100);
+  if(!missing.length)return;
 
   const start=Math.max(24,n-12000);
   let trained=0;
   for(let targetIndex=start;targetIndex<n;targetIndex++){
     const targetPrice=Number(priceHist[targetIndex]);
     if(!Number.isFinite(targetPrice))continue;
-    for(const h of HORIZONS){
+    for(const h of missing){
       const signalIndex=targetIndex-h;
       if(signalIndex<8)continue;
       const sourcePrice=Number(priceHist[signalIndex]);
@@ -1060,10 +1099,10 @@ function bootstrapRiseFall(){
   }
   riseFallMem.tickCount+=Math.max(0,n-start);
   saveRiseFallMemory();
-  console.log('Rise/Fall AI bootstrapped from history:',trained,'training samples');
+  console.log('Rise/Fall AI bootstrapped missing horizons:',missing.join(','),'·',trained,'training samples');
 }
 function pruneRiseFall(){
-  HORIZONS.forEach(h=>{
+  RF_HORIZONS.forEach(h=>{
     const bucket=riseFallMem.models[h]||{};
     const keys=Object.keys(bucket);
     if(keys.length<=1800)return;
@@ -1092,7 +1131,8 @@ function riseFallStatus(){
     predictions:{
       1:riseFallPredict(1),
       2:riseFallPredict(2),
-      3:riseFallPredict(3)
+      3:riseFallPredict(3),
+      5:riseFallPredict(5)
     }
   };
 }
@@ -2233,6 +2273,10 @@ function predictionFromDist(name,p,views){
 }
 function tournamentPredictions(views,baseP){
   const out={};
+  const coreNames=new Set(['global','recent25','recent100','recent300','ctx1','ctx2','ctx3']);
+  const coreViews=views.filter(v=>coreNames.has(v.name));
+  const coreP=coreViews.length?blendViews(coreViews,()=>1):baseP;
+  out.coreStable=predictionFromDist('coreStable',coreP,coreViews.length?coreViews:views);
   out.base=predictionFromDist('base',baseP,views);
 
   const recentP=blendViews(views,v=>{
@@ -2298,7 +2342,7 @@ function updateTournament(candidateSet,actual){
 
   const current=t.candidates[t.champion];
   if(!current||current.samples<TOURNAMENT_MIN_SAMPLES)return;
-  if(mem.tickCount-safeNum(t.lastPromotionTick,0)<TOURNAMENT_COOLDOWN_TICKS)return;
+  const cooldownActive=mem.tickCount-safeNum(t.lastPromotionTick,0)<TOURNAMENT_COOLDOWN_TICKS;
 
   let bestName=t.champion,bestScore=tournamentScore(current);
   for(const name of TOURNAMENT_NAMES){
@@ -2309,7 +2353,21 @@ function updateTournament(candidateSet,actual){
     const recentGain=tournamentRecentRate(current)-tournamentRecentRate(st);
     const brierOkay=st.brierEWMA<=current.brierEWMA+.0015;
     const logOkay=st.logLossEWMA<=current.logLossEWMA+.025;
-    if(recentGain>=.008 && brierOkay && logOkay && score<bestScore-.0045){
+    const longRunOkay=st.matchRate<=current.matchRate+.0002;
+    const fastLane=
+      recentGain>=.009 &&
+      longRunOkay &&
+      brierOkay &&
+      logOkay &&
+      score<bestScore-.004;
+    const normalLane=
+      !cooldownActive &&
+      recentGain>=.006 &&
+      longRunOkay &&
+      brierOkay &&
+      logOkay &&
+      score<bestScore-.0035;
+    if(fastLane||normalLane){
       bestName=name;bestScore=score;
     }
   }
@@ -2371,6 +2429,7 @@ function ensemblePredict(){
     rawRisk:champion.rawRisk,
     confidence:champion.confidence,
     probabilities:champion.probabilities,
+    calibratedRisks:champion.probabilities.map(x=>calibrateRisk(x)),
     modelVotes,
     calibrationECE:mem.shadow.calibration.ece,
     driftActive:mem.shadow.drift.active,
@@ -2713,6 +2772,7 @@ function masterPublic(){
       brierEWMA:clamp(safeNum(mem.shadow.calibration?.brierEWMA,.09),0,1),
       logLossEWMA:clamp(safeNum(champStat?.logLossEWMA,Math.log(10)),.01,12)
     },
+    calibration:calibrationSummary(),
     drift:{
       active:!!mem.shadow.drift?.active,
       events:Math.max(0,safeNum(mem.shadow.drift?.events,0)),
@@ -3068,21 +3128,12 @@ app.listen(PORT,()=>{
   console.log('Entry research restored:',mem.entryResearch.resolved,'resolved forecasts · recommendation',mem.entryResearch.recommended);
   console.log('Range Intelligence restored:',mem.rangePerf[1].samples,'validated 1T range forecasts');
   console.log('Rise/Fall memory restored:',riseFallMem.trainedSamples,'training samples ·',riseFallMem.performance[1].resolved,'validated 1T forecasts');
-  try{
-    const sa=mem.master.sessionAnalytics||freshSessionAnalytics();
-    const pos=sa.byPosition.slice(0,12).map((x,i)=>({
-      op:i+1,
-      trades:safeNum(x?.trades,0),
-      matches:safeNum(x?.matches,0),
-      rate:safeNum(x?.trades,0)?safeNum(x?.matches,0)/safeNum(x?.trades,1):0
-    }));
-    const rfOps=riseFallMem.operationLearning||freshRiseFallOperationLearning();
-    console.log('DIAG tournament:',JSON.stringify(tournamentSummary()));
-    console.log('DIAG session positions 1-12:',JSON.stringify(pos));
-    console.log('DIAG shadow:',JSON.stringify({total:mem.shadow.total,matches:mem.shadow.matches,matchRate:mem.shadow.matchRate,calibration:calibrationSummary(),drift:driftSummary()}));
-    console.log('DIAG RF operations:',JSON.stringify({total:rfOps.total,wins:rfOps.wins,losses:rfOps.losses,winRate:rfOps.total?rfOps.wins/rfOps.total:0,byAction:rfOps.byAction,byHorizon:rfOps.byHorizon}));
-    console.log('DIAG RF perf1:',JSON.stringify(riseFallMem.performance[1]));
-  }catch(e){console.log('DIAG error:',e.message)}
+  console.log('Tournament:',tournamentSummary().champion,'· challenger',tournamentSummary().bestChallenger);
+  console.log('Calibration:',calibrationSummary());
+  console.log('Rise/Fall operational:',JSON.stringify({
+    total:riseFallMem.operationLearning.total,
+    winRate:riseFallMem.operationLearning.total?riseFallMem.operationLearning.wins/riseFallMem.operationLearning.total:0
+  }));
   prepareShadow();
   connectDeriv();
 });
