@@ -836,7 +836,7 @@ function freshRiseFallMemory(){
     expertPerformance:freshRiseFallExpertPerformance(),
     drift:freshRiseFallDrift(),
     signalState:freshRiseFallSignalState(),
-    autoHorizonState:{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0},
+    autoHorizonState:{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0,pendingHorizon:0,pendingDirection:'WAIT',pendingCount:0,lastSwitchEpoch:0},
     operationLearning:freshRiseFallOperationLearning(),
     lastEpoch:0,
     saves:0
@@ -861,7 +861,11 @@ function normalizeRiseFallMemory(x){
       score:safeNum(ah.score,0),
       age:Math.max(0,Math.min(200,Math.floor(safeNum(ah.age,0)))),
       switches:Math.max(0,Math.floor(safeNum(ah.switches,0))),
-      lastEpoch:Math.max(0,Math.floor(safeNum(ah.lastEpoch,0)))
+      lastEpoch:Math.max(0,Math.floor(safeNum(ah.lastEpoch,0))),
+      pendingHorizon:RF_HORIZONS.includes(Math.round(safeNum(ah.pendingHorizon,0)))?Math.round(safeNum(ah.pendingHorizon,0)):0,
+      pendingDirection:['RISE','FALL'].includes(String(ah.pendingDirection||''))?String(ah.pendingDirection):'WAIT',
+      pendingCount:Math.max(0,Math.min(12,Math.floor(safeNum(ah.pendingCount,0)))),
+      lastSwitchEpoch:Math.max(0,Math.floor(safeNum(ah.lastSwitchEpoch,0)))
     };
   }
 
@@ -2699,6 +2703,15 @@ function calibrateRisk(rawRisk){
   let calibrated=(1-binEvidence)*globalAdjusted+binEvidence*posterior;
   calibrated=Math.max(calibrated,shrunkRaw);
 
+  // OOS safety floor: while rank-0 has not statistically demonstrated edge below 10%,
+  // do not let calibration advertise an artificially low MATCH probability.
+  const rankUpper=wilsonUpper95(safeNum(rank0.matches,0),rankN);
+  const edgeConfirmed=rankN>=1500&&rankUpper<UNIFORM;
+  if(rankN>=1500&&!edgeConfirmed){
+    const uncertaintyFloor=UNIFORM+Math.max(0,rankUpper-UNIFORM)*.55;
+    calibrated=Math.max(calibrated,uncertaintyFloor);
+  }
+
   // A short recent window is only used as a one-sided safety floor.
   // It never fabricates a lower risk; it only reacts when recent MATCH frequency rises.
   const recent=(mem.shadow.recent||[]).slice(-140);
@@ -4093,7 +4106,8 @@ function riseFallAutoPredict(){
 
   const readyRows=rows.filter(p=>p.ready);
   const autoState=riseFallMem.autoHorizonState||(riseFallMem.autoHorizonState={
-    horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0
+    horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0,
+    pendingHorizon:0,pendingDirection:'WAIT',pendingCount:0,lastSwitchEpoch:0
   });
 
   const scored=rows.map(p=>{
@@ -4223,31 +4237,66 @@ function riseFallAutoPredict(){
     };
   }
 
-  // Histeresis de horizonte: si el horizonte anterior sigue siendo competitivo
-  // y apunta en la misma dirección, no saltamos por diferencias mínimas de score.
-  const current=directional.find(p=>p.horizon===autoState.horizon&&p.direction===best.direction);
-  if(current&&current.horizon!==best.horizon){
-    const gain=best.autoHorizonScore-current.autoHorizonScore;
-    if(gain<.035)best=current;
+  // Histeresis temporal real para AUTO.
+  // Un candidato distinto no reemplaza al horizonte/direccion actual por un solo tick ruidoso.
+  // Debe conservar ventaja durante varios ticks y se impone un dwell minimo entre cambios.
+  const currentAny=directional.find(p=>p.horizon===autoState.horizon);
+  const candidateChanged=best.horizon!==autoState.horizon||best.direction!==autoState.direction;
+  if(candidateChanged&&currentAny){
+    const gain=best.autoHorizonScore-currentAny.autoHorizonScore;
+    const severeCurrentWeakness=
+      safeNum(currentAny.validation?.directionHitEWMA,.5)<.465 ||
+      safeNum(currentAny.validation?.brierEWMA,2/9)>(2/9)+.030 ||
+      safeNum(currentAny.validation?.logLossEWMA,Math.log(3))>Math.log(3)+.10;
+    const minGain=best.direction===autoState.direction?.035:.050;
+    if(gain<minGain&&!severeCurrentWeakness)best=currentAny;
   }
 
   if(autoState.lastEpoch!==lastEpoch){
     const previousH=autoState.horizon;
     const previousDir=autoState.direction;
-    const same=previousH===best.horizon&&previousDir===best.direction;
-    if(previousH!==best.horizon)autoState.switches++;
-    autoState.horizon=best.horizon;
-    autoState.direction=best.direction;
-    autoState.score=best.autoHorizonScore;
-    autoState.age=same?Math.min(200,autoState.age+1):1;
-    autoState.lastEpoch=lastEpoch;
-    if(previousH!==best.horizon){
-      console.log('Rise/Fall AUTO horizon:',JSON.stringify({
-        from:previousH,to:best.horizon,direction:best.direction,
-        score:Number(best.autoHorizonScore.toFixed(4)),
-        switches:autoState.switches
-      }));
+    const wantsChange=previousH!==best.horizon||previousDir!==best.direction;
+    const ticksSinceSwitch=Math.max(0,lastEpoch-safeNum(autoState.lastSwitchEpoch,0));
+    const dwellOkay=!autoState.lastSwitchEpoch||ticksSinceSwitch>=6;
+    const requiredConfirm=best.direction===previousDir?3:4;
+
+    if(wantsChange){
+      if(autoState.pendingHorizon===best.horizon&&autoState.pendingDirection===best.direction){
+        autoState.pendingCount=Math.min(12,autoState.pendingCount+1);
+      }else{
+        autoState.pendingHorizon=best.horizon;
+        autoState.pendingDirection=best.direction;
+        autoState.pendingCount=1;
+      }
+
+      if(!dwellOkay||autoState.pendingCount<requiredConfirm){
+        const keep=directional.find(p=>p.horizon===previousH&&p.direction===previousDir);
+        if(keep)best=keep;
+      }else{
+        if(previousH!==best.horizon)autoState.switches++;
+        autoState.horizon=best.horizon;
+        autoState.direction=best.direction;
+        autoState.score=best.autoHorizonScore;
+        autoState.age=1;
+        autoState.lastSwitchEpoch=lastEpoch;
+        autoState.pendingHorizon=0;
+        autoState.pendingDirection='WAIT';
+        autoState.pendingCount=0;
+        console.log('Rise/Fall AUTO stable switch:',JSON.stringify({
+          from:previousH,to:best.horizon,fromDirection:previousDir,direction:best.direction,
+          score:Number(best.autoHorizonScore.toFixed(4)),switches:autoState.switches
+        }));
+      }
+    }else{
+      autoState.pendingHorizon=0;
+      autoState.pendingDirection='WAIT';
+      autoState.pendingCount=0;
+      autoState.horizon=best.horizon;
+      autoState.direction=best.direction;
+      autoState.score=best.autoHorizonScore;
+      autoState.age=Math.min(200,autoState.age+1);
     }
+    autoState.lastEpoch=lastEpoch;
   }
 
   return {
