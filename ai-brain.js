@@ -122,6 +122,7 @@ function freshMemory(){
       '12+':{n:0,matches:0}
     },
     recovery:{remaining:0,lastMatchAt:0},
+    pauseGuard:{badStreak:0,goodStreak:0,paused:false,lastTick:-1,lastChangeAt:0,reason:'OK'},
     saves:0
   };
 }
@@ -256,6 +257,15 @@ function normalizeMemory(x){
   }
   const rec=m.recovery||{};
   m.recovery={remaining:Math.max(0,Math.floor(safeNum(rec.remaining,0))),lastMatchAt:Math.max(0,safeNum(rec.lastMatchAt,0))};
+  const pg=m.pauseGuard&&typeof m.pauseGuard==='object'?m.pauseGuard:{};
+  m.pauseGuard={
+    badStreak:Math.max(0,Math.min(60,Math.floor(safeNum(pg.badStreak,0)))),
+    goodStreak:Math.max(0,Math.min(60,Math.floor(safeNum(pg.goodStreak,0)))),
+    paused:!!pg.paused,
+    lastTick:Math.floor(safeNum(pg.lastTick,-1)),
+    lastChangeAt:Math.max(0,safeNum(pg.lastChangeAt,0)),
+    reason:String(pg.reason||'OK').slice(0,120)
+  };
   return m;
 }
 
@@ -1845,11 +1855,64 @@ function predict(){
 
   let action='WAIT';
   let reason=`Ranking continuo 10/10 · mejor actual D${selected.d} · riesgo CAL ${fmtPct(selected.effectiveRisk)} · costo selección ${fmtPct(selected.selectionCost)}.`;
-  const severeInstability=(preqSamples>=80&&health<.20)||(preqSamples>=80&&brier>BASELINE_BRIER+.035);
+
+  // Guard de estabilidad con histéresis: un solo pico malo ya no congela la IA.
+  // Se evalúa una vez por tick y requiere deterioro sostenido para PAUSE.
+  const pauseGuard=mem.pauseGuard||(mem.pauseGuard={
+    badStreak:0,goodStreak:0,paused:false,lastTick:-1,lastChangeAt:0,reason:'OK'
+  });
+  if(pauseGuard.lastTick!==mem.tickCount){
+    const enough=preqSamples>=120;
+    const mildBad=enough&&(
+      health<.20 ||
+      brier>BASELINE_BRIER+.035 ||
+      cloudCalBias>.035
+    );
+    const criticalBad=enough&&(
+      (health<.12&&brier>BASELINE_BRIER+.025) ||
+      brier>BASELINE_BRIER+.055 ||
+      cloudCalBias>.055
+    );
+    const clearlyHealthy=enough&&(
+      health>.30 &&
+      brier<BASELINE_BRIER+.022 &&
+      cloudCalBias<.025
+    );
+
+    if(criticalBad){
+      pauseGuard.badStreak=Math.min(60,pauseGuard.badStreak+3);
+      pauseGuard.goodStreak=0;
+      pauseGuard.reason='CRITICAL_SUSTAINED';
+    }else if(mildBad){
+      pauseGuard.badStreak=Math.min(60,pauseGuard.badStreak+1);
+      pauseGuard.goodStreak=0;
+      pauseGuard.reason='DEGRADING';
+    }else{
+      pauseGuard.badStreak=Math.max(0,pauseGuard.badStreak-1);
+      if(clearlyHealthy)pauseGuard.goodStreak=Math.min(60,pauseGuard.goodStreak+1);
+      else pauseGuard.goodStreak=Math.max(0,pauseGuard.goodStreak-1);
+      pauseGuard.reason=clearlyHealthy?'RECOVERING':'STABLE';
+    }
+
+    if(!pauseGuard.paused&&pauseGuard.badStreak>=8){
+      pauseGuard.paused=true;
+      pauseGuard.goodStreak=0;
+      pauseGuard.lastChangeAt=Date.now();
+      pauseGuard.reason='PAUSED_SUSTAINED_DEGRADATION';
+    }else if(pauseGuard.paused&&pauseGuard.goodStreak>=8){
+      pauseGuard.paused=false;
+      pauseGuard.badStreak=0;
+      pauseGuard.lastChangeAt=Date.now();
+      pauseGuard.reason='RECOVERED';
+    }
+    pauseGuard.lastTick=mem.tickCount;
+  }
+
+  const severeInstability=!!pauseGuard.paused;
 
   if(severeInstability){
     action='PAUSE';
-    reason='PAUSA IA: deterioro severo del modelo. Sigo aprendiendo sin comprar.';
+    reason=`PAUSA IA: deterioro sostenido confirmado · mal ${pauseGuard.badStreak}/8 · recuperación ${pauseGuard.goodStreak}/8. Sigo aprendiendo sin comprar.`;
   }else if(selected&&!selected.criticalUnsafe){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
@@ -1891,6 +1954,12 @@ function predict(){
     }:null,
     recentMatches,
     health,
+    pauseGuard:{
+      paused:!!pauseGuard.paused,
+      badStreak:safeNum(pauseGuard.badStreak,0),
+      goodStreak:safeNum(pauseGuard.goodStreak,0),
+      reason:String(pauseGuard.reason||'OK')
+    },
     qualityScore:selected.qualityScore,
     oodScore:selected.oodScore,
     action,reason,

@@ -836,6 +836,7 @@ function freshRiseFallMemory(){
     expertPerformance:freshRiseFallExpertPerformance(),
     drift:freshRiseFallDrift(),
     signalState:freshRiseFallSignalState(),
+    autoHorizonState:{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0},
     operationLearning:freshRiseFallOperationLearning(),
     lastEpoch:0,
     saves:0
@@ -851,6 +852,18 @@ function normalizeRiseFallMemory(x){
   m.expertPerformance=m.expertPerformance&&typeof m.expertPerformance==='object'?m.expertPerformance:base.expertPerformance;
   m.drift=m.drift&&typeof m.drift==='object'?m.drift:base.drift;
   m.signalState=m.signalState&&typeof m.signalState==='object'?m.signalState:base.signalState;
+  {
+    const ah=m.autoHorizonState&&typeof m.autoHorizonState==='object'?m.autoHorizonState:{};
+    const ahH=RF_HORIZONS.includes(Math.round(safeNum(ah.horizon,1)))?Math.round(safeNum(ah.horizon,1)):1;
+    m.autoHorizonState={
+      horizon:ahH,
+      direction:['RISE','FALL'].includes(String(ah.direction||''))?String(ah.direction):'WAIT',
+      score:safeNum(ah.score,0),
+      age:Math.max(0,Math.min(200,Math.floor(safeNum(ah.age,0)))),
+      switches:Math.max(0,Math.floor(safeNum(ah.switches,0))),
+      lastEpoch:Math.max(0,Math.floor(safeNum(ah.lastEpoch,0)))
+    };
+  }
 
   RF_HORIZONS.forEach(h=>{
     m.models[h]=m.models[h]&&typeof m.models[h]==='object'?m.models[h]:{};
@@ -1647,6 +1660,7 @@ function riseFallStatus(){
     updatedAt:riseFallMem.updatedAt,
     tickCount:riseFallMem.tickCount,
     trainedSamples:riseFallMem.trainedSamples,
+    autoHorizonState:{...(riseFallMem.autoHorizonState||{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0})},
     operationLearning:{
       total:riseFallMem.operationLearning.total,
       wins:riseFallMem.operationLearning.wins,
@@ -3467,7 +3481,22 @@ function scienceAuditRun(force=false){
       signalAction:String(rfState.action||'WAIT'),
       signalAge:safeNum(rfState.age,0),
       switches:safeNum(rfState.switches,0),
-      holds:safeNum(rfState.holds,0)
+      holds:safeNum(rfState.holds,0),
+      autoHorizonState:{...(riseFallMem.autoHorizonState||{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0})},
+      byHorizon:Object.fromEntries(RF_HORIZONS.map(h=>{
+        const p=riseFallMem.performance[h]||freshRiseFallPerf();
+        const op=riseFallMem.operationLearning?.byHorizon?.[h]||freshRfOpStat();
+        return [h,{
+          resolved:safeNum(p.resolved,0),
+          directionHitEWMA:clamp(safeNum(p.directionHitEWMA,.5),0,1),
+          brierEWMA:clamp(safeNum(p.brierEWMA,2/9),0,1),
+          logLossEWMA:clamp(safeNum(p.logLossEWMA,Math.log(3)),.01,8),
+          actionSamples:safeNum(p.actionSamples,0),
+          actionWinRate:safeNum(p.actionSamples,0)?safeNum(p.actionWins,0)/safeNum(p.actionSamples,1):.5,
+          operationSamples:safeNum(op.n,0),
+          operationWinRate:safeNum(op.n,0)?safeNum(op.wins,0)/safeNum(op.n,1):.5
+        }];
+      }))
     }
   };
 
@@ -4063,14 +4092,19 @@ function riseFallAutoPredict(){
   if(!rows.length)return null;
 
   const readyRows=rows.filter(p=>p.ready);
+  const autoState=riseFallMem.autoHorizonState||(riseFallMem.autoHorizonState={
+    horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0
+  });
+
   const scored=rows.map(p=>{
     const v=p.validation||{};
+    const op=riseFallMem.operationLearning?.byHorizon?.[p.horizon]||freshRfOpStat();
     const flat=clamp(safeNum(p.probabilities?.FLAT,0),0,1);
     const condEdge=clamp((safeNum(p.conditionalDirectionProbability,.5)-.5)/.07,0,1);
     const marginal=clamp((safeNum(p.directionProbability,.5)-.48)/.08,0,1);
     const confidence=clamp(safeNum(p.confidence,0),0,1);
     const support=clamp(safeNum(p.support,0),0,1);
-    const hitSkill=clamp((safeNum(v.directionHitEWMA,.5)-.48)/.08,0,1);
+    const hitSkill=clamp((safeNum(v.directionHitEWMA,.5)-.48)/.08,-1,1);
     const brierSkill=clamp(((2/9)-safeNum(v.brierEWMA,2/9))/.035,-1,1);
     const logSkill=clamp((Math.log(3)-safeNum(v.logLossEWMA,Math.log(3)))/.10,-1,1);
     const modelPenalty=clamp(safeNum(p.adaptation?.modelPenalty,0),0,1);
@@ -4079,84 +4113,151 @@ function riseFallAutoPredict(){
       :0;
     const directional=p.action==='RISE'||p.action==='FALL';
 
-    let score=
-      marginal*.25+
-      condEdge*.17+
-      confidence*.16+
-      support*.12+
-      hitSkill*.10+
-      clamp((1-flat)/.95,0,1)*.06+
-      sameDirection*.08+
-      Math.max(0,brierSkill)*.03+
-      Math.max(0,logSkill)*.03-
-      modelPenalty*.10-
-      ((p.horizon-1)/4)*.015;
+    const actionN=Math.max(0,safeNum(v.actionSamples,0));
+    const actionWins=Math.max(0,safeNum(v.actionWins,0));
+    const actionRate=(actionWins+20*.5)/(actionN+20);
+    const actionEvidence=1-Math.exp(-actionN/350);
+    const actionLower=actionN>=30?wilsonLower95(actionWins,actionN):.45;
 
+    const opN=Math.max(0,safeNum(op.n,0));
+    const opWins=Math.max(0,safeNum(op.wins,0));
+    const opRate=(opWins+12*.5)/(opN+12);
+    const opEvidence=1-Math.exp(-opN/70);
+    const opLower=opN>=20?wilsonLower95(opWins,opN):.44;
+
+    const historicalSkill=
+      clamp((actionRate-.48)/.08,-1,1)*actionEvidence*.65+
+      clamp((opRate-.48)/.08,-1,1)*opEvidence*.35;
+
+    let score=
+      marginal*.21+
+      condEdge*.15+
+      confidence*.14+
+      support*.10+
+      sameDirection*.08+
+      Math.max(-.10,hitSkill*.10)+
+      Math.max(-.08,brierSkill*.06)+
+      Math.max(-.08,logSkill*.05)+
+      historicalSkill*.11+
+      clamp((1-flat)/.95,0,1)*.05-
+      modelPenalty*.10-
+      ((p.horizon-1)/4)*.012;
+
+    if(actionN>=80&&actionLower<.48)score-=.045;
+    if(opN>=30&&opLower<.47)score-=.035;
     if(!p.ready)score-=.40;
     if(!directional)score-=.12;
 
     return {
       ...p,
       autoHorizonScore:score,
-      crossHorizonAgreement:sameDirection
+      crossHorizonAgreement:sameDirection,
+      horizonEvidence:{
+        actionSamples:actionN,
+        actionWinRate:actionN?actionWins/actionN:.5,
+        actionLower95:actionLower,
+        operationSamples:opN,
+        operationWinRate:opN?opWins/opN:.5,
+        operationLower95:opLower,
+        brier:safeNum(v.brierEWMA,2/9),
+        logLoss:safeNum(v.logLossEWMA,Math.log(3))
+      }
     };
   }).sort((a,b)=>b.autoHorizonScore-a.autoHorizonScore);
+
+  const summary=p=>({
+    horizon:p.horizon,action:p.action,direction:p.direction,
+    score:Number(p.autoHorizonScore.toFixed(4)),
+    probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
+    hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
+    actionSamples:Math.floor(safeNum(p.horizonEvidence?.actionSamples,0)),
+    actionWinRate:Number(safeNum(p.horizonEvidence?.actionWinRate,.5).toFixed(4)),
+    operationSamples:Math.floor(safeNum(p.horizonEvidence?.operationSamples,0)),
+    operationWinRate:Number(safeNum(p.horizonEvidence?.operationWinRate,.5).toFixed(4)),
+    ready:!!p.ready
+  });
 
   const directional=scored.filter(p=>p.ready&&(p.action==='RISE'||p.action==='FALL'));
   if(!directional.length){
     const fallback=scored[0];
+    if(autoState.lastEpoch!==lastEpoch){
+      autoState.direction='WAIT';
+      autoState.age=0;
+      autoState.score=safeNum(fallback?.autoHorizonScore,0);
+      autoState.lastEpoch=lastEpoch;
+    }
     return {
       ...fallback,
       action:'WAIT',
       rawAction:'WAIT',
       autoHorizon:true,
       horizonReason:'Ningún horizonte tiene señal direccional suficiente.',
-      horizonCandidates:scored.map(p=>({
-        horizon:p.horizon,action:p.action,direction:p.direction,
-        score:Number(p.autoHorizonScore.toFixed(4)),
-        probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
-        hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
-        ready:!!p.ready
-      }))
+      autoHorizonState:{...autoState},
+      horizonCandidates:scored.map(summary)
     };
   }
 
-  const best=directional[0];
+  let best=directional[0];
   const second=directional[1];
   const closeOpposite=!!(
     second &&
     second.direction!==best.direction &&
-    Math.abs(best.autoHorizonScore-second.autoHorizonScore)<.035
+    Math.abs(best.autoHorizonScore-second.autoHorizonScore)<.040
   );
 
   if(closeOpposite){
+    if(autoState.lastEpoch!==lastEpoch){
+      autoState.direction='WAIT';
+      autoState.age=0;
+      autoState.score=safeNum(best.autoHorizonScore,0);
+      autoState.lastEpoch=lastEpoch;
+    }
     return {
       ...best,
       action:'WAIT',
       rawAction:'WAIT',
       autoHorizon:true,
       horizonReason:'Conflicto fuerte entre horizontes; la IA espera.',
-      horizonCandidates:scored.map(p=>({
-        horizon:p.horizon,action:p.action,direction:p.direction,
-        score:Number(p.autoHorizonScore.toFixed(4)),
-        probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
-        hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
-        ready:!!p.ready
-      }))
+      autoHorizonState:{...autoState},
+      horizonCandidates:scored.map(summary)
     };
+  }
+
+  // Histeresis de horizonte: si el horizonte anterior sigue siendo competitivo
+  // y apunta en la misma dirección, no saltamos por diferencias mínimas de score.
+  const current=directional.find(p=>p.horizon===autoState.horizon&&p.direction===best.direction);
+  if(current&&current.horizon!==best.horizon){
+    const gain=best.autoHorizonScore-current.autoHorizonScore;
+    if(gain<.035)best=current;
+  }
+
+  if(autoState.lastEpoch!==lastEpoch){
+    const previousH=autoState.horizon;
+    const previousDir=autoState.direction;
+    const same=previousH===best.horizon&&previousDir===best.direction;
+    if(previousH!==best.horizon)autoState.switches++;
+    autoState.horizon=best.horizon;
+    autoState.direction=best.direction;
+    autoState.score=best.autoHorizonScore;
+    autoState.age=same?Math.min(200,autoState.age+1):1;
+    autoState.lastEpoch=lastEpoch;
+    if(previousH!==best.horizon){
+      console.log('Rise/Fall AUTO horizon:',JSON.stringify({
+        from:previousH,to:best.horizon,direction:best.direction,
+        score:Number(best.autoHorizonScore.toFixed(4)),
+        switches:autoState.switches
+      }));
+    }
   }
 
   return {
     ...best,
     autoHorizon:true,
-    horizonReason:'Horizonte elegido por mejor evidencia predictiva actual.',
-    horizonCandidates:scored.map(p=>({
-      horizon:p.horizon,action:p.action,direction:p.direction,
-      score:Number(p.autoHorizonScore.toFixed(4)),
-      probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
-      hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
-      ready:!!p.ready
-    }))
+    horizonReason:best.horizon===directional[0].horizon
+      ?'Horizonte elegido por mejor evidencia predictiva e historial actual.'
+      :'Mantengo horizonte estable: la mejora alternativa no supera el margen de cambio.',
+    autoHorizonState:{...autoState},
+    horizonCandidates:scored.map(summary)
   };
 }
 app.get('/api/rise-fall/prediction',(req,res)=>{
