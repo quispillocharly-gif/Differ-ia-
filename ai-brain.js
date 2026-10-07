@@ -22,11 +22,12 @@ const RANGE_UNIFORM=1/3;
 const RANGE_BASE_LOGLOSS=Math.log(3);
 const RANGE_BASE_BRIER=2/9;
 const NORMAL_RISK_CEILING=.0975;
+const AUTO_BUY_RISK_CEILING=.07;
 const STRONG_RISK_CEILING=.0880;
 const AUTO_CONFIRM_TICKS=1;
 const ADAPTIVE_WAIT_START=8;
 const ADAPTIVE_WAIT_FULL=28;
-const DIFFER_POLICY_VERSION='DIFFER-RANK-EVERY-TICK-V2';
+const DIFFER_POLICY_VERSION='DIFFER-RISK-LT7-V3';
 
 let marketWS=null,reconnectTimer=null,lastEpoch=0;
 let hist=[];                 // dígitos en vivo/históricos
@@ -1850,10 +1851,12 @@ function predict(){
   if(severeInstability){
     action='PAUSE';
     reason='PAUSA IA: deterioro severo del modelo. Sigo aprendiendo sin comprar.';
-  }else if(selected&&!selected.criticalUnsafe){
+  }else if(selected&&!selected.criticalUnsafe&&selected.effectiveRisk<AUTO_BUY_RISK_CEILING){
     action='BUY';
     const skipped=Math.max(0,selected.rawRank);
-    reason=`Compra D${selected.d}: menor costo de riesgo actual entre 10 · riesgo CAL ${fmtPct(selected.effectiveRisk)} · penalización ${fmtPct(selected.softPenalty)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)}${skipped?'; descarté '+skipped+' por peor evidencia combinada':''}.`;
+    reason=`Compra D${selected.d}: riesgo CAL ${fmtPct(selected.effectiveRisk)} < 7% · menor costo de riesgo actual entre 10 · penalización ${fmtPct(selected.softPenalty)} · comité ${Math.round(selected.committee.consensus*100)}% · robusto ${fmtPct(selected.committee.robustRisk)}${skipped?'; descarté '+skipped+' por peor evidencia combinada':''}.`;
+  }else if(selected&&selected.effectiveRisk>=AUTO_BUY_RISK_CEILING){
+    reason=`ESPERA: D${selected.d} es el mejor actual, pero riesgo CAL ${fmtPct(selected.effectiveRisk)} >= 7%. La compra automática exige menos de 7%.`;
   }else{
     reason=`ESPERA: incluso el mejor candidato D${selected.d} está en estado extremo · riesgo ${fmtPct(selected.effectiveRisk)} · robusto ${fmtPct(selected.committee.robustRisk)} · OOD ${Math.round(selected.oodScore*100)}%.`;
   }
