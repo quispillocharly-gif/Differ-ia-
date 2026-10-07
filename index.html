@@ -681,6 +681,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
           <div><small>PROBABILIDAD</small><b id="rfProbability">—</b></div>
           <div><small>MOVIMIENTO</small><b id="rfMove">—</b></div>
           <div><small>MODO IA</small><b id="rfCloudMode">SHADOW</b></div>
+          <div><small>HORIZONTE IA</small><b id="rfHorizonAI">AUTO</b></div>
           <div><small>FASE</small><b id="rfPhase">—</b></div>
           <div><small>GIRO / CONT</small><b id="rfTurn">—</b></div>
           <div><small>VALIDACIÓN</small><b id="rfValidation">REUNIENDO DATOS</b></div>
@@ -689,7 +690,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
       </div>
       <div class="rfControls">
         <label>Stake<input id="rfStake" type="number" min="0.01" step="0.01" value="1.00"></label>
-        <label>Horizonte<select id="rfHorizon"><option value="1">1 TICK</option><option value="2">2 TICKS</option><option value="3">3 TICKS</option><option value="5">5 TICKS</option></select></label>
+        <label>Horizonte<select id="rfHorizon"><option value="0" selected>AUTO IA</option><option value="1">1 TICK</option><option value="2">2 TICKS</option><option value="3">3 TICKS</option><option value="5">5 TICKS</option></select></label>
         <label>Objetivo TP<input id="rfTarget" type="number" min="0.01" step="0.01" value="3.00"></label>
         <label>Límite SL<input id="rfStopLoss" type="number" min="0.01" step="0.01" value="5.00"></label>
         <button id="rfStart" class="primary wide">▶ INICIAR RISE / FALL IA</button>
@@ -838,7 +839,7 @@ body.simpleMode .viewStatus{color:#85ffc0}
 
 <script src="demo.js?v=real-pro-balance-v1"></script>
 <script src="ai-brain.js?v=differ-rank-every-tick-v25"></script>
-<script src="rise-fall.js?v=rf-confirm-window-v11"></script>
+<script src="rise-fall.js?v=rf-auto-horizon-v12"></script>
 <script>
 (function(){
   var q=function(id){return document.getElementById(id)};

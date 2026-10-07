@@ -4058,8 +4058,110 @@ app.get('/api/rise-fall/status',(req,res)=>{
   res.json(riseFallStatus());
 });
 
+function riseFallAutoPredict(){
+  const rows=RF_HORIZONS.map(h=>riseFallPredict(h)).filter(Boolean);
+  if(!rows.length)return null;
+
+  const readyRows=rows.filter(p=>p.ready);
+  const scored=rows.map(p=>{
+    const v=p.validation||{};
+    const flat=clamp(safeNum(p.probabilities?.FLAT,0),0,1);
+    const condEdge=clamp((safeNum(p.conditionalDirectionProbability,.5)-.5)/.07,0,1);
+    const marginal=clamp((safeNum(p.directionProbability,.5)-.48)/.08,0,1);
+    const confidence=clamp(safeNum(p.confidence,0),0,1);
+    const support=clamp(safeNum(p.support,0),0,1);
+    const hitSkill=clamp((safeNum(v.directionHitEWMA,.5)-.48)/.08,0,1);
+    const brierSkill=clamp(((2/9)-safeNum(v.brierEWMA,2/9))/.035,-1,1);
+    const logSkill=clamp((Math.log(3)-safeNum(v.logLossEWMA,Math.log(3)))/.10,-1,1);
+    const modelPenalty=clamp(safeNum(p.adaptation?.modelPenalty,0),0,1);
+    const sameDirection=readyRows.length
+      ?readyRows.filter(x=>x.direction===p.direction).length/readyRows.length
+      :0;
+    const directional=p.action==='RISE'||p.action==='FALL';
+
+    let score=
+      marginal*.25+
+      condEdge*.17+
+      confidence*.16+
+      support*.12+
+      hitSkill*.10+
+      clamp((1-flat)/.95,0,1)*.06+
+      sameDirection*.08+
+      Math.max(0,brierSkill)*.03+
+      Math.max(0,logSkill)*.03-
+      modelPenalty*.10-
+      ((p.horizon-1)/4)*.015;
+
+    if(!p.ready)score-=.40;
+    if(!directional)score-=.12;
+
+    return {
+      ...p,
+      autoHorizonScore:score,
+      crossHorizonAgreement:sameDirection
+    };
+  }).sort((a,b)=>b.autoHorizonScore-a.autoHorizonScore);
+
+  const directional=scored.filter(p=>p.ready&&(p.action==='RISE'||p.action==='FALL'));
+  if(!directional.length){
+    const fallback=scored[0];
+    return {
+      ...fallback,
+      action:'WAIT',
+      rawAction:'WAIT',
+      autoHorizon:true,
+      horizonReason:'Ningún horizonte tiene señal direccional suficiente.',
+      horizonCandidates:scored.map(p=>({
+        horizon:p.horizon,action:p.action,direction:p.direction,
+        score:Number(p.autoHorizonScore.toFixed(4)),
+        probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
+        hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
+        ready:!!p.ready
+      }))
+    };
+  }
+
+  const best=directional[0];
+  const second=directional[1];
+  const closeOpposite=!!(
+    second &&
+    second.direction!==best.direction &&
+    Math.abs(best.autoHorizonScore-second.autoHorizonScore)<.035
+  );
+
+  if(closeOpposite){
+    return {
+      ...best,
+      action:'WAIT',
+      rawAction:'WAIT',
+      autoHorizon:true,
+      horizonReason:'Conflicto fuerte entre horizontes; la IA espera.',
+      horizonCandidates:scored.map(p=>({
+        horizon:p.horizon,action:p.action,direction:p.direction,
+        score:Number(p.autoHorizonScore.toFixed(4)),
+        probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
+        hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
+        ready:!!p.ready
+      }))
+    };
+  }
+
+  return {
+    ...best,
+    autoHorizon:true,
+    horizonReason:'Horizonte elegido por mejor evidencia predictiva actual.',
+    horizonCandidates:scored.map(p=>({
+      horizon:p.horizon,action:p.action,direction:p.direction,
+      score:Number(p.autoHorizonScore.toFixed(4)),
+      probability:Number(safeNum(p.directionProbability,0).toFixed(4)),
+      hit:Number(safeNum(p.validation?.directionHitEWMA,.5).toFixed(4)),
+      ready:!!p.ready
+    }))
+  };
+}
 app.get('/api/rise-fall/prediction',(req,res)=>{
   res.setHeader('Cache-Control','no-store');
+  const auto=String(req.query.auto||'')==='1';
   let h=Math.round(safeNum(req.query.h,1));
   if(!RF_HORIZONS.includes(h))h=1;
   res.json({
@@ -4069,7 +4171,7 @@ app.get('/api/rise-fall/prediction',(req,res)=>{
     isolated:true,
     learnsWhenBrowserClosed:true,
     contractInfo:riseFallContractInfo,
-    prediction:riseFallPredict(h),
+    prediction:auto?riseFallAutoPredict():riseFallPredict(h),
     updatedAt:riseFallMem.updatedAt
   });
 });

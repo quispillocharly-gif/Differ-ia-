@@ -54,18 +54,21 @@ function stakeBase(){return Math.max(.01,val('rfStake',1))}
 function target(){return Math.max(.01,val('rfTarget',3))}
 function stopLoss(){return Math.max(.01,val('rfStopLoss',5))}
 function horizon(){
-  const h=Math.round(val('rfHorizon',1));
-  return [1,2,3,5].includes(h)?h:1;
+  const h=Math.round(val('rfHorizon',0));
+  return [0,1,2,3,5].includes(h)?h:0;
 }
 function parseTickDuration(v){
   if(Number.isFinite(Number(v)))return Math.max(1,Math.round(Number(v)));
   const m=String(v||'').match(/(\d+)\s*t/i);
   return m?Math.max(1,Number(m[1])):null;
 }
-function effectiveHorizon(){
+function effectiveHorizon(predictedHorizon=null){
   const requested=horizon();
+  const chosen=[1,2,3,5].includes(Number(predictedHorizon))
+    ?Number(predictedHorizon)
+    :(requested||1);
   const min=Number.isFinite(Number(rfContractSpec.minTicks))?Number(rfContractSpec.minTicks):null;
-  return min?Math.max(requested,min):requested;
+  return min?Math.max(chosen,min):chosen;
 }
 function contractTypeFor(action){
   return action==='RISE'?(rfContractSpec.riseType||'CALL'):(rfContractSpec.fallType||'PUT');
@@ -103,6 +106,7 @@ function render(){
   setText('rfDecision',action);
   setText('rfProbability',pct(p.directionProbability));
   setText('rfMove',arrow+' '+(Number(p.expectedUnits)>=0?'+':'')+Number(p.expectedUnits||0).toFixed(1)+'U');
+  setText('rfHorizonAI',(p.autoHorizon?'AUTO · ':'')+Number(p.horizon||1)+'T');
   const v=p.validation||{};
   setText('rfValidation','HIT '+pct(v.directionHitEWMA)+' · '+Number(v.resolved||0).toLocaleString()+' TESTS');
   setText('rfCloudMode',p.ready?'ACTIVO':'SHADOW');
@@ -259,7 +263,8 @@ function applyContractsFor(data){
   if(mins.length)rfContractSpec.minTicks=Math.min(...mins);
   rfContractSpec.discovered=true;
 
-  if(rfContractSpec.minTicks&&horizon()<rfContractSpec.minTicks){
+  const requestedH=horizon();
+  if(rfContractSpec.minTicks&&requestedH>0&&requestedH<rfContractSpec.minTicks){
     const sel=$('rfHorizon');
     if(sel&&[...sel.options].some(o=>Number(o.value)===rfContractSpec.minTicks)){
       sel.value=String(rfContractSpec.minTicks);
@@ -397,7 +402,7 @@ function sendRfTrade(pred){
       return;
     }
     const stake=Math.max(.01,Number(rfNextStake)||stakeBase());
-    const h=effectiveHorizon();
+    const h=effectiveHorizon(pred?.horizon);
     const p={
       resolve,reject,
       action,
@@ -407,7 +412,7 @@ function sendRfTrade(pred){
       modelPenalty:clamp(pred.adaptation?.modelPenalty,0,1),
       stake,
       horizon:h,
-      requestedHorizon:horizon(),
+      requestedHorizon:horizon()===0?'AUTO':horizon(),
       retryCount:0,
       signalEpoch:Number(pred.signalEpoch||0),
       phase:String(pred.phase||'UNKNOWN'),
@@ -503,7 +508,7 @@ async function evaluateAuto(pred){
     return;
   }
 
-  setText('rfStatus','CONFIRMADA '+pred.action+' · 2/2 · VERIFICANDO PROPUESTA');
+  setText('rfStatus','CONFIRMADA '+pred.action+' · '+Number(pred.horizon||1)+'T · 2/2 · VERIFICANDO PROPUESTA');
   resetConfirmation();
 
   try{
@@ -511,7 +516,7 @@ async function evaluateAuto(pred){
     if(out?.bought){
       setText(
         'rfStatus',
-        'ENVIANDO '+pred.action+
+        'ENVIANDO '+pred.action+' · '+Number(pred.horizon||1)+'T'+
         ' · IA '+pct(out.modelProbability??pred.directionProbability)+
         ' · BE '+pct(out.breakEven)
       );
@@ -531,7 +536,8 @@ async function evaluateAuto(pred){
 async function poll(){
   try{
     const h=horizon();
-    const r=await fetch(CLOUD_URL+'/api/rise-fall/prediction?h='+h+'&ts='+Date.now(),{cache:'no-store'});
+    const query=h===0?'auto=1':'h='+h;
+    const r=await fetch(CLOUD_URL+'/api/rise-fall/prediction?'+query+'&ts='+Date.now(),{cache:'no-store'});
     if(!r.ok)throw new Error('HTTP '+r.status);
     const data=await r.json();
     if(!data?.ok||!data.prediction)throw new Error('Sin predicción');
