@@ -2955,7 +2955,17 @@ function tournamentRecentRate(stat){
 }
 function tournamentScore(stat){
   const recent=tournamentRecentRate(stat);
-  return .68*recent+.32*safeNum(stat?.brierEWMA,.09);
+  const n=Math.max(0,safeNum(stat?.recent?.length,0));
+  const recentMatches=(stat?.recent||[]).reduce((s,x)=>s+(x?1:0),0);
+  // Prequential comparison against the uniform 10% MATCH baseline.
+  // A candidate must earn its ranking with uncertainty-aware evidence;
+  // short lucky streaks are shrunk towards the null model.
+  const posterior=(recentMatches+100*UNIFORM)/(n+100);
+  const uncertainty=Math.sqrt(posterior*(1-posterior)/(n+101));
+  const pessimistic=posterior+1.64*uncertainty;
+  const brier=safeNum(stat?.brierEWMA,.09);
+  const logLoss=safeNum(stat?.logLossEWMA,Math.log(10));
+  return .55*pessimistic+.25*brier+.20*(logLoss/Math.log(10))*.10;
 }
 function updateTournament(candidateSet,actual){
   const t=mem.shadow.tournament;
@@ -3003,6 +3013,12 @@ function updateTournament(candidateSet,actual){
     const brierOkay=st.brierEWMA<=current.brierEWMA+.0012;
     const logOkay=st.logLossEWMA<=current.logLossEWMA+.020;
     const longRunOkay=st.matchRate<=current.matchRate+.0001;
+    // Require independent-looking prequential evidence against random selection,
+    // not just a better score than another weak candidate.
+    const oosEvidence=st.samples>=TOURNAMENT_MIN_SAMPLES &&
+      st.recent.length>=TOURNAMENT_RECENT &&
+      wilsonUpper95(st.recent.reduce((n,x)=>n+(x?1:0),0),st.recent.length)<UNIFORM &&
+      st.logLossEWMA<Math.log(10);
 
     const fastLane=
       recentGain>=.011 &&
@@ -3019,7 +3035,7 @@ function updateTournament(candidateSet,actual){
       logOkay &&
       score<bestScore-.0038;
 
-    if(fastLane||normalLane){
+    if(oosEvidence&&(fastLane||normalLane)){
       bestName=name;
       bestScore=score;
     }
