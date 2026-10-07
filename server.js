@@ -1375,6 +1375,38 @@ function recordRiseFallOperation(b){
   return {ok:true,accepted:true,duplicate:false,summary:riseFallOperationGate(action,h,probability)};
 }
 
+function riseFallMoveQuality(snap,h){
+  if(!snap)return {score:0,regime:'UNKNOWN',agreement:0,impulse:0,reversal:0,noise:1};
+  const phase=marketPhaseFromMotion(snap);
+  const velocity=Math.abs(safeNum(snap.velocity,0));
+  const acceleration=Math.abs(safeNum(snap.acceleration,0));
+  const trend=Math.abs(safeNum(snap.trendUnits,0));
+  const microAligned=
+    (snap.direction==='UP'&&snap.microDir==='UP')||
+    (snap.direction==='DOWN'&&snap.microDir==='DOWN');
+  const directional=snap.direction==='UP'||snap.direction==='DOWN';
+  const impulse=clamp(velocity/1.15,0,1);
+  const accel=clamp(acceleration/.85,0,1);
+  const trendStrength=clamp(trend/8,0,1);
+  const reversal=['TURN_UP','TURN_DOWN','EXHAUST_UP','EXHAUST_DOWN'].includes(phase)?1:
+    (snap.turn==='TURN'?.72:0);
+  const noisy=(snap.volatility==='HIGH'&&velocity<.38)?1:
+    (snap.direction==='FLAT'?.78:.18);
+  const horizonFit=h<=2
+    ?(.48*impulse+.22*accel+.20*(microAligned?1:0)+.10*trendStrength)
+    :(.28*impulse+.12*accel+.18*(microAligned?1:0)+.42*trendStrength);
+  const agreement=directional?clamp(.40+.34*(microAligned?1:0)+.26*trendStrength,0,1):.20;
+  const score=clamp(
+    horizonFit*.58+
+    agreement*.24+
+    reversal*.10-
+    noisy*.28+
+    (snap.volatility==='MID'?.08:0),
+    0,1
+  );
+  return {score,regime:phase,agreement,impulse,reversal,noise:noisy};
+}
+
 function riseFallPredict(h=1){
   h=Math.round(safeNum(h,1));
   if(!RF_HORIZONS.includes(h))h=1;
@@ -1455,6 +1487,7 @@ function riseFallPredict(h=1){
 
   const actionWinRate=perf.actionSamples?perf.actionWins/perf.actionSamples:.5;
   const operationTelemetry=riseFallOperationGate(direction,h,directionProbability);
+  const moveQuality=riseFallMoveQuality(snap,h);
   const expertWeights={};
   (own.expertViews||[]).forEach(v=>{expertWeights[v.name]=Number(safeNum(v.expertWeight,1).toFixed(4))});
 
@@ -1478,6 +1511,7 @@ function riseFallPredict(h=1){
     ),
     support:clamp(own.support,0,1),
     phase:marketPhaseFromMotion(snap),
+    moveQuality,
     motion:{
       direction:snap.direction,
       strength:snap.strength,
@@ -4144,18 +4178,21 @@ function riseFallAutoPredict(){
       clamp((opRate-.48)/.08,-1,1)*opEvidence*.35;
 
     let score=
-      marginal*.21+
-      condEdge*.15+
-      confidence*.14+
-      support*.10+
-      sameDirection*.08+
+      marginal*.18+
+      condEdge*.13+
+      confidence*.11+
+      support*.09+
+      sameDirection*.07+
       Math.max(-.10,hitSkill*.10)+
-      Math.max(-.08,brierSkill*.06)+
-      Math.max(-.08,logSkill*.05)+
-      historicalSkill*.11+
-      clamp((1-flat)/.95,0,1)*.05-
-      modelPenalty*.10-
-      ((p.horizon-1)/4)*.012;
+      Math.max(-.08,brierSkill*.07)+
+      Math.max(-.08,logSkill*.06)+
+      historicalSkill*.12+
+      clamp((1-flat)/.95,0,1)*.04+
+      clamp(safeNum(p.moveQuality?.score,0),0,1)*.13+
+      clamp(safeNum(p.moveQuality?.agreement,0),0,1)*.05-
+      clamp(safeNum(p.moveQuality?.noise,0),0,1)*.08-
+      modelPenalty*.11-
+      ((p.horizon-1)/4)*.010;
 
     if(actionN>=80&&actionLower<.48)score-=.045;
     if(opN>=30&&opLower<.47)score-=.035;
@@ -4216,7 +4253,8 @@ function riseFallAutoPredict(){
   const closeOpposite=!!(
     second &&
     second.direction!==best.direction &&
-    Math.abs(best.autoHorizonScore-second.autoHorizonScore)<.040
+    Math.abs(best.autoHorizonScore-second.autoHorizonScore)<
+      (.030+.030*(1-clamp(safeNum(best.moveQuality?.score,0),0,1)))
   );
 
   if(closeOpposite){
