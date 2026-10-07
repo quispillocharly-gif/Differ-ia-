@@ -2897,7 +2897,11 @@ function predictionFromDist(name,p,views){
   const support=confidenceViews.length?confidenceViews.reduce((s,v)=>s+v.support,0)/confidenceViews.length:0;
   const calibrationTrust=clamp(1-mem.shadow.calibration.ece*4,.45,1);
   const driftPenalty=mem.shadow.drift.active?.88:1;
-  const confidence=clamp((.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty,0,1);
+  const lab=mem.master?.universalLab?.differ||{};
+  const audit=mem.master?.scienceAudit?.differ||{};
+  const oosConfirmed=lab.edgeConfirmed===true&&audit.edgeConfirmed===true&&safeNum(lab.improvementVsUniform,0)>0;
+  const oosConfidence=oosConfirmed?1:.42;
+  const confidence=clamp((.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty*oosConfidence,0,1);
   return {
     name,
     probabilities:p,
