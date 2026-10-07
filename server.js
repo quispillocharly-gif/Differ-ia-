@@ -2742,8 +2742,14 @@ function calibrateRisk(rawRisk){
   const rankUpper=wilsonUpper95(safeNum(rank0.matches,0),rankN);
   const edgeConfirmed=rankN>=1500&&rankUpper<UNIFORM;
   if(rankN>=1500&&!edgeConfirmed){
-    const uncertaintyFloor=UNIFORM+Math.max(0,rankUpper-UNIFORM)*.55;
-    calibrated=Math.max(calibrated,uncertaintyFloor);
+    // No OOS edge: stop advertising low MATCH risk. Use the stronger of
+    // observed calibration and rank-0 uncertainty, with evidence-weighted conservatism.
+    const oosEvidence=clamp((rankN-1500)/3500,0,1);
+    const calibrationGap=Math.max(0,observed-predicted);
+    const uncertaintyFloor=UNIFORM+Math.max(0,rankUpper-UNIFORM)*(.72+.18*oosEvidence);
+    const observedFloor=UNIFORM+Math.max(0,observed-UNIFORM)*(.62+.18*oosEvidence);
+    const gapFloor=raw+calibrationGap*(.80+.15*oosEvidence);
+    calibrated=Math.max(calibrated,uncertaintyFloor,observedFloor,gapFloor);
   }
 
   // A short recent window is only used as a one-sided safety floor.
@@ -4282,12 +4288,24 @@ function riseFallAutoPredict(){
   const candidateChanged=best.horizon!==autoState.horizon||best.direction!==autoState.direction;
   if(candidateChanged&&currentAny){
     const gain=best.autoHorizonScore-currentAny.autoHorizonScore;
+    const currentHit=safeNum(currentAny.validation?.directionHitEWMA,.5);
+    const currentBrier=safeNum(currentAny.validation?.brierEWMA,2/9);
+    const currentLog=safeNum(currentAny.validation?.logLossEWMA,Math.log(3));
+    const bestHit=safeNum(best.validation?.directionHitEWMA,.5);
+    const bestBrier=safeNum(best.validation?.brierEWMA,2/9);
+    const bestLog=safeNum(best.validation?.logLossEWMA,Math.log(3));
     const severeCurrentWeakness=
-      safeNum(currentAny.validation?.directionHitEWMA,.5)<.465 ||
-      safeNum(currentAny.validation?.brierEWMA,2/9)>(2/9)+.030 ||
-      safeNum(currentAny.validation?.logLossEWMA,Math.log(3))>Math.log(3)+.10;
-    const minGain=best.direction===autoState.direction?.035:.050;
-    if(gain<minGain&&!severeCurrentWeakness)best=currentAny;
+      currentHit<.455 ||
+      currentBrier>(2/9)+.040 ||
+      currentLog>Math.log(3)+.14;
+    // Near-random alternatives should not churn AUTO merely because their
+    // instantaneous movement score spikes. Demand validation improvement too.
+    const validationImproves=
+      bestHit>=currentHit+.006 ||
+      bestBrier<=currentBrier-.004 ||
+      bestLog<=currentLog-.012;
+    const minGain=best.direction===autoState.direction?.050:.070;
+    if((gain<minGain||!validationImproves)&&!severeCurrentWeakness)best=currentAny;
   }
 
   if(autoState.lastEpoch!==lastEpoch){
@@ -4295,8 +4313,11 @@ function riseFallAutoPredict(){
     const previousDir=autoState.direction;
     const wantsChange=previousH!==best.horizon||previousDir!==best.direction;
     const ticksSinceSwitch=Math.max(0,lastEpoch-safeNum(autoState.lastSwitchEpoch,0));
-    const dwellOkay=!autoState.lastSwitchEpoch||ticksSinceSwitch>=6;
-    const requiredConfirm=best.direction===previousDir?3:4;
+    const dwellOkay=!autoState.lastSwitchEpoch||ticksSinceSwitch>=12;
+    const bestQuality=clamp(safeNum(best.moveQuality?.score,0),0,1);
+    const bestHit=safeNum(best.validation?.directionHitEWMA,.5);
+    const weakEvidence=bestHit<.505||bestQuality<.52;
+    const requiredConfirm=(best.direction===previousDir?4:5)+(weakEvidence?2:0);
 
     if(wantsChange){
       if(autoState.pendingHorizon===best.horizon&&autoState.pendingDirection===best.direction){
