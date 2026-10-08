@@ -1863,20 +1863,24 @@ function predict(){
   });
   if(pauseGuard.lastTick!==mem.tickCount){
     const enough=preqSamples>=120;
+    // Cloud calibration gap is computed from raw (uncalibrated) probabilities.
+    // It is diagnostic evidence, not independent proof of unsafe execution:
+    // require corroboration from local prequential Brier before pausing.
+    const localBrierBad=brier>BASELINE_BRIER+.035;
+    const localBrierCritical=brier>BASELINE_BRIER+.055;
     const mildBad=enough&&(
-      health<.20 ||
-      brier>BASELINE_BRIER+.035 ||
-      cloudCalBias>.035
+      localBrierBad ||
+      (health<.20&&brier>BASELINE_BRIER+.015) ||
+      (cloudCalBias>.035&&brier>BASELINE_BRIER+.025)
     );
     const criticalBad=enough&&(
+      localBrierCritical ||
       (health<.12&&brier>BASELINE_BRIER+.025) ||
-      brier>BASELINE_BRIER+.055 ||
-      cloudCalBias>.055
+      (cloudCalBias>.055&&localBrierBad)
     );
     const clearlyHealthy=enough&&(
       health>.30 &&
-      brier<BASELINE_BRIER+.022 &&
-      cloudCalBias<.025
+      brier<BASELINE_BRIER+.022
     );
 
     if(criticalBad){
