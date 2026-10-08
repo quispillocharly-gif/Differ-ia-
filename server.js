@@ -4337,8 +4337,18 @@ function riseFallAutoPredict(){
       bestHit>=currentHit+.006 ||
       bestBrier<=currentBrier-.004 ||
       bestLog<=currentLog-.012;
-    const minGain=best.direction===autoState.direction?.050:.070;
-    if((gain<minGain||!validationImproves)&&!severeCurrentWeakness)best=currentAny;
+    // Prefer independently validated improvement; make the switch threshold
+    // adapt to sample evidence rather than fixed thresholds alone.
+    const bestN=Math.max(0,safeNum(best.validation?.actionSamples,0));
+    const currentN=Math.max(0,safeNum(currentAny.validation?.actionSamples,0));
+    const bestWins=Math.max(0,safeNum(best.validation?.actionWins,0));
+    const currentWins=Math.max(0,safeNum(currentAny.validation?.actionWins,0));
+    const bestLower=bestN>=30?wilsonLower95(bestWins,bestN):0;
+    const currentLower=currentN>=30?wilsonLower95(currentWins,currentN):0;
+    const validatedAdvantage=bestN>=80&&currentN>=80&&bestLower>currentLower+.008;
+    const evidencePenalty=(bestN<80?.025:0)+(currentN<80?.015:0);
+    const minGain=(best.direction===autoState.direction?.050:.070)+evidencePenalty;
+    if((gain<minGain||(!validationImproves&&!validatedAdvantage))&&!severeCurrentWeakness)best=currentAny;
   }
 
   if(autoState.lastEpoch!==lastEpoch){
