@@ -1685,6 +1685,12 @@ function predict(){
 
   // Primero construimos un ranking bruto para poder aprender si el "#1" realmente es mejor.
   const recentPicks=mem.recentPicks.slice(-12);
+  // Diagnose a repeated candidate against the actual tick stream, not only
+  // against previously purchased digits. Repetitions alone are not evidence
+  // of an increased next-tick probability; only corroborated model risk counts.
+  const lastDigit=hist.length?hist[hist.length-1]:-1;
+  let lastDigitRun=0;
+  for(let i=hist.length-1;i>=0&&hist[i]===lastDigit&&lastDigitRun<20;i--)lastDigitRun++;
   const exposure=Array(10).fill(0);recentPicks.forEach(d=>exposure[d]++);
   const maxExp=Math.max(1,...exposure);
   const preliminary=p.map((rawRisk,d)=>{
@@ -1699,8 +1705,13 @@ function predict(){
       ?Math.max(localRisk,cloudRiskCal)
       :localRisk;
     const errorPenalty=contextErrorPenalty(d);
-    const baseAdjusted=risk+fixation*.0025+errorPenalty;
-    return {d,risk,rawRisk,localRisk,cloudRiskCal,fixation,errorPenalty,baseAdjusted};
+    // Only use a streak as corroboration when the model itself assigns
+    // above-baseline risk to that digit. Never treat a streak as a prediction.
+    const repeatedDigitEvidence=d===lastDigit&&lastDigitRun>=2&&rawRisk>UNIFORM
+      ?Math.min(.003,(rawRisk-UNIFORM)*.20)*(lastDigitRun>=3?1:.5)
+      :0;
+    const baseAdjusted=risk+fixation*.0025+errorPenalty+repeatedDigitEvidence;
+    return {d,risk,rawRisk,localRisk,cloudRiskCal,fixation,errorPenalty,repeatedDigitEvidence,baseAdjusted};
   }).sort((a,b)=>a.baseAdjusted-b.baseAdjusted||a.risk-b.risk);
   preliminary.forEach((x,i)=>x.rawRank=i);
   const counterfactualRanking=preliminary.map(x=>x.d);
