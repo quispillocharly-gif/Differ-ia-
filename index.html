@@ -608,6 +608,32 @@ body.simpleMode .viewStatus{color:#85ffc0}
   }
 }
 
+
+/* NEXUS 2026 visual refresh — presentation only, no behavior changes */
+:root{--bg:#070b15;--panel:rgba(15,22,39,.94);--panel2:rgba(18,29,48,.92);--line:rgba(121,154,255,.19);--green:#65f3c1;--mint:#b8ffdf;--cyan:#7db7ff;--text:#eef4ff;--muted:#9aaac5;--danger:#ff6e93;--warn:#ffd681;--shadow:0 12px 40px rgba(0,0,0,.24),0 0 0 1px rgba(135,164,255,.035)}
+html,body{background:radial-gradient(ellipse at 12% -5%,rgba(76,93,194,.18),transparent 48%),radial-gradient(ellipse at 94% 20%,rgba(22,146,164,.10),transparent 45%),var(--bg);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+#matrixRain{opacity:.055}.scanlines{opacity:.12}.vignette{opacity:.24}
+.wrap{max-width:1360px;padding:clamp(12px,2.2vw,28px)}
+.hero,.panel,.card{background:linear-gradient(150deg,rgba(20,29,49,.96),rgba(10,17,31,.95));border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.hero{border-radius:28px;padding:clamp(20px,3vw,35px);margin-bottom:17px}.panel{border-radius:22px;padding:clamp(14px,2vw,22px);margin:14px 0}
+h1{font-size:clamp(30px,5vw,57px);letter-spacing:-2px;line-height:1.04}
+.brandNexus{background:linear-gradient(95deg,#fff,#a7b9ff 55%,#78ddff);-webkit-background-clip:text;background-clip:text}
+.brandDiffer{color:#65f3c1;text-shadow:0 0 24px rgba(101,243,193,.12)}
+.subtitle,.brandTag,.topline,.sessionHint{color:#a0aec9}
+.panel-title,.eyebrow{color:#d9e7ff;font-weight:750;letter-spacing:1.3px}
+.corebox,.analyzerMetric,.sessionField,.chartBox{background:rgba(8,15,30,.58);border-color:rgba(130,161,255,.16);border-radius:17px}
+.analyzerPanel,.sessionPanel{background:linear-gradient(155deg,rgba(18,30,50,.97),rgba(11,20,35,.97));border-color:rgba(130,161,255,.19)}
+.chartBox:before{opacity:.23}.analyzerState{background:rgba(125,183,255,.06);border-color:rgba(125,183,255,.2)}
+input,select{background:#0b1426;color:#d9f9ff;border-color:rgba(145,170,223,.23);border-radius:13px}
+input:focus,select:focus{border-color:#7db7ff;box-shadow:0 0 0 3px rgba(125,183,255,.12)}
+button{border-radius:13px;border-color:rgba(125,183,255,.28);background:linear-gradient(135deg,rgba(125,183,255,.19),rgba(101,243,193,.06));color:#e4f0ff;font-weight:700;box-shadow:0 5px 15px rgba(0,0,0,.10)}
+button:hover:not(:disabled){border-color:rgba(125,183,255,.58);box-shadow:0 8px 24px rgba(64,113,221,.16)}
+.primary{background:linear-gradient(135deg,rgba(101,243,193,.28),rgba(125,183,255,.13));border-color:rgba(101,243,193,.55)}
+.walletBadge{background:linear-gradient(140deg,rgba(26,38,64,.97),rgba(10,20,37,.98));border-color:rgba(255,214,129,.35);box-shadow:0 12px 35px rgba(0,0,0,.35)}
+.walletMode #mode{background:#101e35;color:#b5d5ff}
+@media(max-width:700px){.hero{padding:18px}.panel{padding:14px}.wrap{padding:11px}.hero-grid,.analyzerGrid,.sessionLayout{grid-template-columns:minmax(0,1fr)}.walletBadge{max-width:calc(100vw - 16px)}}
+@media(prefers-reduced-motion:reduce){.pulseDot,.analysisPulse,.chartBox:before{animation:none!important}}
+
 </style>
 <!-- outcome-sound-v2 -->
 </head>
