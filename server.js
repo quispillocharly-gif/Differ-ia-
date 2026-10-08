@@ -2759,7 +2759,13 @@ function calibrateRisk(rawRisk){
     const recentMatches=recent.reduce((n,x)=>n+(x?.match?1:0),0);
     const recentPosterior=(recentMatches+45*UNIFORM)/(recent.length+45);
     const recentEvidence=1-Math.exp(-recent.length/85);
-    const recentFloor=UNIFORM+Math.max(0,recentPosterior-UNIFORM)*recentEvidence*.72;
+    const recentUpper=wilsonUpper95(recentMatches,recent.length);
+    // Recent failures are noisy: shrink to the null baseline and cap the
+    // uncertainty uplift. Never use a lucky streak to claim an OOS edge.
+    const uncertaintyUplift=clamp(recentUpper-recentPosterior,0,.035);
+    const recentFloor=UNIFORM+
+      Math.max(0,recentPosterior-UNIFORM)*recentEvidence*.85+
+      uncertaintyUplift*recentEvidence*.30;
     if(observed>predicted)calibrated=Math.max(calibrated,recentFloor);
   }
 
