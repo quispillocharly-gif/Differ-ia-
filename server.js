@@ -4226,8 +4226,15 @@ function riseFallAutoPredict(){
       modelPenalty*.11-
       ((p.horizon-1)/4)*.010;
 
-    if(actionN>=80&&actionLower<.48)score-=.045;
-    if(opN>=30&&opLower<.47)score-=.035;
+    // Penalize weak out-of-sample directional evidence smoothly rather than
+    // trusting short winning streaks or adding a hard WAIT gate.
+    const actionDeficit=actionN>=80?Math.max(0,.50-actionLower):0;
+    const operationDeficit=opN>=30?Math.max(0,.50-opLower):0;
+    const logLossExcess=Math.max(0,safeNum(v.logLossEWMA,Math.log(3))-Math.log(3));
+    const brierExcess=Math.max(0,safeNum(v.brierEWMA,2/9)-2/9);
+    score-=clamp(actionDeficit*actionEvidence*.65,0,.085);
+    score-=clamp(operationDeficit*opEvidence*.40,0,.055);
+    score-=clamp(logLossExcess*.20+brierExcess*.30,0,.065);
     if(!p.ready)score-=.40;
     if(!directional)score-=.12;
 
