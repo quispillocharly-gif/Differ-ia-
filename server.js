@@ -2719,8 +2719,10 @@ function calibrateRisk(rawRisk){
   const b=c.bins[calibrationBin(raw)];
 
   // Local reliability for this probability band.
+  // Reliability-bin calibration with a neutral prior: the prior must not
+  // inherit the very raw risk estimate whose overconfidence we are testing.
   const prior=90;
-  const posterior=(safeNum(b.matches,0)+prior*raw)/(safeNum(b.n,0)+prior);
+  const posterior=(safeNum(b.matches,0)+prior*UNIFORM)/(safeNum(b.n,0)+prior);
   const binEvidence=1-Math.exp(-safeNum(b.n,0)/120);
 
   // Global under/over-prediction. Under-estimation is corrected more strongly
