@@ -24,5 +24,5 @@ test('unreliable expert cannot overwhelm historical baseline',()=>{
  assert.ok(p[2]<.9,'overconfident posterior');
 });
 test('Differ reliability prior uses null risk rather than model prediction',()=>{
- assert.match(src,/const posterior=\\(safeNum\\(b.matches,0\\)\\+prior\\*UNIFORM\\)\\/\\(safeNum\\(b.n,0\\)\\+prior\\)/);
+ assert.ok(src.includes('const posterior=(safeNum(b.matches,0)+prior*UNIFORM)/(safeNum(b.n,0)+prior);'));
 });
