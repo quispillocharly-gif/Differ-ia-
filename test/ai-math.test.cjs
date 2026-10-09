@@ -10,7 +10,7 @@ function getFunction(name){
  for(;end<src.length;end++){if(src[end]==='{')depth++;if(src[end]==='}'&&!--depth){end++;break}}
  return src.slice(start,end);
 }
-const sandbox={Math,Array,Number,Set,Map,UNIFORM:.1,RF_HORIZONS:[1,2,3,5],safeNum:(x,d)=>Number.isFinite(Number(x))?Number(x):d,clamp:(x,a,b)=>Math.min(b,Math.max(a,x)),riseFallMem:{global:{1:{n:500,counts:[500,0,500]}},performance:{1:{brierEWMA:2/9,logLossEWMA:Math.log(3)}}},riseFallExpertWeight:()=>1};
+const sandbox={Math,Array,Number,Set,Map,UNIFORM:.1,RF_HORIZONS:[1,2,3,5],RF_DRIFT_MAX_WINDOW:300,safeNum:(x,d)=>Number.isFinite(Number(x))?Number(x):d,clamp:(x,a,b)=>Math.min(b,Math.max(a,x)),riseFallMem:{global:{1:{n:500,counts:[500,0,500]}},performance:{1:{brierEWMA:2/9,logLossEWMA:Math.log(3)}}},riseFallExpertWeight:()=>1};
 vm.createContext(sandbox);
 for(const name of ['riseFallNorm3','riseFallBlendExperts'])vm.runInContext(getFunction(name),sandbox);
 test('probabilities remain finite, positive, and sum to 1',()=>{
@@ -25,4 +25,13 @@ test('unreliable expert cannot overwhelm historical baseline',()=>{
 });
 test('Differ reliability prior uses null risk rather than model prediction',()=>{
  assert.ok(src.includes('const posterior=(safeNum(b.matches,0)+prior*UNIFORM)/(safeNum(b.n,0)+prior);'));
+});
+
+test('drift reduces reliance on directional expert',()=>{
+ const v=[{name:'a',p:[.98,.01,.01],support:1,base:1}];
+ const normal=sandbox.riseFallBlendExperts(1,v).p[0];
+ sandbox.riseFallMem.drift={1:{boostRemaining:300}};
+ const drift=sandbox.riseFallBlendExperts(1,v).p[0];
+ assert.ok(drift<normal,'drift should shrink overconfident prediction');
+ delete sandbox.riseFallMem.drift;
 });
