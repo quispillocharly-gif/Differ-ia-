@@ -3524,6 +3524,15 @@ function scienceAuditRun(force=false){
   const rank0Upper95=wilsonUpper95(safeNum(rank0.matches,0),rank0N);
   const edgeConfirmed=rank0N>=1500&&rank0Upper95<UNIFORM;
 
+  // Science-only: aggregate the independently measured horizon diagnostics.
+  // This does not modify predictions, orders, or AUTO selection.
+  const rfHorizonDiagnostics=RF_HORIZONS.map(h=>{
+    const p=riseFallMem.performance?.[h]||freshRiseFallPerf();
+    return {h,resolved:safeNum(p.resolved,0),hit:safeNum(p.directionHitEWMA,.5),brier:safeNum(p.brierEWMA,2/9),logLoss:safeNum(p.logLossEWMA,Math.log(3))};
+  });
+  const rfEligible=rfHorizonDiagnostics.filter(x=>x.resolved>=500);
+  const rfWeakHorizons=rfEligible.filter(x=>x.hit<.49);
+  const rfCalibrationWeakHorizons=rfEligible.filter(x=>x.brier>(2/9)+.025);
   const rfPerf=riseFallMem.performance?.[1]||freshRiseFallPerf();
   const rfState=riseFallMem.signalState?.[1]||{action:'WAIT',age:0,switches:0,holds:0};
   const alerts=[];
@@ -3532,8 +3541,9 @@ function scienceAuditRun(force=false){
   if(rank0N>=1500&&!edgeConfirmed)alerts.push('DIFFER_EDGE_NOT_CONFIRMED');
   if(digit.uniformityP<.001)alerts.push('DIGIT_UNIFORMITY_ANOMALY');
   if(digit.transitionP<.001)alerts.push('DIGIT_TRANSITION_ANOMALY');
-  if(safeNum(rfPerf.resolved,0)>=500&&safeNum(rfPerf.directionHitEWMA,.5)<.49)alerts.push('RISE_FALL_DIRECTION_WEAK');
-  if(safeNum(rfPerf.brierEWMA,2/9)>(2/9)+.025)alerts.push('RISE_FALL_CALIBRATION_WEAK');
+  if(rfEligible.length&&rfWeakHorizons.length===rfEligible.length)alerts.push('RISE_FALL_DIRECTION_WEAK_ALL_HORIZONS');
+  else if(rfWeakHorizons.length)alerts.push('RISE_FALL_DIRECTION_WEAK_PARTIAL');
+  if(rfCalibrationWeakHorizons.length)alerts.push('RISE_FALL_CALIBRATION_WEAK');
 
   const status=alerts.some(x=>/CRITICAL/.test(x))?'CRITICAL':alerts.length?'WATCH':'OK';
   master.scienceAudit={
@@ -3562,6 +3572,7 @@ function scienceAuditRun(force=false){
       switches:safeNum(rfState.switches,0),
       holds:safeNum(rfState.holds,0),
       autoHorizonState:{...(riseFallMem.autoHorizonState||{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0})},
+      horizonAuditSummary:{eligible:rfEligible.length,weak:rfWeakHorizons.map(x=>x.h),calibrationWeak:rfCalibrationWeakHorizons.map(x=>x.h)},
       byHorizon:Object.fromEntries(RF_HORIZONS.map(h=>{
         const p=riseFallMem.performance[h]||freshRiseFallPerf();
         const op=riseFallMem.operationLearning?.byHorizon?.[h]||freshRfOpStat();
