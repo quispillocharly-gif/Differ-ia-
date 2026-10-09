@@ -3518,6 +3518,11 @@ function scienceAuditRun(force=false){
   const predicted=clamp(safeNum(cal.predictedEWMA,UNIFORM),0,1);
   const observed=clamp(safeNum(cal.observedEWMA,UNIFORM),0,1);
   const gap=observed-predicted;
+  // Effective EWMA sample size: descriptive only; audit windows overlap.
+  const calibrationSamples=Math.max(0,safeNum(cal.samples,0));
+  const calibrationEffectiveN=Math.min(calibrationSamples,Math.round(2/.012-1));
+  const calibrationStandardError=Math.sqrt(Math.max(.000001,observed*(1-observed))/Math.max(1,calibrationEffectiveN));
+  const calibrationGapZ=gap/calibrationStandardError;
   // Distinguish EWMA warning from independently accumulated evidence.
   // Wilson bounds use observed shadow outcomes, not overlapping audit counts.
   const shadowN=Math.max(0,safeNum(mem.shadow.total,0));
@@ -3565,6 +3570,8 @@ function scienceAuditRun(force=false){
       predictedEWMA:predicted,
       observedEWMA:observed,
       calibrationGap:gap,
+      calibrationSamples,calibrationEffectiveN,calibrationGapZ,
+      calibrationBrierEWMA:safeNum(cal.brierEWMA,.09),calibrationECE:safeNum(cal.ece,0),
       shadowN,shadowMatches,shadowRate,shadowUpper95,shadowEdgeConfirmed,
       rank0N,
       rank0Rate,
@@ -3582,7 +3589,7 @@ function scienceAuditRun(force=false){
       switches:safeNum(rfState.switches,0),
       holds:safeNum(rfState.holds,0),
       autoHorizonState:{...(riseFallMem.autoHorizonState||{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0})},
-      horizonAuditSummary:{eligible:rfEligible.length,weak:rfWeakHorizons.map(x=>x.h),calibrationWeak:rfCalibrationWeakHorizons.map(x=>x.h)},
+      horizonAuditSummary:{eligible:rfEligible.length,weak:rfWeakHorizons.map(x=>x.h),calibrationWeak:rfCalibrationWeakHorizons.map(x=>x.h),diagnostics:rfHorizonDiagnostics},
       byHorizon:Object.fromEntries(RF_HORIZONS.map(h=>{
         const p=riseFallMem.performance[h]||freshRiseFallPerf();
         const op=riseFallMem.operationLearning?.byHorizon?.[h]||freshRfOpStat();
