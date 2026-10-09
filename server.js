@@ -1116,8 +1116,20 @@ function riseFallBlendExperts(h,views){
     total+=w;
     used.push({name:v.name,p:v.p.slice(),support,weight:w,expertWeight:ew});
   }
+  // Conservative shrinkage of noisy expert consensus toward the observed
+  // unconditional horizon frequencies. Prevents artificial confidence from
+  // correlated experts; does not change Deriv connectivity or order execution.
+  const mixed=riseFallNorm3(num.map(x=>x/(total||1)));
+  const global=riseFallMem.global?.[h];
+  const baseline=riseFallNorm3(global?.counts);
+  const n=Math.max(0,safeNum(global?.n,0));
+  const support=used.length?used.reduce((sum,v)=>sum+v.support*v.weight,0)/Math.max(.0001,total):0;
+  const perf=riseFallMem.performance?.[h]||freshRiseFallPerf();
+  const weakBrier=Math.max(0,safeNum(perf.brierEWMA,2/9)-2/9);
+  const weakLog=Math.max(0,safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3));
+  const reliability=clamp((1-Math.exp(-n/350))*support*(1-clamp(weakBrier/.06+weakLog/.18,0,.85)),.08,.85);
   return {
-    p:riseFallNorm3(num.map(x=>x/(total||1))),
+    p:riseFallNorm3(mixed.map((v,i)=>reliability*v+(1-reliability)*baseline[i])),
     views:used,
     totalWeight:total
   };
