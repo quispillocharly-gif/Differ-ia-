@@ -3518,6 +3518,14 @@ function scienceAuditRun(force=false){
   const predicted=clamp(safeNum(cal.predictedEWMA,UNIFORM),0,1);
   const observed=clamp(safeNum(cal.observedEWMA,UNIFORM),0,1);
   const gap=observed-predicted;
+  // Distinguish EWMA warning from independently accumulated evidence.
+  // Wilson bounds use observed shadow outcomes, not overlapping audit counts.
+  const shadowN=Math.max(0,safeNum(mem.shadow.total,0));
+  const shadowMatches=Math.max(0,safeNum(mem.shadow.matches,0));
+  const shadowRate=shadowN?shadowMatches/shadowN:UNIFORM;
+  const shadowUpper95=wilsonUpper95(shadowMatches,shadowN);
+  const shadowEvidenceReady=shadowN>=1500;
+  const shadowEdgeConfirmed=shadowEvidenceReady&&shadowUpper95<UNIFORM;
   const rank0=master.rankStats?.[0]||{n:0,matches:0};
   const rank0N=Math.max(0,safeNum(rank0.n,0));
   const rank0Rate=(safeNum(rank0.matches,0)+80*UNIFORM)/(rank0N+80);
@@ -3539,6 +3547,7 @@ function scienceAuditRun(force=false){
   if(gap>=.030)alerts.push('DIFFER_CRITICAL_OVERCONFIDENCE');
   else if(gap>=.015)alerts.push('DIFFER_OVERCONFIDENCE');
   if(rank0N>=1500&&!edgeConfirmed)alerts.push('DIFFER_EDGE_NOT_CONFIRMED');
+  if(shadowEvidenceReady&&!shadowEdgeConfirmed)alerts.push('DIFFER_SHADOW_EDGE_NOT_CONFIRMED');
   if(digit.uniformityP<.001)alerts.push('DIGIT_UNIFORMITY_ANOMALY');
   if(digit.transitionP<.001)alerts.push('DIGIT_TRANSITION_ANOMALY');
   if(rfEligible.length&&rfWeakHorizons.length===rfEligible.length)alerts.push('RISE_FALL_DIRECTION_WEAK_ALL_HORIZONS');
@@ -3556,6 +3565,7 @@ function scienceAuditRun(force=false){
       predictedEWMA:predicted,
       observedEWMA:observed,
       calibrationGap:gap,
+      shadowN,shadowMatches,shadowRate,shadowUpper95,shadowEdgeConfirmed,
       rank0N,
       rank0Rate,
       rank0Upper95,
