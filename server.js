@@ -1127,7 +1127,12 @@ function riseFallBlendExperts(h,views){
   const perf=riseFallMem.performance?.[h]||freshRiseFallPerf();
   const weakBrier=Math.max(0,safeNum(perf.brierEWMA,2/9)-2/9);
   const weakLog=Math.max(0,safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3));
-  const reliability=clamp((1-Math.exp(-n/350))*support*(1-clamp(weakBrier/.06+weakLog/.18,0,.85)),.08,.85);
+  // Adaptive reliability: an EWMA of out-of-sample scoring losses acts as
+  // a drift-aware trust penalty. Weak experts are shrunk toward observed
+  // horizon frequencies, rather than producing artificial directional certainty.
+  const excessLoss=clamp(weakBrier/.06+weakLog/.18,0,1);
+  const driftPenalty=clamp(safeNum(riseFallMem.drift?.[h]?.boostRemaining,0)/Math.max(1,RF_DRIFT_MAX_WINDOW),0,.35);
+  const reliability=clamp((1-Math.exp(-n/350))*support*(1-.85*excessLoss)*(1-driftPenalty),.08,.85);
   return {
     p:riseFallNorm3(mixed.map((v,i)=>reliability*v+(1-reliability)*baseline[i])),
     views:used,
