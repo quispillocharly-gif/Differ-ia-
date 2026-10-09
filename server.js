@@ -1121,7 +1121,12 @@ function riseFallBlendExperts(h,views){
   // correlated experts; does not change Deriv connectivity or order execution.
   const mixed=riseFallNorm3(num.map(x=>x/(total||1)));
   const global=riseFallMem.global?.[h];
-  const baseline=riseFallNorm3(global?.counts);
+  // Blend long-term frequency with the already learned fast frequency.
+  // During drift, emphasize the recent distribution without resetting memory.
+  const slowBaseline=riseFallNorm3(global?.counts);
+  const fastBaseline=riseFallNorm3(global?.fast||global?.counts);
+  const recentWeight=riseFallMem.drift?.[h]?.boostRemaining>0?.45:.22;
+  const baseline=riseFallNorm3(slowBaseline.map((v,i)=>(1-recentWeight)*v+recentWeight*fastBaseline[i]));
   const n=Math.max(0,safeNum(global?.n,0));
   const support=used.length?used.reduce((sum,v)=>sum+v.support*v.weight,0)/Math.max(.0001,total):0;
   const perf=riseFallMem.performance?.[h]||freshRiseFallPerf();
