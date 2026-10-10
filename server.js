@@ -3,6 +3,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const createResearchLab = require('./research-lab');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +11,7 @@ const SYMBOL = process.env.DERIV_SYMBOL || 'R_75';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const MEMORY_FILE = path.join(DATA_DIR, 'differ-ai-memory.json');
 const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
+const researchLab = createResearchLab({dataDir:DATA_DIR});
 
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
@@ -3710,6 +3712,7 @@ function processDigit(d,epoch,quote){
 
   hist.push(d);
   priceHist.push(targetPrice);
+  try{researchLab.onTick(d,targetPrice)}catch(e){console.error('Research lab tick:',e.message)}
   motionHist.push(motionSnapshot(priceHist));
   if(hist.length>MAX_HIST){hist.shift();motionHist.shift()}
   if(priceHist.length>MAX_HIST)priceHist.shift();
@@ -4577,6 +4580,8 @@ app.get('/api/cloud/snapshot',(req,res)=>{
   });
 });
 
+app.get('/api/research/lab',(req,res)=>{res.setHeader('Cache-Control','no-store');res.json(researchLab.summary())});
+
 app.get('/health',(req,res)=>{
   res.status(status==='ONLINE'?200:503).json({
     ok:status==='ONLINE',
@@ -4611,12 +4616,14 @@ app.listen(PORT,()=>{
 saveTimer=setInterval(()=>{
   saveMemory();
   saveRiseFallMemory();
+  researchLab.save();
 },15000);
 
 function shutdown(){
   clearInterval(saveTimer);
   saveMemory();
   saveRiseFallMemory();
+  researchLab.save();
   try{if(ws)ws.close()}catch(_){}
   process.exit(0);
 }
