@@ -667,6 +667,61 @@ button:active{transform:scale(.98)}
 .primary{background:linear-gradient(110deg,#7460e6,#2998d6)!important;color:#fff!important;border:0!important;box-shadow:0 8px 18px #7867c84a!important}
 .danger{background:linear-gradient(110deg,#fa7b8e,#ee4c83)!important;color:#fff!important}
 @media(max-width:1000px){.wrap{grid-template-columns:minmax(0,1fr)!important;padding:12px!important;gap:12px!important}.wrap>*{grid-column:1/-1!important}.wrap>#analyzerPanel{order:3}.wrap>#connectPanel{order:4}.wrap>#rfPanel{order:5}.wrap>#sessionPanel{order:6}.wrap>#signalPanel{order:7}.wrap>#rfStatsGrid{order:8}.wrap>.grid:not(#rfStatsGrid):not(#learningMetrics){order:9}.wrap>#objectivePanel{order:10}.wrap>#historyPanel{order:11}.hero-grid{grid-template-columns:1fr!important}.hero{padding:22px!important}.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+
+/* SOLAR CONTROL 2026 — high contrast mobile redesign */
+:root{--bg:#f4f6fb!important;--panel:#fff!important;--panel2:#f0f4fb!important;--text:#14213d!important;--muted:#455570!important;--line:#c8d3e6!important;--green:#067a56!important;--mint:#116f5b!important;--cyan:#075eae!important;--shadow:0 6px 18px #1e35521c!important}
+html,body{background:#f4f6fb!important;color:#14213d!important;font-family:system-ui,-apple-system,Arial,sans-serif!important}
+.wrap{gap:14px!important}
+.wrap>.topline{background:#14213d!important;color:#fff!important;border-radius:16px!important;box-shadow:none!important}
+.topline,.topline span,.topline .online{color:#fff!important;text-shadow:none!important}
+.walletBadge{background:#fff!important;border:2px solid #ffca4b!important;box-shadow:none!important}
+.walletLabel,.walletAmount,.walletDelta{color:#14213d!important;font-weight:800!important}
+.wrap>.hero{background:#14213d!important;color:#fff!important;border:0!important;border-radius:22px!important;min-height:unset!important;box-shadow:none!important}
+.hero .eyebrow,.hero .brandTag,.hero .subtitle,.hero .label,.hero .core-mini,.hero .core-mini span{color:#e5efff!important;opacity:1!important}
+.hero h1{letter-spacing:-1px!important;font-weight:900!important}
+.brandNexus{color:#fff!important;-webkit-text-fill-color:#fff!important;background:none!important;text-shadow:none!important}
+.brandSlash{color:#ffc647!important}.brandDiffer{color:#69e9ce!important;text-shadow:none!important}
+.corebox{background:#263a5a!important;border:1px solid #486284!important;color:#fff!important;border-radius:16px!important}
+.corebox .value,.core-mini b{color:#fff!important;text-shadow:none!important}
+.wrap>.appToolbar{background:#fff!important;border:2px solid #d5dfef!important;border-radius:18px!important;box-shadow:none!important}
+.viewSwitch{background:#e8eef9!important;border:0!important;border-radius:12px!important}
+.viewSwitch button{color:#14213d!important;background:transparent!important}
+.viewSwitch button.active{background:#145dd7!important;color:#fff!important;border-radius:10px!important;box-shadow:none!important}
+.viewStatus{color:#14213d!important;font-weight:850!important}
+.soundToggle,.miniTool{background:#e9efff!important;color:#123b80!important;border:1px solid #8daee7!important}
+.panel,.card,.analyzerMetric,.sessionField,.chartBox,.analyzerState,.rfSignal,.rfControls{background:#fff!important;color:#14213d!important;border:2px solid #d3ddec!important;box-shadow:none!important;border-radius:18px!important}
+.panel{padding:20px!important}
+.panel-title,.panel-title *,small,.chip,.signalLabel,.signalMini small,.connectionTitle b,.connectionTitle span,.connectionSelector small,.sessionField small,.analyzerMetric small,.chartHud,.authBrandText,.authBrandText span,.historySummary,.rfNote{color:#243755!important;opacity:1!important;text-shadow:none!important}
+.panel-title{font-size:15px!important;letter-spacing:0!important}
+.chip{background:#e8efff!important;color:#124f9c!important;border:1px solid #adc5ee!important;font-weight:800!important}
+.analyzerMetric b,.card b,.corebox .value,.sessionField input,.rfDecision,.decision,.analyzerState span,.statusStrip span,.rfMeta b{color:#14213d!important;text-shadow:none!important}
+.chartBox{background:#eaf3ff!important}
+.chartHud{background:#fff!important;border-radius:8px!important;padding:6px!important}
+button{min-height:45px!important;border-radius:12px!important;font-weight:850!important;text-shadow:none!important;opacity:1!important}
+.primary,#start,#rfStart{background:#145dd7!important;color:#fff!important;border:2px solid #145dd7!important;box-shadow:none!important}
+.danger,#stop,#rfStop{background:#b4233e!important;color:#fff!important;border:2px solid #b4233e!important;box-shadow:none!important}
+#continue,#manualBuy{background:#ffe08a!important;color:#202e48!important;border:2px solid #cc9b23!important;box-shadow:none!important}
+input,select,textarea{background:#fff!important;color:#14213d!important;border:2px solid #aebed7!important;border-radius:10px!important}
+.statusStrip{background:#eaf1ff!important;border:1px solid #c1d1eb!important;border-radius:12px!important}
+@media(max-width:1000px){
+.wrap{padding:10px!important;gap:10px!important}
+.wrap>.topline{padding:12px!important;display:flex!important;flex-wrap:wrap!important;gap:8px!important}
+.wrap>.hero{padding:20px 15px!important}
+.hero h1{font-size:clamp(29px,8vw,44px)!important;line-height:1.1!important;letter-spacing:-1px!important}
+.hero-grid{gap:14px!important}
+.wrap>.appToolbar{padding:8px!important;gap:6px!important}
+.viewStatus{display:none!important}
+.panel{padding:15px!important}
+#analyzerPanel{min-height:unset!important}
+.chartBox{min-height:220px!important}
+#volChart{height:220px!important}
+.analyzerGrid{display:grid!important;grid-template-columns:1fr!important;gap:12px!important}
+.analyzerStats{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
+.analyzerMetric{min-width:0!important;padding:12px!important}
+.analyzerMetric b{font-size:clamp(18px,5vw,26px)!important}
+.connectionHeader,.connectionSelectors,.authCompactInner,.rfDecisionBox,.sessionLayout,.signalLayout{gap:10px!important}
+.wrap>.topline{order:0!important}.wrap>.hero{order:1!important}.wrap>#connectPanel{order:2!important}.wrap>.appToolbar{order:3!important}.wrap>#sessionPanel{order:4!important}.wrap>#rfPanel{order:5!important}.wrap>#signalPanel{order:6!important}.wrap>#analyzerPanel{order:7!important}
+}
 </style>
 <!-- outcome-sound-v2 -->
 </head>
