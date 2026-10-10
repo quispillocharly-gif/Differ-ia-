@@ -634,7 +634,40 @@ button:hover:not(:disabled){border-color:rgba(125,183,255,.58);box-shadow:0 8px 
 @media(max-width:700px){.hero{padding:18px}.panel{padding:14px}.wrap{padding:11px}.hero-grid,.analyzerGrid,.sessionLayout{grid-template-columns:minmax(0,1fr)}.walletBadge{max-width:calc(100vw - 16px)}}
 @media(prefers-reduced-motion:reduce){.pulseDot,.analysisPulse,.chartBox:before{animation:none!important}}
 
-:root{--bg:#f8f6ff;--panel:#ffffff;--panel2:#effaff;--text:#263456;--muted:#586b87;--green:#168c71;--mint:#4265ba;--cyan:#1877be;--line:#d8d9f2;--shadow:0 8px 28px #6266aa25}html,body{background:#f8f6ff!important;color:#263456!important}#matrixRain,.scanlines,.vignette{display:none!important}.hero,.panel,.card,.analyzerPanel,.sessionPanel{background:#fff!important;color:#263456!important;border-color:#d8d9f2!important}.hero{background:linear-gradient(115deg,#ffebd2,#f0eaff,#ddfaff)!important}.chartBox,.corebox,.sessionField,.analyzerMetric{background:#f2f8ff!important}.brandDiffer{color:#dc4c92!important}.brandNexus{color:#6854ca!important;background:none!important;-webkit-text-fill-color:#6854ca!important}.walletBadge{background:#fff5d8!important}input,select{background:#fff!important;color:#263456!important}</style>
+:root{--bg:#f8f6ff;--panel:#ffffff;--panel2:#effaff;--text:#263456;--muted:#586b87;--green:#168c71;--mint:#4265ba;--cyan:#1877be;--line:#d8d9f2;--shadow:0 8px 28px #6266aa25}html,body{background:#f8f6ff!important;color:#263456!important}#matrixRain,.scanlines,.vignette{display:none!important}.hero,.panel,.card,.analyzerPanel,.sessionPanel{background:#fff!important;color:#263456!important;border-color:#d8d9f2!important}.hero{background:linear-gradient(115deg,#ffebd2,#f0eaff,#ddfaff)!important}.chartBox,.corebox,.sessionField,.analyzerMetric{background:#f2f8ff!important}.brandDiffer{color:#dc4c92!important}.brandNexus{color:#6854ca!important;background:none!important;-webkit-text-fill-color:#6854ca!important}.walletBadge{background:#fff5d8!important}input,select{background:#fff!important;color:#263456!important}
+/* AURORA STUDIO — NEW DASHBOARD ARCHITECTURE */
+.wrap{max-width:1500px!important;display:grid!important;grid-template-columns:minmax(0,1.6fr) minmax(330px,1fr)!important;gap:16px!important;padding:22px!important;align-items:start}
+.wrap>.topline,.wrap>.hero,.wrap>.appToolbar,.wrap>#proQuickPanel,.wrap>#connectPanel,.wrap>#rfPanel,.wrap>#rfStatsGrid,.wrap>#sessionPanel,.wrap>#signalPanel,.wrap>#analyzerPanel,.wrap>#historyPanel,.wrap>#objectivePanel,.wrap>#cloudPanel{margin:0!important;min-width:0}
+.wrap>.topline{grid-column:1/-1;order:0;background:#fff!important;border-radius:24px;padding:14px 22px!important;box-shadow:0 10px 28px #8a83c41c}
+.wrap>.hero{grid-column:1/-1;order:1;min-height:190px!important;border-radius:34px!important;padding:32px!important;box-shadow:0 20px 50px #b8a2d537!important}
+.wrap>.appToolbar{grid-column:1/-1;order:2;display:flex!important;justify-content:center!important;background:#fff!important;border-radius:100px!important;padding:10px!important;box-shadow:0 8px 25px #7476ad1c}
+.wrap>#connectPanel{grid-column:2;order:3;border-radius:28px!important}
+.wrap>#analyzerPanel{grid-column:1;order:3;border-radius:28px!important;min-height:390px}
+.wrap>#rfPanel{grid-column:1;order:4;border-radius:30px!important}
+.wrap>#sessionPanel{grid-column:2;order:4;border-radius:28px!important}
+.wrap>#signalPanel{grid-column:1;order:5;border-radius:30px!important}
+.wrap>#rfStatsGrid{grid-column:2;order:5}
+.wrap>#historyPanel{grid-column:1/-1;order:12}
+.wrap>#objectivePanel{grid-column:2;order:7}
+.wrap>#cloudPanel{grid-column:2;order:14}
+.wrap>#proQuickPanel{grid-column:1/-1;order:6}
+.wrap>.grid:not(#rfStatsGrid):not(#learningMetrics){grid-column:1/-1;order:8}
+.wrap>#learningMetrics{grid-column:1/-1;order:13}
+.wrap>.panel:not(#connectPanel):not(#analyzerPanel):not(#rfPanel):not(#sessionPanel):not(#signalPanel):not(#historyPanel):not(#objectivePanel):not(#cloudPanel){grid-column:1/-1;order:15}
+.hero-grid{grid-template-columns:1.8fr .75fr!important}
+.hero h1{font-size:clamp(38px,5vw,76px)!important;line-height:1.06!important;letter-spacing:-3px!important}
+.panel,.card{border-radius:26px!important}.panel{padding:22px!important}
+.grid{gap:12px!important}.card{padding:18px!important;min-height:100px!important}
+.panel-title{font-size:12px!important;font-weight:850!important;letter-spacing:1px!important}
+.analyzerGrid{grid-template-columns:1fr!important}.analyzerStats{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+.chartBox{border-radius:22px!important}#volChart{height:280px!important}
+.connectionHeader,.rfDecisionBox,.sessionLayout{gap:18px!important}
+button{border-radius:15px!important;font-family:inherit!important;font-weight:750!important;transition:transform .15s ease,box-shadow .15s ease}
+button:active{transform:scale(.98)}
+.primary{background:linear-gradient(110deg,#7460e6,#2998d6)!important;color:#fff!important;border:0!important;box-shadow:0 8px 18px #7867c84a!important}
+.danger{background:linear-gradient(110deg,#fa7b8e,#ee4c83)!important;color:#fff!important}
+@media(max-width:1000px){.wrap{grid-template-columns:minmax(0,1fr)!important;padding:12px!important;gap:12px!important}.wrap>*{grid-column:1/-1!important}.wrap>#analyzerPanel{order:3}.wrap>#connectPanel{order:4}.wrap>#rfPanel{order:5}.wrap>#sessionPanel{order:6}.wrap>#signalPanel{order:7}.wrap>#rfStatsGrid{order:8}.wrap>.grid:not(#rfStatsGrid):not(#learningMetrics){order:9}.wrap>#objectivePanel{order:10}.wrap>#historyPanel{order:11}.hero-grid{grid-template-columns:1fr!important}.hero{padding:22px!important}.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+</style>
 <!-- outcome-sound-v2 -->
 </head>
 <body>
