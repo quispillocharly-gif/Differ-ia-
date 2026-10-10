@@ -3898,6 +3898,7 @@ function masterPublic(){
     scienceAudit:master.scienceAudit||freshScienceAudit(),
     universalLab:master.universalLab||freshUniversalLab(),
     labIntegration:universalLabIntegrationPublic(),
+    researchKnowledge:researchLab.knowledge(),
     policyAnalytics:(()=>{
       const pa=master.policyAnalytics||freshPolicyAnalytics();
       const policies={};
@@ -4489,6 +4490,7 @@ app.get('/api/rise-fall/prediction',(req,res)=>{
     learnsWhenBrowserClosed:true,
     contractInfo:riseFallContractInfo,
     prediction:auto?riseFallAutoPredict():riseFallPredict(h),
+    researchKnowledge:researchLab.knowledge('RISE_FALL'),
     updatedAt:riseFallMem.updatedAt
   });
 });
@@ -4544,6 +4546,7 @@ app.get('/api/cloud/prediction',(req,res)=>{
   res.json({
     ok:true,
     prediction:lastPrediction,
+    researchKnowledge:researchLab.knowledge('DIFFER'),
     shadow:mem.shadow.last,
     calibration:calibrationSummary(),
     drift:driftSummary(),
