@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const createResearchLab = require('./research-lab');
+const createRiseFallResearch = require('./rise-fall-research');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,6 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const MEMORY_FILE = path.join(DATA_DIR, 'differ-ai-memory.json');
 const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
 const researchLab = createResearchLab({dataDir:DATA_DIR});
+const riseFallResearch = createRiseFallResearch({dataDir:DATA_DIR});
 
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
@@ -3713,6 +3715,7 @@ function processDigit(d,epoch,quote){
   hist.push(d);
   priceHist.push(targetPrice);
   try{researchLab.onTick(d,targetPrice)}catch(e){console.error('Research lab tick:',e.message)}
+  try{riseFallResearch.onTick(targetPrice)}catch(e){console.error('Rise/Fall research tick:',e.message)}
   motionHist.push(motionSnapshot(priceHist));
   if(hist.length>MAX_HIST){hist.shift();motionHist.shift()}
   if(priceHist.length>MAX_HIST)priceHist.shift();
@@ -4490,7 +4493,7 @@ app.get('/api/rise-fall/prediction',(req,res)=>{
     learnsWhenBrowserClosed:true,
     contractInfo:riseFallContractInfo,
     prediction:auto?riseFallAutoPredict():riseFallPredict(h),
-    researchKnowledge:researchLab.knowledge('RISE_FALL'),
+    researchKnowledge:riseFallResearch.knowledge(),
     updatedAt:riseFallMem.updatedAt
   });
 });
@@ -4583,6 +4586,8 @@ app.get('/api/cloud/snapshot',(req,res)=>{
   });
 });
 
+app.get('/api/research/rise-fall',(req,res)=>{res.setHeader('Cache-Control','no-store');res.json(riseFallResearch.summary())});
+
 app.get('/api/research/lab',(req,res)=>{res.setHeader('Cache-Control','no-store');res.json(researchLab.summary())});
 
 app.get('/health',(req,res)=>{
@@ -4620,6 +4625,7 @@ saveTimer=setInterval(()=>{
   saveMemory();
   saveRiseFallMemory();
   researchLab.save();
+  riseFallResearch.save();
 },15000);
 
 function shutdown(){
@@ -4627,6 +4633,7 @@ function shutdown(){
   saveMemory();
   saveRiseFallMemory();
   researchLab.save();
+  riseFallResearch.save();
   try{if(ws)ws.close()}catch(_){}
   process.exit(0);
 }
