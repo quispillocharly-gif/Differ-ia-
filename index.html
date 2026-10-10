@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#020805">
-<title>NEXUS DIFFER AI</title>
+<title>ORBITAL OS · AI Terminal</title>
 <style>
 :root{--bg:#010403;--panel:rgba(3,12,8,.91);--panel2:rgba(4,18,12,.88);--line:rgba(0,255,136,.20);--green:#00ff88;--mint:#85ffc0;--cyan:#35e7ff;--text:#dffff0;--muted:#79aa8e;--danger:#ff4268;--warn:#ffd05a;--shadow:0 0 0 1px rgba(0,255,136,.06),0 0 24px rgba(0,255,136,.06),0 20px 60px rgba(0,0,0,.55)}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}body{overflow-x:hidden}
@@ -634,6 +634,306 @@ button:hover:not(:disabled){border-color:rgba(125,183,255,.58);box-shadow:0 8px 
 @media(max-width:700px){.hero{padding:18px}.panel{padding:14px}.wrap{padding:11px}.hero-grid,.analyzerGrid,.sessionLayout{grid-template-columns:minmax(0,1fr)}.walletBadge{max-width:calc(100vw - 16px)}}
 @media(prefers-reduced-motion:reduce){.pulseDot,.analysisPulse,.chartBox:before{animation:none!important}}
 
+:root{--bg:#f8f6ff;--panel:#ffffff;--panel2:#effaff;--text:#263456;--muted:#586b87;--green:#168c71;--mint:#4265ba;--cyan:#1877be;--line:#d8d9f2;--shadow:0 8px 28px #6266aa25}html,body{background:#f8f6ff!important;color:#263456!important}#matrixRain,.scanlines,.vignette{display:none!important}.hero,.panel,.card,.analyzerPanel,.sessionPanel{background:#fff!important;color:#263456!important;border-color:#d8d9f2!important}.hero{background:linear-gradient(115deg,#ffebd2,#f0eaff,#ddfaff)!important}.chartBox,.corebox,.sessionField,.analyzerMetric{background:#f2f8ff!important}.brandDiffer{color:#dc4c92!important}.brandNexus{color:#6854ca!important;background:none!important;-webkit-text-fill-color:#6854ca!important}.walletBadge{background:#fff5d8!important}input,select{background:#fff!important;color:#263456!important}
+/* AURORA STUDIO — NEW DASHBOARD ARCHITECTURE */
+.wrap{max-width:1500px!important;display:grid!important;grid-template-columns:minmax(0,1.6fr) minmax(330px,1fr)!important;gap:16px!important;padding:22px!important;align-items:start}
+.wrap>.topline,.wrap>.hero,.wrap>.appToolbar,.wrap>#proQuickPanel,.wrap>#connectPanel,.wrap>#rfPanel,.wrap>#rfStatsGrid,.wrap>#sessionPanel,.wrap>#signalPanel,.wrap>#analyzerPanel,.wrap>#historyPanel,.wrap>#objectivePanel,.wrap>#cloudPanel{margin:0!important;min-width:0}
+.wrap>.topline{grid-column:1/-1;order:0;background:#fff!important;border-radius:24px;padding:14px 22px!important;box-shadow:0 10px 28px #8a83c41c}
+.wrap>.hero{grid-column:1/-1;order:1;min-height:190px!important;border-radius:34px!important;padding:32px!important;box-shadow:0 20px 50px #b8a2d537!important}
+.wrap>.appToolbar{grid-column:1/-1;order:2;display:flex!important;justify-content:center!important;background:#fff!important;border-radius:100px!important;padding:10px!important;box-shadow:0 8px 25px #7476ad1c}
+.wrap>#connectPanel{grid-column:2;order:3;border-radius:28px!important}
+.wrap>#analyzerPanel{grid-column:1;order:3;border-radius:28px!important;min-height:390px}
+.wrap>#rfPanel{grid-column:1;order:4;border-radius:30px!important}
+.wrap>#sessionPanel{grid-column:2;order:4;border-radius:28px!important}
+.wrap>#signalPanel{grid-column:1;order:5;border-radius:30px!important}
+.wrap>#rfStatsGrid{grid-column:2;order:5}
+.wrap>#historyPanel{grid-column:1/-1;order:12}
+.wrap>#objectivePanel{grid-column:2;order:7}
+.wrap>#cloudPanel{grid-column:2;order:14}
+.wrap>#proQuickPanel{grid-column:1/-1;order:6}
+.wrap>.grid:not(#rfStatsGrid):not(#learningMetrics){grid-column:1/-1;order:8}
+.wrap>#learningMetrics{grid-column:1/-1;order:13}
+.wrap>.panel:not(#connectPanel):not(#analyzerPanel):not(#rfPanel):not(#sessionPanel):not(#signalPanel):not(#historyPanel):not(#objectivePanel):not(#cloudPanel){grid-column:1/-1;order:15}
+.hero-grid{grid-template-columns:1.8fr .75fr!important}
+.hero h1{font-size:clamp(38px,5vw,76px)!important;line-height:1.06!important;letter-spacing:-3px!important}
+.panel,.card{border-radius:26px!important}.panel{padding:22px!important}
+.grid{gap:12px!important}.card{padding:18px!important;min-height:100px!important}
+.panel-title{font-size:12px!important;font-weight:850!important;letter-spacing:1px!important}
+.analyzerGrid{grid-template-columns:1fr!important}.analyzerStats{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+.chartBox{border-radius:22px!important}#volChart{height:280px!important}
+.connectionHeader,.rfDecisionBox,.sessionLayout{gap:18px!important}
+button{border-radius:15px!important;font-family:inherit!important;font-weight:750!important;transition:transform .15s ease,box-shadow .15s ease}
+button:active{transform:scale(.98)}
+.primary{background:linear-gradient(110deg,#7460e6,#2998d6)!important;color:#fff!important;border:0!important;box-shadow:0 8px 18px #7867c84a!important}
+.danger{background:linear-gradient(110deg,#fa7b8e,#ee4c83)!important;color:#fff!important}
+@media(max-width:1000px){.wrap{grid-template-columns:minmax(0,1fr)!important;padding:12px!important;gap:12px!important}.wrap>*{grid-column:1/-1!important}.wrap>#analyzerPanel{order:3}.wrap>#connectPanel{order:4}.wrap>#rfPanel{order:5}.wrap>#sessionPanel{order:6}.wrap>#signalPanel{order:7}.wrap>#rfStatsGrid{order:8}.wrap>.grid:not(#rfStatsGrid):not(#learningMetrics){order:9}.wrap>#objectivePanel{order:10}.wrap>#historyPanel{order:11}.hero-grid{grid-template-columns:1fr!important}.hero{padding:22px!important}.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+
+/* SOLAR CONTROL 2026 — high contrast mobile redesign */
+:root{--bg:#f4f6fb!important;--panel:#fff!important;--panel2:#f0f4fb!important;--text:#14213d!important;--muted:#455570!important;--line:#c8d3e6!important;--green:#067a56!important;--mint:#116f5b!important;--cyan:#075eae!important;--shadow:0 6px 18px #1e35521c!important}
+html,body{background:#f4f6fb!important;color:#14213d!important;font-family:system-ui,-apple-system,Arial,sans-serif!important}
+.wrap{gap:14px!important}
+.wrap>.topline{background:#14213d!important;color:#fff!important;border-radius:16px!important;box-shadow:none!important}
+.topline,.topline span,.topline .online{color:#fff!important;text-shadow:none!important}
+.walletBadge{background:#fff!important;border:2px solid #ffca4b!important;box-shadow:none!important}
+.walletLabel,.walletAmount,.walletDelta{color:#14213d!important;font-weight:800!important}
+.wrap>.hero{background:#14213d!important;color:#fff!important;border:0!important;border-radius:22px!important;min-height:unset!important;box-shadow:none!important}
+.hero .eyebrow,.hero .brandTag,.hero .subtitle,.hero .label,.hero .core-mini,.hero .core-mini span{color:#e5efff!important;opacity:1!important}
+.hero h1{letter-spacing:-1px!important;font-weight:900!important}
+.brandNexus{color:#fff!important;-webkit-text-fill-color:#fff!important;background:none!important;text-shadow:none!important}
+.brandSlash{color:#ffc647!important}.brandDiffer{color:#69e9ce!important;text-shadow:none!important}
+.corebox{background:#263a5a!important;border:1px solid #486284!important;color:#fff!important;border-radius:16px!important}
+.corebox .value,.core-mini b{color:#fff!important;text-shadow:none!important}
+.wrap>.appToolbar{background:#fff!important;border:2px solid #d5dfef!important;border-radius:18px!important;box-shadow:none!important}
+.viewSwitch{background:#e8eef9!important;border:0!important;border-radius:12px!important}
+.viewSwitch button{color:#14213d!important;background:transparent!important}
+.viewSwitch button.active{background:#145dd7!important;color:#fff!important;border-radius:10px!important;box-shadow:none!important}
+.viewStatus{color:#14213d!important;font-weight:850!important}
+.soundToggle,.miniTool{background:#e9efff!important;color:#123b80!important;border:1px solid #8daee7!important}
+.panel,.card,.analyzerMetric,.sessionField,.chartBox,.analyzerState,.rfSignal,.rfControls{background:#fff!important;color:#14213d!important;border:2px solid #d3ddec!important;box-shadow:none!important;border-radius:18px!important}
+.panel{padding:20px!important}
+.panel-title,.panel-title *,small,.chip,.signalLabel,.signalMini small,.connectionTitle b,.connectionTitle span,.connectionSelector small,.sessionField small,.analyzerMetric small,.chartHud,.authBrandText,.authBrandText span,.historySummary,.rfNote{color:#243755!important;opacity:1!important;text-shadow:none!important}
+.panel-title{font-size:15px!important;letter-spacing:0!important}
+.chip{background:#e8efff!important;color:#124f9c!important;border:1px solid #adc5ee!important;font-weight:800!important}
+.analyzerMetric b,.card b,.corebox .value,.sessionField input,.rfDecision,.decision,.analyzerState span,.statusStrip span,.rfMeta b{color:#14213d!important;text-shadow:none!important}
+.chartBox{background:#eaf3ff!important}
+.chartHud{background:#fff!important;border-radius:8px!important;padding:6px!important}
+button{min-height:45px!important;border-radius:12px!important;font-weight:850!important;text-shadow:none!important;opacity:1!important}
+.primary,#start,#rfStart{background:#145dd7!important;color:#fff!important;border:2px solid #145dd7!important;box-shadow:none!important}
+.danger,#stop,#rfStop{background:#b4233e!important;color:#fff!important;border:2px solid #b4233e!important;box-shadow:none!important}
+#continue,#manualBuy{background:#ffe08a!important;color:#202e48!important;border:2px solid #cc9b23!important;box-shadow:none!important}
+input,select,textarea{background:#fff!important;color:#14213d!important;border:2px solid #aebed7!important;border-radius:10px!important}
+.statusStrip{background:#eaf1ff!important;border:1px solid #c1d1eb!important;border-radius:12px!important}
+@media(max-width:1000px){
+.wrap{padding:10px!important;gap:10px!important}
+.wrap>.topline{padding:12px!important;display:flex!important;flex-wrap:wrap!important;gap:8px!important}
+.wrap>.hero{padding:20px 15px!important}
+.hero h1{font-size:clamp(29px,8vw,44px)!important;line-height:1.1!important;letter-spacing:-1px!important}
+.hero-grid{gap:14px!important}
+.wrap>.appToolbar{padding:8px!important;gap:6px!important}
+.viewStatus{display:none!important}
+.panel{padding:15px!important}
+#analyzerPanel{min-height:unset!important}
+.chartBox{min-height:220px!important}
+#volChart{height:220px!important}
+.analyzerGrid{display:grid!important;grid-template-columns:1fr!important;gap:12px!important}
+.analyzerStats{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
+.analyzerMetric{min-width:0!important;padding:12px!important}
+.analyzerMetric b{font-size:clamp(18px,5vw,26px)!important}
+.connectionHeader,.connectionSelectors,.authCompactInner,.rfDecisionBox,.sessionLayout,.signalLayout{gap:10px!important}
+.wrap>.topline{order:0!important}.wrap>.hero{order:1!important}.wrap>#connectPanel{order:2!important}.wrap>.appToolbar{order:3!important}.wrap>#sessionPanel{order:4!important}.wrap>#rfPanel{order:5!important}.wrap>#signalPanel{order:6!important}.wrap>#analyzerPanel{order:7!important}
+}
+
+/* ATELIER 2.0 — complete visual system: cobalt / ivory / lilac */
+:root{--bg:#f5f6fb!important;--panel:#fff!important;--panel2:#f3f5fd!important;--line:#dce1ef!important;--green:#147d75!important;--mint:#147d75!important;--cyan:#4355c8!important;--text:#202844!important;--muted:#68728d!important;--shadow:0 12px 38px #303a7014!important}
+html,body{background:#f5f6fb!important;color:#202844!important;font:500 15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif!important}
+#matrixRain,.scanlines,.vignette{display:none!important}
+.wrap{max-width:1240px!important;display:flex!important;flex-direction:column!important;gap:16px!important;padding:16px 18px 120px!important}
+.wrap>*{width:100%!important;margin:0!important;min-width:0}
+.wrap>.topline{order:0!important;background:transparent!important;border:0!important;box-shadow:none!important;padding:8px 4px!important;border-radius:0!important;color:#202844!important}
+.topline>span{font-size:0!important}.topline>span:before{content:"◉  ATELIER  /  AI DESK";font-size:14px;font-weight:900;letter-spacing:.09em;color:#303f88}
+.topline .online{color:#147d75!important;font-weight:800!important}
+.walletBadge{background:#fff!important;border:1px solid #dce1ef!important;border-radius:16px!important;box-shadow:0 6px 20px #303a7010!important}
+.walletLabel,.walletAmount{color:#202844!important;text-shadow:none!important}
+.wrap>.hero{order:1!important;background:#fff!important;color:#202844!important;border:1px solid #e2e5f2!important;border-radius:22px!important;box-shadow:var(--shadow)!important;min-height:0!important;padding:24px!important}
+.hero-grid{display:flex!important;flex-direction:row!important;gap:24px!important;align-items:center!important;justify-content:space-between!important}
+.hero-grid>div:first-child{flex:1}
+.hero h1{font:900 clamp(30px,4vw,52px)/1.05 system-ui,sans-serif!important;letter-spacing:-.06em!important;margin:8px 0!important}
+.brandNexus{color:#293e9e!important;background:none!important;-webkit-text-fill-color:#293e9e!important;text-shadow:none!important}
+.brandSlash{color:#a3a9c6!important}.brandDiffer{color:#4355c8!important;text-shadow:none!important}
+.eyebrow,.brandTag,.subtitle{color:#66718d!important;text-shadow:none!important;font-family:inherit!important;letter-spacing:.08em!important}
+.corebox{flex:0 0 310px!important;background:#eef1fc!important;border:1px solid #d9e0f5!important;border-radius:18px!important;box-shadow:none!important;color:#26345c!important}
+.corebox .label,.core-mini,.core-mini span{color:#64718f!important}
+.corebox .value,.core-mini b{color:#263c93!important;text-shadow:none!important}
+.wrap>.appToolbar{order:2!important;display:flex!important;align-items:center!important;justify-content:space-between!important;background:#fff!important;border:1px solid #e2e5f2!important;border-radius:16px!important;box-shadow:none!important;padding:10px 14px!important}
+.viewSwitch{background:#eef1f9!important;border:0!important;border-radius:12px!important;padding:4px!important}
+.viewSwitch button{background:transparent!important;color:#65708b!important;border:0!important;border-radius:9px!important}
+.viewSwitch button.active{background:#4355c8!important;color:white!important;box-shadow:0 4px 12px #4355c82a!important}
+.viewStatus{color:#65708b!important}
+.wrap>#connectPanel{order:3!important}
+.wrap>#sessionPanel{order:4!important}
+.wrap>#rfPanel{order:5!important}
+.wrap>#signalPanel{order:6!important}
+.wrap>#analyzerPanel{order:7!important}
+.wrap>#rfStatsGrid{order:8!important}
+.wrap>.grid:not(#rfStatsGrid):not(#learningMetrics){order:9!important}
+.wrap>#historyPanel{order:10!important}
+.wrap>#objectivePanel{order:11!important}
+.wrap>#proQuickPanel{order:12!important}
+.wrap>#learningMetrics{order:13!important}
+.wrap>#cloudPanel{order:14!important}
+.panel{background:#fff!important;color:#202844!important;border:1px solid #e2e5f2!important;border-radius:22px!important;padding:24px!important;box-shadow:var(--shadow)!important}
+.panel-head{padding-bottom:12px!important;margin-bottom:18px!important;border-bottom:1px solid #edf0f7!important}
+.panel-title{font:850 17px/1.3 system-ui,sans-serif!important;color:#202844!important;letter-spacing:-.02em!important;text-shadow:none!important}
+.chip{background:#eef1ff!important;color:#394aa4!important;border:1px solid #d8def8!important;border-radius:99px!important;font-weight:750!important}
+.connectionHeader{display:grid!important;grid-template-columns:1fr 1.3fr!important;align-items:center!important;gap:18px!important}
+.connectionTitle b,.authBrandText b{color:#273a8b!important;font-weight:900!important}
+.connectionTitle span,.authBrandText span,.sessionHint,.rfNote,.historySummary{color:#65708b!important}
+.connectionSelectors{display:grid!important;grid-template-columns:1fr 1fr!important;gap:10px!important}
+.connectionSelector,.sessionField,.analyzerMetric,.rfSignal,.rfControls,.signalMain,.progressBox,.cloudMini{background:#f7f8fd!important;border:1px solid #e2e6f2!important;border-radius:16px!important;color:#202844!important;box-shadow:none!important}
+.authCompactInner{background:#fff!important}
+input,select,textarea{background:#fff!important;color:#202844!important;border:1px solid #c8d1e5!important;border-radius:12px!important;font-family:inherit!important}
+button{font-family:inherit!important;font-weight:800!important;letter-spacing:0!important;border-radius:12px!important;min-height:43px!important;box-shadow:none!important}
+.primary,#start,#rfStart{background:#4355c8!important;color:#fff!important;border:1px solid #4355c8!important}
+.danger,#stop,#rfStop{background:#fff0f2!important;color:#b13c59!important;border:1px solid #eec4cd!important}
+#continue,#manualBuy{background:#e8ecff!important;color:#303f9c!important;border:1px solid #cbd3fa!important}
+.soundToggle,.miniTool,#historyToggle{background:#eef1ff!important;color:#394aa4!important;border:1px solid #d8def8!important}
+.statusStrip,.analyzerState{background:#f0f3fc!important;border:1px solid #dce3f5!important;color:#263b82!important;border-radius:12px!important}
+.statusStrip span,.signalLabel,.signalMini small,.rfMeta small,.sessionField small,.analyzerMetric small,.chartHud,.card small,.panel small{color:#66718d!important;opacity:1!important;text-shadow:none!important}
+.decision,.rfDecision,.analyzerMetric b,.card b,.signalMini b,.rfMeta b{color:#25398e!important;text-shadow:none!important}
+.chartBox{background:#f0f3fc!important;border:1px solid #dce3f5!important;border-radius:18px!important}
+.chartBox:before{display:none!important}
+.analyzerGrid{display:grid!important;grid-template-columns:minmax(0,2.5fr) minmax(190px,1fr)!important;gap:16px!important}
+#volChart{height:245px!important}
+.analyzerStats{display:grid!important;grid-template-columns:1fr!important;gap:8px!important}
+.analyzerMetric{padding:12px!important;min-width:0!important}
+.grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:12px!important}
+.card{background:#fff!important;border:1px solid #e2e5f2!important;border-radius:16px!important;min-height:96px!important;padding:15px!important;box-shadow:none!important;color:#202844!important}
+.card.hot,.card.warn,.card.dangerCard{background:#fff!important;border-color:#e2e5f2!important}
+.rfDecisionBox{display:grid!important;grid-template-columns:minmax(0,1.5fr) minmax(240px,1fr)!important;gap:16px!important}
+@media(min-width:1050px){.wrap{display:grid!important;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr)!important;align-items:start!important}.wrap>.topline,.wrap>.hero,.wrap>.appToolbar,.wrap>.grid,.wrap>#historyPanel,.wrap>#objectivePanel,.wrap>#proQuickPanel,.wrap>#learningMetrics,.wrap>#cloudPanel{grid-column:1/-1!important}.wrap>#analyzerPanel{grid-column:1!important;grid-row:4!important}.wrap>#connectPanel{grid-column:2!important;grid-row:4!important}.wrap>#signalPanel{grid-column:1!important;grid-row:5!important}.wrap>#sessionPanel{grid-column:2!important;grid-row:5!important}.wrap>#rfPanel{grid-column:1/-1!important}.wrap>#rfStatsGrid{grid-column:1/-1!important}}
+@media(max-width:750px){.wrap{padding:10px 12px 110px!important;gap:12px!important}.wrap>.topline{padding:5px!important}.wrap>.hero{padding:19px!important;border-radius:18px!important}.hero-grid{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:12px!important}.hero h1{font-size:clamp(29px,8vw,42px)!important}.corebox{flex:auto!important;width:100%!important}.wrap>.appToolbar{border-radius:14px!important;padding:8px!important}.viewStatus{display:none!important}.panel{padding:16px!important;border-radius:17px!important}.connectionHeader{grid-template-columns:1fr!important}.connectionSelectors{grid-template-columns:1fr 1fr!important}.analyzerGrid{grid-template-columns:1fr!important}.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}.rfDecisionBox{grid-template-columns:1fr!important}.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.card{min-height:82px!important}.panel-title{font-size:15px!important}#volChart{height:200px!important}}
+
+/* NOVA MOBILE — replace legacy layout, navigation and component geometry */
+body{background:#eef1f7!important;color:#1d2744!important;font-family:system-ui,-apple-system,"Segoe UI",sans-serif!important}
+.wrap{max-width:1080px!important;padding:12px 14px 28px!important;gap:14px!important}
+.wrap>.topline{background:#fff!important;border-radius:18px!important;padding:12px 15px!important;box-shadow:0 4px 16px #1d274412!important}
+.wrap>.topline>span{display:none!important}
+.walletBadge{position:static!important;transform:none!important;border-radius:14px!important;min-width:0!important;box-shadow:none!important}
+.wrap>.hero{background:#293b83!important;color:#fff!important;border-radius:20px!important;padding:24px!important;box-shadow:none!important;border:0!important}
+.hero-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:20px!important}
+.hero h1{font-size:clamp(28px,4vw,46px)!important;letter-spacing:-.05em!important}
+.brandNexus,.brandDiffer{color:#fff!important;-webkit-text-fill-color:#fff!important}
+.brandSlash{color:#a9baff!important}
+.hero .eyebrow,.hero .brandTag,.hero .subtitle{color:#d8e2ff!important;opacity:1!important}
+.corebox{background:#ffffff17!important;border:1px solid #ffffff42!important;color:#fff!important;border-radius:16px!important}
+.corebox .label,.core-mini,.core-mini span,.corebox .value,.core-mini b{color:#fff!important;opacity:1!important}
+.wrap>.appToolbar{background:#fff!important;border:1px solid #dce2ee!important;border-radius:15px!important;box-shadow:none!important}
+.panel{border-radius:20px!important;background:#fff!important;box-shadow:0 6px 24px #26376310!important;border:1px solid #e0e6f0!important}
+.panel-title{color:#253567!important;font-size:16px!important;letter-spacing:0!important}
+.card{border-radius:16px!important;background:#fff!important;border:1px solid #e0e6f0!important;box-shadow:none!important}
+.primary,#auth,#start,#rfStart{background:#354ec4!important;color:#fff!important;-webkit-text-fill-color:#fff!important;border:0!important;box-shadow:none!important;text-shadow:none!important}
+.primary *,#auth *{color:#fff!important}
+#continue,#manualBuy{background:#e9edff!important;color:#263b9c!important;border:1px solid #bfcafa!important}
+.danger,#stop,#rfStop{background:#fff1f2!important;color:#ac3450!important;border:1px solid #edc3cf!important}
+.bottomNav{display:none!important}
+@media(max-width:750px){
+.wrap{padding:10px 12px 22px!important;gap:10px!important}
+.wrap>.topline{padding:8px 12px!important;min-height:62px!important}
+.wrap>.hero{padding:18px!important;border-radius:18px!important}
+.hero-grid{display:flex!important;flex-direction:column!important;gap:12px!important}
+.hero h1{font-size:clamp(27px,7.4vw,38px)!important}
+.corebox{display:grid!important;grid-template-columns:1fr!important;width:100%!important;padding:12px!important}
+.wrap>.appToolbar{padding:8px!important}
+.wrap>#connectPanel{order:3!important}
+.wrap>#sessionPanel{order:4!important}
+.wrap>#rfPanel{order:5!important}
+.wrap>#signalPanel{order:6!important}
+.wrap>#analyzerPanel{order:7!important}
+.panel{padding:16px!important;border-radius:17px!important}
+.connectionHeader{grid-template-columns:1fr!important}
+.connectionSelectors{grid-template-columns:1fr 1fr!important}
+.authCompactInner{display:grid!important;grid-template-columns:1fr 1fr!important;gap:10px!important}
+.authCompactInner .authBrand{grid-column:1/-1!important}
+.authCompactInner #auth,.authCompactInner .authPill{grid-column:1/-1!important}
+#auth{min-height:52px!important;font-size:16px!important}
+.analyzerGrid{grid-template-columns:1fr!important}
+#volChart{height:190px!important}
+.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+
+/* ORBITAL OS // Radical holographic interface — unique geometry */
+:root{--bg:#eaf1fa!important;--panel:#faffff!important;--panel2:#edf8ff!important;--line:#86a4ca!important;--green:#047b84!important;--mint:#057e8b!important;--cyan:#007baf!important;--text:#102c50!important;--muted:#496583!important;--shadow:0 12px 34px #0c46721c!important}
+html,body{background:radial-gradient(ellipse at 0 0,#d5f5fa 0,transparent 48%),radial-gradient(ellipse at 100% 40%,#dce4ff 0,transparent 55%),#eaf1fa!important;color:#102c50!important;font-family:"Trebuchet MS",Verdana,sans-serif!important}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background-image:linear-gradient(#2d82b010 1px,transparent 1px),linear-gradient(90deg,#2d82b010 1px,transparent 1px);background-size:34px 34px!important}
+.wrap{max-width:1360px!important;gap:18px!important;padding:14px 18px 35px!important}
+.wrap>.topline{border:0!important;background:linear-gradient(95deg,#073960,#17689a)!important;color:#fff!important;border-radius:0!important;clip-path:polygon(0 0,97% 0,100% 25%,100% 100%,3% 100%,0 70%)!important;padding:15px 28px!important;box-shadow:none!important}
+.topline>span{display:block!important;font:900 13px/1.2 "Trebuchet MS",sans-serif!important;color:#bdfbff!important;letter-spacing:.18em!important}
+.topline>span:before{content:"◈  ORBITAL OS   /   ";color:#fff}
+.topline .online{color:#aaffec!important}
+.walletBadge{background:#faffff!important;border:2px solid #5db4d6!important;clip-path:polygon(0 0,93% 0,100% 22%,100% 100%,0 100%)!important;border-radius:0!important}
+.walletLabel,.walletAmount{color:#103f69!important}
+.wrap>.hero{position:relative!important;background:linear-gradient(112deg,#073c64,#155e91 60%,#267eae)!important;color:#fff!important;border:0!important;border-radius:0!important;clip-path:polygon(0 0,96% 0,100% 15%,100% 100%,4% 100%,0 85%)!important;min-height:unset!important;padding:35px 40px!important;box-shadow:none!important}
+.wrap>.hero:after{content:"◈   AI / ACTIVE   ·   R_75   ·   NEURAL TERMINAL";position:absolute;right:32px;bottom:13px;color:#b4edff;font:700 10px "Trebuchet MS";letter-spacing:.18em}
+.hero-grid{display:grid!important;grid-template-columns:minmax(0,1.4fr) minmax(240px,.8fr)!important;gap:22px!important}
+.hero h1{font:900 clamp(35px,5vw,68px)/1 "Trebuchet MS",sans-serif!important;letter-spacing:-.075em!important;text-transform:uppercase!important}
+.brandNexus,.brandDiffer{color:#fff!important;-webkit-text-fill-color:#fff!important;text-shadow:none!important}
+.brandSlash{color:#5de5f4!important}
+.hero .eyebrow,.hero .brandTag{color:#b7f3ff!important;opacity:1!important}
+.corebox{background:#062e56b8!important;border:1px solid #75dbf5!important;border-radius:0!important;clip-path:polygon(0 0,94% 0,100% 15%,100% 100%,0 100%)!important;color:#fff!important;padding:18px!important}
+.corebox .label,.corebox .value,.core-mini,.core-mini span,.core-mini b{color:#e2fbff!important;opacity:1!important}
+.wrap>.appToolbar{background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important;padding:2px!important}
+.viewSwitch{background:#0b426c!important;border:1px solid #5ba7cb!important;border-radius:0!important;clip-path:polygon(0 0,96% 0,100% 20%,100% 100%,0 100%)!important}
+.viewSwitch button{color:#d8faff!important;border-radius:0!important}
+.viewSwitch button.active{background:#5bd7e9!important;color:#053d60!important;border-radius:0!important}
+.viewStatus{color:#235478!important;font-weight:900!important}
+.soundToggle,.miniTool,#historyToggle{background:#d9f7ff!important;color:#074b75!important;border:1px solid #5bafce!important;border-radius:0!important}
+.panel{position:relative!important;background:#f9fdff!important;border:1px solid #77a5c7!important;border-left:5px solid #0c83ae!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 26px) 0,100% 26px,100% 100%,20px 100%,0 calc(100% - 20px))!important;box-shadow:none!important;padding:27px!important}
+.panel:before{content:"";position:absolute;top:0;left:0;width:115px;height:5px;background:linear-gradient(90deg,#04b7cb,#6386ed);pointer-events:none}
+.panel-head{border-bottom:1px solid #bfd7e8!important;padding-bottom:14px!important;margin-bottom:20px!important}
+.panel-title{color:#07557c!important;font:900 16px/1.3 "Trebuchet MS",sans-serif!important;letter-spacing:.1em!important;text-transform:uppercase!important}
+.chip{background:#d8f6ff!important;border:1px solid #7bc9df!important;border-radius:0!important;color:#07547b!important;font-weight:900!important;clip-path:polygon(0 0,90% 0,100% 30%,100% 100%,0 100%)!important}
+.connectionHeader{display:grid!important;grid-template-columns:1fr 1.2fr!important;gap:18px!important}
+.connectionSelectors{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.connectionSelector,.sessionField,.analyzerMetric,.rfSignal,.rfControls,.signalMain,.progressBox,.cloudMini{background:#edf7fc!important;border:1px solid #a7cadc!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%)!important;color:#133b61!important}
+.card{background:linear-gradient(140deg,#fff,#e7f6ff)!important;border:1px solid #9fc5dc!important;border-top:4px solid #1995bc!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 15px) 0,100% 15px,100% 100%,0 100%)!important;box-shadow:none!important;min-height:105px!important}
+.card.hot,.card.warn,.card.dangerCard{background:linear-gradient(140deg,#fff,#e7f6ff)!important;border-color:#9fc5dc!important}
+.card b,.analyzerMetric b,.rfDecision,.decision{color:#084d81!important;text-shadow:none!important;font-family:"Trebuchet MS",sans-serif!important}
+.card small,.panel small,.sessionField small,.analyzerMetric small,.signalLabel,.connectionTitle span,.rfNote,.historySummary{color:#496583!important;opacity:1!important}
+input,select,textarea{background:#fff!important;border:1px solid #8fb5d1!important;border-radius:0!important;color:#13375b!important;font-family:"Trebuchet MS",sans-serif!important}
+button{border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,13px 100%,0 calc(100% - 13px))!important;font-family:"Trebuchet MS",sans-serif!important;font-weight:900!important;letter-spacing:.05em!important}
+.primary,#auth,#start,#rfStart{background:#067ba8!important;color:#fff!important;-webkit-text-fill-color:#fff!important;border:0!important;text-shadow:none!important}
+#continue,#manualBuy{background:#b7eefa!important;color:#08466d!important;border:1px solid #56b3ce!important}
+.danger,#stop,#rfStop{background:#b93d61!important;color:#fff!important;border:0!important}
+.statusStrip,.analyzerState{background:#dff4ff!important;border:1px solid #99cce5!important;border-radius:0!important;color:#074a75!important}
+.chartBox{background:#e6f6ff!important;border:1px solid #8ac5df!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,0 100%)!important}
+.bottomNav{display:none!important}
+@media(max-width:760px){
+.wrap{padding:8px 10px 24px!important;gap:12px!important}
+.wrap>.topline{padding:12px 16px!important;clip-path:none!important}
+.wrap>.hero{padding:22px 20px 38px!important;clip-path:polygon(0 0,94% 0,100% 10%,100% 100%,6% 100%,0 90%)!important}
+.hero-grid{grid-template-columns:1fr!important;gap:14px!important}
+.hero h1{font-size:clamp(31px,8vw,43px)!important;letter-spacing:-.07em!important}
+.corebox{width:100%!important}
+.panel{padding:21px 16px!important}
+.panel-title{font-size:13px!important;letter-spacing:.055em!important}
+.connectionHeader{grid-template-columns:1fr!important}
+.connectionSelectors{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.analyzerGrid{grid-template-columns:1fr!important}
+.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.rfDecisionBox{grid-template-columns:1fr!important}
+#volChart{height:210px!important}
+}
+
+/* ORBITAL OS — real independent workspace windows */
+.wrap{display:flex!important;flex-direction:column!important;max-width:1280px!important;gap:12px!important}
+.wrap>.hero{padding:19px 25px!important}
+.hero h1{font-size:clamp(27px,4vw,46px)!important}
+.wrap>.appToolbar{order:2!important}
+#orbitalTabs{order:3!important;display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:7px!important;width:100%!important;background:#0b426c!important;padding:10px!important;border:1px solid #3e9cbe!important;clip-path:polygon(0 0,calc(100% - 17px) 0,100% 17px,100% 100%,0 100%)!important}
+#orbitalTabs button{min-width:0!important;min-height:56px!important;padding:8px 5px!important;background:#165b82!important;color:#cdebf9!important;border:1px solid #367fa5!important;clip-path:none!important;font:900 12px/1.2 "Trebuchet MS",sans-serif!important;letter-spacing:.02em!important;cursor:pointer}
+#orbitalTabs button.selected{background:#b8f4ff!important;color:#073c61!important;border-color:#e0ffff!important;box-shadow:inset 0 -4px #13a6cb!important}
+#orbitalTabs button span{display:inline!important}
+#orbitalWindowTitle{order:4!important;display:flex!important;gap:16px!important;align-items:center!important;padding:10px 16px!important;background:#d7f3ff!important;border-left:5px solid #087eab!important;color:#164367!important}
+#orbitalWindowTitle strong{font-size:19px!important;letter-spacing:.08em!important}
+#orbitalWindowTitle span{font-size:12px!important}
+.wrap>[data-orbital-window]{order:5!important}
+.wrap>[data-orbital-window]:not(.orbitalVisible){display:none!important}
+.wrap>#proQuickPanel,.wrap>#connectPanel,.wrap>#rfPanel,.wrap>#rfStatsGrid,.wrap>#sessionPanel,.wrap>#signalPanel,.wrap>#analyzerPanel,.wrap>#historyPanel,.wrap>#objectivePanel,.wrap>#cloudPanel,.wrap>#learningMetrics,.wrap>#labPanel,.wrap>#ownerMemoryPanel,.wrap>#systemLogPanel{grid-column:auto!important;grid-row:auto!important}
+body .wrap>.grid.orbitalVisible{display:grid!important}
+#orbitalTabs button:focus-visible{outline:3px solid #f0b343!important;outline-offset:2px}
+@media(max-width:760px){.wrap{padding:8px 10px 30px!important}.wrap>.hero{padding:15px 16px 28px!important}.hero h1{font-size:clamp(27px,7vw,37px)!important}#orbitalTabs{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:5px!important;padding:7px!important;clip-path:none!important}#orbitalTabs button{min-height:51px!important;font-size:11px!important;padding:6px 2px!important}#orbitalTabs button span{display:block!important;font-size:10px!important;margin-top:2px!important}#orbitalWindowTitle{flex-direction:column!important;align-items:flex-start!important;gap:2px!important;padding:8px 12px!important}#orbitalWindowTitle strong{font-size:17px!important}#orbitalWindowTitle span{font-size:11px!important}.panel{margin:0!important}.grid{gap:8px!important}}
+
+/* compact window-specific dashboard and independent trade metrics */
+#orbitalTabs{position:sticky!important;top:0!important;z-index:100!important}
+.wrap>[data-orbital-window]:not(.orbitalVisible){display:none!important}
+.wrap>.grid.orbitalVisible{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:10px!important}
+.wrap>.grid.orbitalVisible>.card{min-height:88px!important;height:auto!important;max-height:135px!important;padding:12px 15px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:7px!important}
+.wrap>.grid.orbitalVisible>.card b{font-size:clamp(19px,2.4vw,28px)!important;line-height:1.1!important}
+.wrap>.grid.orbitalVisible>.card small{font-size:11px!important;line-height:1.2!important}
+#rfStatsGrid{grid-template-columns:repeat(5,minmax(0,1fr))!important}
+#orbitalTabs button.selected{outline:2px solid #b8f4ff!important}
+@media(max-width:760px){.wrap>.grid.orbitalVisible,#rfStatsGrid.orbitalVisible{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.wrap>.grid.orbitalVisible>.card{min-height:78px!important;max-height:105px!important;padding:10px 12px!important}.wrap>.grid.orbitalVisible>.card b{font-size:21px!important}.wrap>.grid.orbitalVisible>.card small{font-size:10px!important}#orbitalTabs{top:0!important}}
 </style>
 <!-- outcome-sound-v2 -->
 </head>
@@ -643,7 +943,7 @@ button:hover:not(:disabled){border-color:rgba(125,183,255,.58);box-shadow:0 8px 
 <div class="wrap">
   <div class="topline"><span>NEXUS://DIFFER-AI</span><div class="topRight"><span class="online">● CLOUD ACTIVE</span><div class="walletBadge" aria-label="Saldo y tipo de cuenta"><div class="walletIcon">◈</div><div class="walletText"><div class="walletTop"><span class="walletLabel">SALDO DE CUENTA</span><span class="walletLabel">R_75</span></div><div class="walletBalanceRow"><b class="walletAmount" id="accountBalance">—</b><span class="walletDelta" id="balanceDelta">—</span></div></div></div></div></div>
   <section class="hero"><div class="hero-grid">
-    <div><div class="eyebrow"><span class="pulseDot"></span> AI MARKET TERMINAL</div><h1><span class="brandNexus">NEXUS</span><span class="brandSlash">//</span><span class="brandDiffer">DIFFER AI</span></h1><div class="brandTag">VOLATILITY 75 INTELLIGENCE TERMINAL</div></div>
+    <div><div class="eyebrow"><span class="pulseDot"></span> AI MARKET TERMINAL</div><h1><span class="brandNexus">ORBITAL</span><span class="brandSlash">/</span><span class="brandDiffer">AI OS</span></h1><div class="brandTag">VOLATILITY 75 INTELLIGENCE TERMINAL</div></div>
     <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
   </div></section>
 
@@ -656,6 +956,7 @@ button:hover:not(:disabled){border-color:rgba(125,183,255,.58);box-shadow:0 8px 
     <button type="button" id="soundToggle" class="soundToggle" aria-label="Activar o desactivar sonidos">🔊 SONIDO</button>
   </div>
 
+  <div id="orbitalTabs" class="orbitalTabs" role="tablist" aria-label="Ventanas del terminal"><button type="button" data-window="differ" class="selected">◈ <span>DIFFER</span></button><button type="button" data-window="rise">↗ <span>RISE / FALL</span></button><button type="button" data-window="market">⌁ <span>MERCADO</span></button><button type="button" data-window="history">▤ <span>HISTORIAL</span></button><button type="button" data-window="settings">⚙ <span>CONEXIÓN</span></button><button type="button" data-window="cloud">☁ <span>IA CLOUD</span></button></div><div id="orbitalWindowTitle" class="orbitalWindowTitle" aria-live="polite"><strong>DIFFER</strong><span>Control de sesión · Señales · Ganancias y operaciones</span></div>
   <div id="proQuickPanel" class="proQuickPanel proOnly" aria-live="polite">
     <div><small>SALUD IA</small><b id="proHealthMini">—</b></div>
     <div><small>TICKS IA</small><b id="proTicksMini">0</b></div>
@@ -1134,6 +1435,21 @@ button:hover:not(:disabled){border-color:rgba(125,183,255,.58);box-shadow:0 8px 
     }catch(e){q('cloudState').textContent='OFFLINE';q('cloudState').style.color='#ff7792';q('cloudBadge').textContent='OFFLINE';q('cloudBadge').style.color='#ff7792'}
   }
   cloud();setInterval(cloud,15000);
+})();
+</script>
+<script>
+/* ORBITAL WINDOW MANAGER: view-only DOM grouping; never changes trading logic */
+(function(){
+ const root=document.querySelector('.wrap'), tabs=document.getElementById('orbitalTabs');
+ if(!root||!tabs)return;
+ const ids={differ:['sessionPanel','signalPanel','objectivePanel'],rise:['rfPanel','rfStatsGrid'],market:['analyzerPanel'],history:['historyPanel'],settings:['connectPanel'],cloud:['proQuickPanel','learningMetrics','cloudPanel','labPanel','ownerMemoryPanel','systemLogPanel']};
+ const names={differ:['DIFFER','Control de sesión · Señales · Ganancias y operaciones'],rise:['RISE / FALL','Operaciones direccionales · Inversión · Resultados'],market:['MERCADO','Gráfico en vivo · Cotizaciones · Análisis'],history:['HISTORIAL','Registro de operaciones y resultados'],settings:['CONEXIÓN','Estrategia · Cuenta · Credenciales Deriv'],cloud:['IA CLOUD','Aprendizaje · Modelos · Memoria persistente']};
+ Object.keys(ids).forEach(k=>ids[k].forEach(id=>{let el=document.getElementById(id);if(el)el.dataset.orbitalWindow=k}));
+ root.querySelectorAll(':scope > .grid').forEach(el=>{if(!el.dataset.orbitalWindow)el.dataset.orbitalWindow='differ'});
+ root.querySelectorAll(':scope > .panel').forEach(el=>{if(!el.dataset.orbitalWindow)el.dataset.orbitalWindow='cloud'});
+ function show(k){if(!names[k])k='differ';root.querySelectorAll('[data-orbital-window]').forEach(el=>el.classList.toggle('orbitalVisible',el.dataset.orbitalWindow===k));tabs.querySelectorAll('button').forEach(b=>{let active=b.dataset.window===k;b.classList.toggle('selected',active);b.setAttribute('aria-selected',String(active))});let h=document.getElementById('orbitalWindowTitle');h.querySelector('strong').textContent=names[k][0];h.querySelector('span').textContent=names[k][1];try{sessionStorage.setItem('ORBITAL_WINDOW',k)}catch(e){}}
+ tabs.addEventListener('click',e=>{let b=e.target.closest('button[data-window]');if(b){show(b.dataset.window);window.scrollTo({top:0,behavior:'smooth'})}});
+ show((function(){try{return sessionStorage.getItem('ORBITAL_WINDOW')}catch(e){return null}})()||'differ');
 })();
 </script>
 </body>
