@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#020805">
-<title>NEXUS DIFFER AI</title>
+<title>NOVA AI · Trading Workspace</title>
 <style>
 :root{--bg:#010403;--panel:rgba(3,12,8,.91);--panel2:rgba(4,18,12,.88);--line:rgba(0,255,136,.20);--green:#00ff88;--mint:#85ffc0;--cyan:#35e7ff;--text:#dffff0;--muted:#79aa8e;--danger:#ff4268;--warn:#ffd05a;--shadow:0 0 0 1px rgba(0,255,136,.06),0 0 24px rgba(0,255,136,.06),0 20px 60px rgba(0,0,0,.55)}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}body{overflow-x:hidden}
@@ -792,6 +792,54 @@ button{font-family:inherit!important;font-weight:800!important;letter-spacing:0!
 .rfDecisionBox{display:grid!important;grid-template-columns:minmax(0,1.5fr) minmax(240px,1fr)!important;gap:16px!important}
 @media(min-width:1050px){.wrap{display:grid!important;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr)!important;align-items:start!important}.wrap>.topline,.wrap>.hero,.wrap>.appToolbar,.wrap>.grid,.wrap>#historyPanel,.wrap>#objectivePanel,.wrap>#proQuickPanel,.wrap>#learningMetrics,.wrap>#cloudPanel{grid-column:1/-1!important}.wrap>#analyzerPanel{grid-column:1!important;grid-row:4!important}.wrap>#connectPanel{grid-column:2!important;grid-row:4!important}.wrap>#signalPanel{grid-column:1!important;grid-row:5!important}.wrap>#sessionPanel{grid-column:2!important;grid-row:5!important}.wrap>#rfPanel{grid-column:1/-1!important}.wrap>#rfStatsGrid{grid-column:1/-1!important}}
 @media(max-width:750px){.wrap{padding:10px 12px 110px!important;gap:12px!important}.wrap>.topline{padding:5px!important}.wrap>.hero{padding:19px!important;border-radius:18px!important}.hero-grid{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:12px!important}.hero h1{font-size:clamp(29px,8vw,42px)!important}.corebox{flex:auto!important;width:100%!important}.wrap>.appToolbar{border-radius:14px!important;padding:8px!important}.viewStatus{display:none!important}.panel{padding:16px!important;border-radius:17px!important}.connectionHeader{grid-template-columns:1fr!important}.connectionSelectors{grid-template-columns:1fr 1fr!important}.analyzerGrid{grid-template-columns:1fr!important}.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}.rfDecisionBox{grid-template-columns:1fr!important}.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.card{min-height:82px!important}.panel-title{font-size:15px!important}#volChart{height:200px!important}}
+
+/* NOVA MOBILE — replace legacy layout, navigation and component geometry */
+body{background:#eef1f7!important;color:#1d2744!important;font-family:system-ui,-apple-system,"Segoe UI",sans-serif!important}
+.wrap{max-width:1080px!important;padding:12px 14px 28px!important;gap:14px!important}
+.wrap>.topline{background:#fff!important;border-radius:18px!important;padding:12px 15px!important;box-shadow:0 4px 16px #1d274412!important}
+.wrap>.topline>span{display:none!important}
+.walletBadge{position:static!important;transform:none!important;border-radius:14px!important;min-width:0!important;box-shadow:none!important}
+.wrap>.hero{background:#293b83!important;color:#fff!important;border-radius:20px!important;padding:24px!important;box-shadow:none!important;border:0!important}
+.hero-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:20px!important}
+.hero h1{font-size:clamp(28px,4vw,46px)!important;letter-spacing:-.05em!important}
+.brandNexus,.brandDiffer{color:#fff!important;-webkit-text-fill-color:#fff!important}
+.brandSlash{color:#a9baff!important}
+.hero .eyebrow,.hero .brandTag,.hero .subtitle{color:#d8e2ff!important;opacity:1!important}
+.corebox{background:#ffffff17!important;border:1px solid #ffffff42!important;color:#fff!important;border-radius:16px!important}
+.corebox .label,.core-mini,.core-mini span,.corebox .value,.core-mini b{color:#fff!important;opacity:1!important}
+.wrap>.appToolbar{background:#fff!important;border:1px solid #dce2ee!important;border-radius:15px!important;box-shadow:none!important}
+.panel{border-radius:20px!important;background:#fff!important;box-shadow:0 6px 24px #26376310!important;border:1px solid #e0e6f0!important}
+.panel-title{color:#253567!important;font-size:16px!important;letter-spacing:0!important}
+.card{border-radius:16px!important;background:#fff!important;border:1px solid #e0e6f0!important;box-shadow:none!important}
+.primary,#auth,#start,#rfStart{background:#354ec4!important;color:#fff!important;-webkit-text-fill-color:#fff!important;border:0!important;box-shadow:none!important;text-shadow:none!important}
+.primary *,#auth *{color:#fff!important}
+#continue,#manualBuy{background:#e9edff!important;color:#263b9c!important;border:1px solid #bfcafa!important}
+.danger,#stop,#rfStop{background:#fff1f2!important;color:#ac3450!important;border:1px solid #edc3cf!important}
+.bottomNav{display:none!important}
+@media(max-width:750px){
+.wrap{padding:10px 12px 22px!important;gap:10px!important}
+.wrap>.topline{padding:8px 12px!important;min-height:62px!important}
+.wrap>.hero{padding:18px!important;border-radius:18px!important}
+.hero-grid{display:flex!important;flex-direction:column!important;gap:12px!important}
+.hero h1{font-size:clamp(27px,7.4vw,38px)!important}
+.corebox{display:grid!important;grid-template-columns:1fr!important;width:100%!important;padding:12px!important}
+.wrap>.appToolbar{padding:8px!important}
+.wrap>#connectPanel{order:3!important}
+.wrap>#sessionPanel{order:4!important}
+.wrap>#rfPanel{order:5!important}
+.wrap>#signalPanel{order:6!important}
+.wrap>#analyzerPanel{order:7!important}
+.panel{padding:16px!important;border-radius:17px!important}
+.connectionHeader{grid-template-columns:1fr!important}
+.connectionSelectors{grid-template-columns:1fr 1fr!important}
+.authCompactInner{display:grid!important;grid-template-columns:1fr 1fr!important;gap:10px!important}
+.authCompactInner .authBrand{grid-column:1/-1!important}
+.authCompactInner #auth,.authCompactInner .authPill{grid-column:1/-1!important}
+#auth{min-height:52px!important;font-size:16px!important}
+.analyzerGrid{grid-template-columns:1fr!important}
+#volChart{height:190px!important}
+.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
 </style>
 <!-- outcome-sound-v2 -->
 </head>
@@ -801,7 +849,7 @@ button{font-family:inherit!important;font-weight:800!important;letter-spacing:0!
 <div class="wrap">
   <div class="topline"><span>NEXUS://DIFFER-AI</span><div class="topRight"><span class="online">● CLOUD ACTIVE</span><div class="walletBadge" aria-label="Saldo y tipo de cuenta"><div class="walletIcon">◈</div><div class="walletText"><div class="walletTop"><span class="walletLabel">SALDO DE CUENTA</span><span class="walletLabel">R_75</span></div><div class="walletBalanceRow"><b class="walletAmount" id="accountBalance">—</b><span class="walletDelta" id="balanceDelta">—</span></div></div></div></div></div>
   <section class="hero"><div class="hero-grid">
-    <div><div class="eyebrow"><span class="pulseDot"></span> AI MARKET TERMINAL</div><h1><span class="brandNexus">NEXUS</span><span class="brandSlash">//</span><span class="brandDiffer">DIFFER AI</span></h1><div class="brandTag">VOLATILITY 75 INTELLIGENCE TERMINAL</div></div>
+    <div><div class="eyebrow"><span class="pulseDot"></span> AI MARKET TERMINAL</div><h1><span class="brandNexus">NOVA</span><span class="brandSlash">·</span><span class="brandDiffer">AI WORKSPACE</span></h1><div class="brandTag">VOLATILITY 75 INTELLIGENCE TERMINAL</div></div>
     <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
   </div></section>
 
