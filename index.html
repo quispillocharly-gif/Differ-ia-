@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#020805">
-<title>NOVA AI · Trading Workspace</title>
+<title>ORBITAL OS · AI Terminal</title>
 <style>
 :root{--bg:#010403;--panel:rgba(3,12,8,.91);--panel2:rgba(4,18,12,.88);--line:rgba(0,255,136,.20);--green:#00ff88;--mint:#85ffc0;--cyan:#35e7ff;--text:#dffff0;--muted:#79aa8e;--danger:#ff4268;--warn:#ffd05a;--shadow:0 0 0 1px rgba(0,255,136,.06),0 0 24px rgba(0,255,136,.06),0 20px 60px rgba(0,0,0,.55)}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}body{overflow-x:hidden}
@@ -840,6 +840,70 @@ body{background:#eef1f7!important;color:#1d2744!important;font-family:system-ui,
 #volChart{height:190px!important}
 .grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
+
+/* ORBITAL OS // Radical holographic interface — unique geometry */
+:root{--bg:#eaf1fa!important;--panel:#faffff!important;--panel2:#edf8ff!important;--line:#86a4ca!important;--green:#047b84!important;--mint:#057e8b!important;--cyan:#007baf!important;--text:#102c50!important;--muted:#496583!important;--shadow:0 12px 34px #0c46721c!important}
+html,body{background:radial-gradient(ellipse at 0 0,#d5f5fa 0,transparent 48%),radial-gradient(ellipse at 100% 40%,#dce4ff 0,transparent 55%),#eaf1fa!important;color:#102c50!important;font-family:"Trebuchet MS",Verdana,sans-serif!important}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background-image:linear-gradient(#2d82b010 1px,transparent 1px),linear-gradient(90deg,#2d82b010 1px,transparent 1px);background-size:34px 34px!important}
+.wrap{max-width:1360px!important;gap:18px!important;padding:14px 18px 35px!important}
+.wrap>.topline{border:0!important;background:linear-gradient(95deg,#073960,#17689a)!important;color:#fff!important;border-radius:0!important;clip-path:polygon(0 0,97% 0,100% 25%,100% 100%,3% 100%,0 70%)!important;padding:15px 28px!important;box-shadow:none!important}
+.topline>span{display:block!important;font:900 13px/1.2 "Trebuchet MS",sans-serif!important;color:#bdfbff!important;letter-spacing:.18em!important}
+.topline>span:before{content:"◈  ORBITAL OS   /   ";color:#fff}
+.topline .online{color:#aaffec!important}
+.walletBadge{background:#faffff!important;border:2px solid #5db4d6!important;clip-path:polygon(0 0,93% 0,100% 22%,100% 100%,0 100%)!important;border-radius:0!important}
+.walletLabel,.walletAmount{color:#103f69!important}
+.wrap>.hero{position:relative!important;background:linear-gradient(112deg,#073c64,#155e91 60%,#267eae)!important;color:#fff!important;border:0!important;border-radius:0!important;clip-path:polygon(0 0,96% 0,100% 15%,100% 100%,4% 100%,0 85%)!important;min-height:unset!important;padding:35px 40px!important;box-shadow:none!important}
+.wrap>.hero:after{content:"◈   AI / ACTIVE   ·   R_75   ·   NEURAL TERMINAL";position:absolute;right:32px;bottom:13px;color:#b4edff;font:700 10px "Trebuchet MS";letter-spacing:.18em}
+.hero-grid{display:grid!important;grid-template-columns:minmax(0,1.4fr) minmax(240px,.8fr)!important;gap:22px!important}
+.hero h1{font:900 clamp(35px,5vw,68px)/1 "Trebuchet MS",sans-serif!important;letter-spacing:-.075em!important;text-transform:uppercase!important}
+.brandNexus,.brandDiffer{color:#fff!important;-webkit-text-fill-color:#fff!important;text-shadow:none!important}
+.brandSlash{color:#5de5f4!important}
+.hero .eyebrow,.hero .brandTag{color:#b7f3ff!important;opacity:1!important}
+.corebox{background:#062e56b8!important;border:1px solid #75dbf5!important;border-radius:0!important;clip-path:polygon(0 0,94% 0,100% 15%,100% 100%,0 100%)!important;color:#fff!important;padding:18px!important}
+.corebox .label,.corebox .value,.core-mini,.core-mini span,.core-mini b{color:#e2fbff!important;opacity:1!important}
+.wrap>.appToolbar{background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important;padding:2px!important}
+.viewSwitch{background:#0b426c!important;border:1px solid #5ba7cb!important;border-radius:0!important;clip-path:polygon(0 0,96% 0,100% 20%,100% 100%,0 100%)!important}
+.viewSwitch button{color:#d8faff!important;border-radius:0!important}
+.viewSwitch button.active{background:#5bd7e9!important;color:#053d60!important;border-radius:0!important}
+.viewStatus{color:#235478!important;font-weight:900!important}
+.soundToggle,.miniTool,#historyToggle{background:#d9f7ff!important;color:#074b75!important;border:1px solid #5bafce!important;border-radius:0!important}
+.panel{position:relative!important;background:#f9fdff!important;border:1px solid #77a5c7!important;border-left:5px solid #0c83ae!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 26px) 0,100% 26px,100% 100%,20px 100%,0 calc(100% - 20px))!important;box-shadow:none!important;padding:27px!important}
+.panel:before{content:"";position:absolute;top:0;left:0;width:115px;height:5px;background:linear-gradient(90deg,#04b7cb,#6386ed);pointer-events:none}
+.panel-head{border-bottom:1px solid #bfd7e8!important;padding-bottom:14px!important;margin-bottom:20px!important}
+.panel-title{color:#07557c!important;font:900 16px/1.3 "Trebuchet MS",sans-serif!important;letter-spacing:.1em!important;text-transform:uppercase!important}
+.chip{background:#d8f6ff!important;border:1px solid #7bc9df!important;border-radius:0!important;color:#07547b!important;font-weight:900!important;clip-path:polygon(0 0,90% 0,100% 30%,100% 100%,0 100%)!important}
+.connectionHeader{display:grid!important;grid-template-columns:1fr 1.2fr!important;gap:18px!important}
+.connectionSelectors{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.connectionSelector,.sessionField,.analyzerMetric,.rfSignal,.rfControls,.signalMain,.progressBox,.cloudMini{background:#edf7fc!important;border:1px solid #a7cadc!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,0 100%)!important;color:#133b61!important}
+.card{background:linear-gradient(140deg,#fff,#e7f6ff)!important;border:1px solid #9fc5dc!important;border-top:4px solid #1995bc!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 15px) 0,100% 15px,100% 100%,0 100%)!important;box-shadow:none!important;min-height:105px!important}
+.card.hot,.card.warn,.card.dangerCard{background:linear-gradient(140deg,#fff,#e7f6ff)!important;border-color:#9fc5dc!important}
+.card b,.analyzerMetric b,.rfDecision,.decision{color:#084d81!important;text-shadow:none!important;font-family:"Trebuchet MS",sans-serif!important}
+.card small,.panel small,.sessionField small,.analyzerMetric small,.signalLabel,.connectionTitle span,.rfNote,.historySummary{color:#496583!important;opacity:1!important}
+input,select,textarea{background:#fff!important;border:1px solid #8fb5d1!important;border-radius:0!important;color:#13375b!important;font-family:"Trebuchet MS",sans-serif!important}
+button{border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,13px 100%,0 calc(100% - 13px))!important;font-family:"Trebuchet MS",sans-serif!important;font-weight:900!important;letter-spacing:.05em!important}
+.primary,#auth,#start,#rfStart{background:#067ba8!important;color:#fff!important;-webkit-text-fill-color:#fff!important;border:0!important;text-shadow:none!important}
+#continue,#manualBuy{background:#b7eefa!important;color:#08466d!important;border:1px solid #56b3ce!important}
+.danger,#stop,#rfStop{background:#b93d61!important;color:#fff!important;border:0!important}
+.statusStrip,.analyzerState{background:#dff4ff!important;border:1px solid #99cce5!important;border-radius:0!important;color:#074a75!important}
+.chartBox{background:#e6f6ff!important;border:1px solid #8ac5df!important;border-radius:0!important;clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,0 100%)!important}
+.bottomNav{display:none!important}
+@media(max-width:760px){
+.wrap{padding:8px 10px 24px!important;gap:12px!important}
+.wrap>.topline{padding:12px 16px!important;clip-path:none!important}
+.wrap>.hero{padding:22px 20px 38px!important;clip-path:polygon(0 0,94% 0,100% 10%,100% 100%,6% 100%,0 90%)!important}
+.hero-grid{grid-template-columns:1fr!important;gap:14px!important}
+.hero h1{font-size:clamp(31px,8vw,43px)!important;letter-spacing:-.07em!important}
+.corebox{width:100%!important}
+.panel{padding:21px 16px!important}
+.panel-title{font-size:13px!important;letter-spacing:.055em!important}
+.connectionHeader{grid-template-columns:1fr!important}
+.connectionSelectors{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.analyzerGrid{grid-template-columns:1fr!important}
+.analyzerStats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.rfDecisionBox{grid-template-columns:1fr!important}
+#volChart{height:210px!important}
+}
 </style>
 <!-- outcome-sound-v2 -->
 </head>
@@ -849,7 +913,7 @@ body{background:#eef1f7!important;color:#1d2744!important;font-family:system-ui,
 <div class="wrap">
   <div class="topline"><span>NEXUS://DIFFER-AI</span><div class="topRight"><span class="online">● CLOUD ACTIVE</span><div class="walletBadge" aria-label="Saldo y tipo de cuenta"><div class="walletIcon">◈</div><div class="walletText"><div class="walletTop"><span class="walletLabel">SALDO DE CUENTA</span><span class="walletLabel">R_75</span></div><div class="walletBalanceRow"><b class="walletAmount" id="accountBalance">—</b><span class="walletDelta" id="balanceDelta">—</span></div></div></div></div></div>
   <section class="hero"><div class="hero-grid">
-    <div><div class="eyebrow"><span class="pulseDot"></span> AI MARKET TERMINAL</div><h1><span class="brandNexus">NOVA</span><span class="brandSlash">·</span><span class="brandDiffer">AI WORKSPACE</span></h1><div class="brandTag">VOLATILITY 75 INTELLIGENCE TERMINAL</div></div>
+    <div><div class="eyebrow"><span class="pulseDot"></span> AI MARKET TERMINAL</div><h1><span class="brandNexus">ORBITAL</span><span class="brandSlash">/</span><span class="brandDiffer">AI OS</span></h1><div class="brandTag">VOLATILITY 75 INTELLIGENCE TERMINAL</div></div>
     <div class="corebox"><div class="label">SYSTEM CORE</div><div class="value" id="coreMode">OBSERVING MARKET</div><div class="coreline"></div><div class="core-mini"><span>CLOUD <b id="cloudBadge">CHECKING</b></span><span>DERIV <b id="derivBadge">OFFLINE</b></span><span>MEMORY <b id="memBadge">LOCAL</b></span><span>ENGINE <b>R_75</b></span></div></div>
   </div></section>
 
