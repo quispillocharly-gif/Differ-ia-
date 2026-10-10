@@ -4492,7 +4492,7 @@ app.get('/api/rise-fall/prediction',(req,res)=>{
     isolated:true,
     learnsWhenBrowserClosed:true,
     contractInfo:riseFallContractInfo,
-    prediction:auto?riseFallAutoPredict():riseFallPredict(h),
+    prediction:riseFallResearch.applyToPrediction(auto?riseFallAutoPredict():riseFallPredict(h),priceHist),
     researchKnowledge:riseFallResearch.knowledge(),
     updatedAt:riseFallMem.updatedAt
   });
