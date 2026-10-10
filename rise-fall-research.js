@@ -3,17 +3,18 @@
 const fs=require('fs'),path=require('path');
 module.exports=function createRiseFallResearch({dataDir}){
  const FILE=path.join(dataDir,'rise-fall-research-v1.json');
- const H=[1,2,3,5],N=960,WINDOW=240,MIN=300,REVIEW=100;
- const models=Array.from({length:N},(_,id)=>{
+ const H=[1,2,3,5],N=960,MAX=2400,WINDOW=240,MIN=300,REVIEW=100;
+ const makeModel=(id)=>{
    const horizon=H[id%4],lookback=[3,5,8,13,21,34,55,89][Math.floor(id/4)%8];
    const rule=['momentum','reversion','acceleration','majority','volatility'][Math.floor(id/32)%5];
    const gate=[0,0.15,0.35,0.65,1,1.5][Math.floor(id/160)%6];
    return {id,horizon,lookback,rule,gate,n:0,wins:0,flat:0,recent:[],pending:[],status:'RESEARCH',reviews:0,good:0,bad:0};
- });
- let state={version:1,ticks:0,tests:0,updatedAt:null},prices=[],lastSave=0;
+ };
+ const models=Array.from({length:N},(_,id)=>makeModel(id));
+ let state={version:1,ticks:0,tests:0,updatedAt:null,generations:0,retired:0},prices=[],lastSave=0;
  try{
   const v=JSON.parse(fs.readFileSync(FILE,'utf8'));
-  if(v.version===1){state={...state,ticks:Number(v.ticks)||0,tests:Number(v.tests)||0,updatedAt:v.updatedAt||null};if(Array.isArray(v.models))v.models.slice(0,N).forEach((x,i)=>{const m=models[i];if(!Array.isArray(x))return;[m.n,m.wins,m.flat,m.recent,m.status,m.reviews,m.good,m.bad]=x;m.recent=Array.isArray(m.recent)?m.recent.slice(-WINDOW):[];m.pending=[]})}
+  if(v.version===1){state={...state,ticks:Number(v.ticks)||0,tests:Number(v.tests)||0,updatedAt:v.updatedAt||null,generations:Number(v.generations)||0,retired:Number(v.retired)||0};if(Array.isArray(v.models))v.models.slice(0,MAX).forEach((x,i)=>{const m=models[i]||(models[i]=makeModel(i));if(!Array.isArray(x))return;[m.n,m.wins,m.flat,m.recent,m.status,m.reviews,m.good,m.bad]=x;m.recent=Array.isArray(m.recent)?m.recent.slice(-WINDOW):[];m.pending=[]})}
  }catch(_){}
  function save(){
   try{fs.mkdirSync(dataDir,{recursive:true});const tmp=FILE+'.tmp';fs.writeFileSync(tmp,JSON.stringify({...state,models:models.map(m=>[m.n,m.wins,m.flat,m.recent,m.status,m.reviews,m.good,m.bad])}));fs.renameSync(tmp,FILE)}catch(e){console.error('Rise/Fall research save:',e.message)}
@@ -48,10 +49,22 @@ module.exports=function createRiseFallResearch({dataDir}){
     m.status=m.bad>=3?'REJECTED':m.good>=3?'CANDIDATE':'RESEARCH';
    }
   }
+  if(state.ticks%1000===0){
+   const rejected=models.filter(m=>m.status==='REJECTED');
+   for(const m of rejected.slice(0,Math.min(32,rejected.length))){m.status='RETIRED';state.retired++}
+   const slots=Math.min(32,MAX-models.filter(m=>m.status!=='RETIRED').length);
+   if(slots>0){const parents=models.filter(m=>m.status==='CANDIDATE'&&m.n>=MIN);
+    for(let j=0;j<slots;j++){
+     const id=models.length;const parent=parents.length?parents[(state.generations+j)%parents.length]:models[(state.generations*37+j*13)%Math.min(N,models.length)];
+     const child=makeModel(id);child.horizon=H[(H.indexOf(parent.horizon)+1+j%3)%H.length];child.lookback=Math.max(3,Math.min(89,parent.lookback+[-5,-2,2,5][j%4]));child.rule=j%4===0?['momentum','reversion','acceleration','majority','volatility'][(state.generations+j)%5]:parent.rule;child.gate=[0,.15,.35,.65,1,1.5][(state.generations+j)%6];models.push(child);
+    }
+    if(slots)state.generations++;
+   }
+  }
   state.updatedAt=Date.now();if(++lastSave>=100){lastSave=0;save()}
  }
  function publicModel(m){const n=m.recent.length,k=m.recent.reduce((a,b)=>a+b,0);return {id:m.id,horizon:m.horizon,lookback:m.lookback,rule:m.rule,gate:m.gate,samples:m.n,recentSamples:n,recentHitRate:n?k/n:null,flat:m.flat,status:m.status}}
- function summary(){const candidates=models.filter(m=>m.status==='CANDIDATE').sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length))-(a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length)));return {ok:true,mode:'RESEARCH_ONLY',strategy:'RISE_FALL',models:N,ticks:state.ticks,resolvedTests:state.tests,updatedAt:state.updatedAt,counts:{candidate:candidates.length,rejected:models.filter(m=>m.status==='REJECTED').length,research:models.filter(m=>m.status==='RESEARCH').length},candidates:candidates.slice(0,12).map(publicModel),warning:'Research predictions share ticks and are correlated. Accuracy is not profitability; payout and out-of-sample testing are required.'}}
+ function summary(){const candidates=models.filter(m=>m.status==='CANDIDATE').sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length))-(a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length)));return {ok:true,mode:'RESEARCH_ONLY',strategy:'RISE_FALL',models:models.filter(m=>m.status!=='RETIRED').length,totalCreated:models.length,generations:state.generations,retired:state.retired,capacity:MAX,ticks:state.ticks,resolvedTests:state.tests,updatedAt:state.updatedAt,counts:{candidate:candidates.length,rejected:models.filter(m=>m.status==='REJECTED').length,research:models.filter(m=>m.status==='RESEARCH').length},candidates:candidates.slice(0,12).map(publicModel),warning:'Research predictions share ticks and are correlated. Accuracy is not profitability; payout and out-of-sample testing are required.'}}
  function knowledge(){const x=summary();return {revision:x.resolvedTests,updatedAt:x.updatedAt,validatedCandidates:x.candidates,advisoryOnly:true,productionDecisionsModified:false}}
  return {onTick,summary,knowledge,save};
 };
