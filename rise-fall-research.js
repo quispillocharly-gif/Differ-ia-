@@ -65,6 +65,37 @@ module.exports=function createRiseFallResearch({dataDir}){
  }
  function publicModel(m){const n=m.recent.length,k=m.recent.reduce((a,b)=>a+b,0);return {id:m.id,horizon:m.horizon,lookback:m.lookback,rule:m.rule,gate:m.gate,samples:m.n,recentSamples:n,recentHitRate:n?k/n:null,flat:m.flat,status:m.status}}
  function summary(){const candidates=models.filter(m=>m.status==='CANDIDATE').sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length))-(a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length)));return {ok:true,mode:'RESEARCH_ONLY',strategy:'RISE_FALL',models:models.filter(m=>m.status!=='RETIRED').length,totalCreated:models.length,generations:state.generations,retired:state.retired,capacity:MAX,ticks:state.ticks,resolvedTests:state.tests,updatedAt:state.updatedAt,counts:{candidate:candidates.length,rejected:models.filter(m=>m.status==='REJECTED').length,research:models.filter(m=>m.status==='RESEARCH').length},candidates:candidates.slice(0,12).map(publicModel),warning:'Research predictions share ticks and are correlated. Accuracy is not profitability; payout and out-of-sample testing are required.'}}
+ function applyToPrediction(pred,history){
+  if(!pred||!Array.isArray(history))return pred;
+  const h=Number(pred.horizon)||1;
+  const eligible=models.filter(m=>m.status==='CANDIDATE'&&m.horizon===h&&m.n>=MIN&&m.recent.length>=WINDOW);
+  if(!eligible.length)return {...pred,researchAdaptation:{mode:'BASELINE',reason:'NO_VALIDATED_RESEARCH_CANDIDATE',revision:state.tests}};
+  const sorted=eligible.sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/b.recent.length)-(a.recent.reduce((x,y)=>x+y,0)/a.recent.length)).slice(0,5);
+  const pricesNow=history.filter(Number.isFinite);
+  let rise=0,fall=0,used=0;
+  for(const m of sorted){
+   if(pricesNow.length<m.lookback+2)continue;
+   const p=pricesNow[pricesNow.length-1],prev=pricesNow[pricesNow.length-2],old=pricesNow[pricesNow.length-1-m.lookback];
+   const momentum=p-old,accel=(p-prev)-(prev-pricesNow[pricesNow.length-3]);
+   const moves=pricesNow.slice(-m.lookback).map((v,i,a)=>i?Math.abs(v-a[i-1]):0);
+   const scale=moves.reduce((a,b)=>a+b,0)/Math.max(1,moves.length-1);
+   let signal=m.rule==='acceleration'?accel:momentum;
+   if(m.rule==='majority'){const x=pricesNow.slice(-m.lookback);signal=x.reduce((sum,v,i)=>i?sum+Math.sign(v-x[i-1]):sum,0)}
+   if(m.rule==='volatility')signal=momentum/(scale||1);
+   if(m.rule==='reversion')signal=-momentum;
+   if(!signal||Math.abs(signal)<m.gate*(m.rule==='volatility'||m.rule==='majority'?1:scale))continue;
+   const weight=Math.max(.01,m.recent.reduce((x,y)=>x+y,0)/m.recent.length-.5);
+   if(signal>0)rise+=weight;else fall+=weight;
+   used++;
+  }
+  if(used<2||rise===fall)return {...pred,researchAdaptation:{mode:'BASELINE',reason:'INSUFFICIENT_LIVE_CONSENSUS',revision:state.tests}};
+  const researchDirection=rise>fall?'RISE':'FALL',consensus=Math.max(rise,fall)/(rise+fall);
+  if(consensus<.70)return {...pred,researchAdaptation:{mode:'BASELINE',reason:'LOW_CONSENSUS',consensus,revision:state.tests}};
+  const original=pred.action;
+  // Research may veto an unsupported entry, but never invent an entry or reverse direction.
+  const disagree=(original==='RISE'||original==='FALL')&&original!==researchDirection;
+  return {...pred,action:disagree?'WAIT':original,researchAdaptation:{mode:disagree?'VETO':'AGREEMENT',direction:researchDirection,consensus,modelsUsed:used,revision:state.tests}};
+ }
  function knowledge(){const x=summary();return {revision:x.resolvedTests,updatedAt:x.updatedAt,validatedCandidates:x.candidates,advisoryOnly:true,productionDecisionsModified:false}}
- return {onTick,summary,knowledge,save};
+ return {onTick,summary,knowledge,applyToPrediction,save};
 };
