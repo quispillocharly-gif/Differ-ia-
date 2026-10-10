@@ -4257,9 +4257,17 @@ function riseFallAutoPredict(){
     const opEvidence=1-Math.exp(-opN/70);
     const opLower=opN>=20?wilsonLower95(opWins,opN):.44;
 
+    // Evaluate AUTO horizons against a neutral 50% directional benchmark.
+    // A short streak must not outweigh persistent out-of-sample weakness.
     const historicalSkill=
-      clamp((actionRate-.48)/.08,-1,1)*actionEvidence*.65+
-      clamp((opRate-.48)/.08,-1,1)*opEvidence*.35;
+      clamp((actionRate-.50)/.08,-1,1)*actionEvidence*.65+
+      clamp((opRate-.50)/.08,-1,1)*opEvidence*.35;
+    const hitEvidence=1-Math.exp(-Math.max(0,safeNum(v.resolved,0))/500);
+    const belowChance=clamp((.50-safeNum(v.directionHitEWMA,.5))/.08,0,1)*hitEvidence;
+    const poorCalibration=clamp(
+      Math.max(0,safeNum(v.brierEWMA,2/9)-2/9)/.035+
+      Math.max(0,safeNum(v.logLossEWMA,Math.log(3))-Math.log(3))/.10,
+      0,1)*hitEvidence;
 
     let score=
       marginal*.18+
@@ -4287,6 +4295,8 @@ function riseFallAutoPredict(){
     score-=clamp(actionDeficit*actionEvidence*.65,0,.085);
     score-=clamp(operationDeficit*opEvidence*.40,0,.055);
     score-=clamp(logLossExcess*.20+brierExcess*.30,0,.065);
+    // Penalize horizons that fail both directional accuracy and calibration.
+    score-=belowChance*.14+poorCalibration*.09;
     if(!p.ready)score-=.40;
     if(!directional)score-=.12;
 
