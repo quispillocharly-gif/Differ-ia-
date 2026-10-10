@@ -4435,7 +4435,7 @@ function riseFallAutoPredict(){
 
       if(!dwellOkay||autoState.pendingCount<requiredConfirm){
         const keep=directional.find(p=>p.horizon===previousH&&p.direction===previousDir);
-        if(keep)best=keep;
+        if(keep)best=keep;else best={...best,action:'WAIT',rawAction:'WAIT'};
       }else{
         if(previousH!==best.horizon)autoState.switches++;
         autoState.horizon=best.horizon;
