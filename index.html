@@ -904,6 +904,25 @@ button{border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 
 .rfDecisionBox{grid-template-columns:1fr!important}
 #volChart{height:210px!important}
 }
+
+/* ORBITAL OS — real independent workspace windows */
+.wrap{display:flex!important;flex-direction:column!important;max-width:1280px!important;gap:12px!important}
+.wrap>.hero{padding:19px 25px!important}
+.hero h1{font-size:clamp(27px,4vw,46px)!important}
+.wrap>.appToolbar{order:2!important}
+#orbitalTabs{order:3!important;display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:7px!important;width:100%!important;background:#0b426c!important;padding:10px!important;border:1px solid #3e9cbe!important;clip-path:polygon(0 0,calc(100% - 17px) 0,100% 17px,100% 100%,0 100%)!important}
+#orbitalTabs button{min-width:0!important;min-height:56px!important;padding:8px 5px!important;background:#165b82!important;color:#cdebf9!important;border:1px solid #367fa5!important;clip-path:none!important;font:900 12px/1.2 "Trebuchet MS",sans-serif!important;letter-spacing:.02em!important;cursor:pointer}
+#orbitalTabs button.selected{background:#b8f4ff!important;color:#073c61!important;border-color:#e0ffff!important;box-shadow:inset 0 -4px #13a6cb!important}
+#orbitalTabs button span{display:inline!important}
+#orbitalWindowTitle{order:4!important;display:flex!important;gap:16px!important;align-items:center!important;padding:10px 16px!important;background:#d7f3ff!important;border-left:5px solid #087eab!important;color:#164367!important}
+#orbitalWindowTitle strong{font-size:19px!important;letter-spacing:.08em!important}
+#orbitalWindowTitle span{font-size:12px!important}
+.wrap>[data-orbital-window]{order:5!important}
+.wrap>[data-orbital-window]:not(.orbitalVisible){display:none!important}
+.wrap>#proQuickPanel,.wrap>#connectPanel,.wrap>#rfPanel,.wrap>#rfStatsGrid,.wrap>#sessionPanel,.wrap>#signalPanel,.wrap>#analyzerPanel,.wrap>#historyPanel,.wrap>#objectivePanel,.wrap>#cloudPanel,.wrap>#learningMetrics,.wrap>#labPanel,.wrap>#ownerMemoryPanel,.wrap>#systemLogPanel{grid-column:auto!important;grid-row:auto!important}
+body .wrap>.grid.orbitalVisible{display:grid!important}
+#orbitalTabs button:focus-visible{outline:3px solid #f0b343!important;outline-offset:2px}
+@media(max-width:760px){.wrap{padding:8px 10px 30px!important}.wrap>.hero{padding:15px 16px 28px!important}.hero h1{font-size:clamp(27px,7vw,37px)!important}#orbitalTabs{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:5px!important;padding:7px!important;clip-path:none!important}#orbitalTabs button{min-height:51px!important;font-size:11px!important;padding:6px 2px!important}#orbitalTabs button span{display:block!important;font-size:10px!important;margin-top:2px!important}#orbitalWindowTitle{flex-direction:column!important;align-items:flex-start!important;gap:2px!important;padding:8px 12px!important}#orbitalWindowTitle strong{font-size:17px!important}#orbitalWindowTitle span{font-size:11px!important}.panel{margin:0!important}.grid{gap:8px!important}}
 </style>
 <!-- outcome-sound-v2 -->
 </head>
@@ -926,6 +945,7 @@ button{border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 
     <button type="button" id="soundToggle" class="soundToggle" aria-label="Activar o desactivar sonidos">🔊 SONIDO</button>
   </div>
 
+  <div id="orbitalTabs" class="orbitalTabs" role="tablist" aria-label="Ventanas del terminal"><button type="button" data-window="differ" class="selected">◈ <span>DIFFER</span></button><button type="button" data-window="rise">↗ <span>RISE / FALL</span></button><button type="button" data-window="market">⌁ <span>MERCADO</span></button><button type="button" data-window="history">▤ <span>HISTORIAL</span></button><button type="button" data-window="settings">⚙ <span>CONEXIÓN</span></button><button type="button" data-window="cloud">☁ <span>IA CLOUD</span></button></div><div id="orbitalWindowTitle" class="orbitalWindowTitle" aria-live="polite"><strong>DIFFER</strong><span>Control de sesión · Señales · Ganancias y operaciones</span></div>
   <div id="proQuickPanel" class="proQuickPanel proOnly" aria-live="polite">
     <div><small>SALUD IA</small><b id="proHealthMini">—</b></div>
     <div><small>TICKS IA</small><b id="proTicksMini">0</b></div>
@@ -1404,6 +1424,21 @@ button{border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 
     }catch(e){q('cloudState').textContent='OFFLINE';q('cloudState').style.color='#ff7792';q('cloudBadge').textContent='OFFLINE';q('cloudBadge').style.color='#ff7792'}
   }
   cloud();setInterval(cloud,15000);
+})();
+</script>
+<script>
+/* ORBITAL WINDOW MANAGER: view-only DOM grouping; never changes trading logic */
+(function(){
+ const root=document.querySelector('.wrap'), tabs=document.getElementById('orbitalTabs');
+ if(!root||!tabs)return;
+ const ids={differ:['sessionPanel','signalPanel','objectivePanel'],rise:['rfPanel','rfStatsGrid'],market:['analyzerPanel'],history:['historyPanel'],settings:['connectPanel'],cloud:['proQuickPanel','learningMetrics','cloudPanel','labPanel','ownerMemoryPanel','systemLogPanel']};
+ const names={differ:['DIFFER','Control de sesión · Señales · Ganancias y operaciones'],rise:['RISE / FALL','Operaciones direccionales · Inversión · Resultados'],market:['MERCADO','Gráfico en vivo · Cotizaciones · Análisis'],history:['HISTORIAL','Registro de operaciones y resultados'],settings:['CONEXIÓN','Estrategia · Cuenta · Credenciales Deriv'],cloud:['IA CLOUD','Aprendizaje · Modelos · Memoria persistente']};
+ Object.keys(ids).forEach(k=>ids[k].forEach(id=>{let el=document.getElementById(id);if(el)el.dataset.orbitalWindow=k}));
+ root.querySelectorAll(':scope > .grid').forEach(el=>{if(!el.dataset.orbitalWindow)el.dataset.orbitalWindow='differ'});
+ root.querySelectorAll(':scope > .panel').forEach(el=>{if(!el.dataset.orbitalWindow)el.dataset.orbitalWindow='cloud'});
+ function show(k){if(!names[k])k='differ';root.querySelectorAll('[data-orbital-window]').forEach(el=>el.classList.toggle('orbitalVisible',el.dataset.orbitalWindow===k));tabs.querySelectorAll('button').forEach(b=>{let active=b.dataset.window===k;b.classList.toggle('selected',active);b.setAttribute('aria-selected',String(active))});let h=document.getElementById('orbitalWindowTitle');h.querySelector('strong').textContent=names[k][0];h.querySelector('span').textContent=names[k][1];try{sessionStorage.setItem('ORBITAL_WINDOW',k)}catch(e){}}
+ tabs.addEventListener('click',e=>{let b=e.target.closest('button[data-window]');if(b){show(b.dataset.window);window.scrollTo({top:0,behavior:'smooth'})}});
+ show((function(){try{return sessionStorage.getItem('ORBITAL_WINDOW')}catch(e){return null}})()||'differ');
 })();
 </script>
 </body>
