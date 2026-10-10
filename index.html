@@ -923,6 +923,17 @@ button{border-radius:0!important;clip-path:polygon(0 0,calc(100% - 13px) 0,100% 
 body .wrap>.grid.orbitalVisible{display:grid!important}
 #orbitalTabs button:focus-visible{outline:3px solid #f0b343!important;outline-offset:2px}
 @media(max-width:760px){.wrap{padding:8px 10px 30px!important}.wrap>.hero{padding:15px 16px 28px!important}.hero h1{font-size:clamp(27px,7vw,37px)!important}#orbitalTabs{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:5px!important;padding:7px!important;clip-path:none!important}#orbitalTabs button{min-height:51px!important;font-size:11px!important;padding:6px 2px!important}#orbitalTabs button span{display:block!important;font-size:10px!important;margin-top:2px!important}#orbitalWindowTitle{flex-direction:column!important;align-items:flex-start!important;gap:2px!important;padding:8px 12px!important}#orbitalWindowTitle strong{font-size:17px!important}#orbitalWindowTitle span{font-size:11px!important}.panel{margin:0!important}.grid{gap:8px!important}}
+
+/* compact window-specific dashboard and independent trade metrics */
+#orbitalTabs{position:sticky!important;top:0!important;z-index:100!important}
+.wrap>[data-orbital-window]:not(.orbitalVisible){display:none!important}
+.wrap>.grid.orbitalVisible{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:10px!important}
+.wrap>.grid.orbitalVisible>.card{min-height:88px!important;height:auto!important;max-height:135px!important;padding:12px 15px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:7px!important}
+.wrap>.grid.orbitalVisible>.card b{font-size:clamp(19px,2.4vw,28px)!important;line-height:1.1!important}
+.wrap>.grid.orbitalVisible>.card small{font-size:11px!important;line-height:1.2!important}
+#rfStatsGrid{grid-template-columns:repeat(5,minmax(0,1fr))!important}
+#orbitalTabs button.selected{outline:2px solid #b8f4ff!important}
+@media(max-width:760px){.wrap>.grid.orbitalVisible,#rfStatsGrid.orbitalVisible{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.wrap>.grid.orbitalVisible>.card{min-height:78px!important;max-height:105px!important;padding:10px 12px!important}.wrap>.grid.orbitalVisible>.card b{font-size:21px!important}.wrap>.grid.orbitalVisible>.card small{font-size:10px!important}#orbitalTabs{top:0!important}}
 </style>
 <!-- outcome-sound-v2 -->
 </head>
