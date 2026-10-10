@@ -34,9 +34,13 @@ module.exports=function createResearchLab({dataDir}){
   state.lastDigit=d;state.lastPrice=p;state.updatedAt=Date.now();
   if(++sinceSave>=100){sinceSave=0;save()}
  }
+ function knowledge(type){
+  const eligible=models.filter(m=>m.selected&&(!type||m.type===type)).sort((a,b)=>((b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length))-(b.type==='DIFFER'?.9:.5))-((a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length))-(a.type==='DIFFER'?.9:.5)));
+  return {revision:state.tests,updatedAt:state.updatedAt,source:'RESEARCH_LAB',validatedCandidates:eligible.slice(0,8).map(m=>({id:m.id,type:m.type,horizon:m.horizon,lookback:m.lookback,samples:m.seen,recentSamples:m.recent.length,recentAccuracy:m.recent.length?m.recent.reduce((x,y)=>x+y,0)/m.recent.length:0,baseline:m.type==='DIFFER'?.9:.5})),advisoryOnly:true};
+ }
  function summary(){
   const ranked=models.filter(m=>m.seen>=MIN).sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length)-(b.type==='DIFFER'?.9:.5))-(a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length)-(a.type==='DIFFER'?.9:.5)));
   return {ok:true,mode:'RESEARCH_ONLY_NO_TRADE_CHANGES',version:2,knowledgeRevision:state.tests,automaticResearchSelection:true,productionDecisionsModified:false,models:N,ticks:state.ticks,resolvedTests:state.tests,minValidation:MIN,counts:{candidate:models.filter(m=>m.status==='CANDIDATE').length,rejected:models.filter(m=>m.status==='REJECTED').length,shadow:models.filter(m=>m.status==='SHADOW').length,selected:models.filter(m=>m.selected).length},leaders:ranked.slice(0,12).map(m=>({id:m.id,type:m.type,horizon:m.horizon,seen:m.seen,wins:m.wins,winRate:m.seen?m.wins/m.seen:0,edgeVsBaseline:m.seen?m.score/m.seen:0,recentRate:m.recent.length?m.recent.reduce((a,b)=>a+b,0)/m.recent.length:null,status:m.status,selected:m.selected})),updatedAt:state.updatedAt,note:'Overlapping predictions on shared ticks are correlated; scores do not prove tradable edge or net profit.'}
  }
- return {onTick,summary,save};
+ return {onTick,summary,knowledge,save};
 };
