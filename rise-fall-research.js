@@ -45,7 +45,8 @@ module.exports=function createRiseFallResearch({dataDir}){
     const phat=k/n,z=1.96,den=1+z*z/n,center=(phat+z*z/(2*n))/den;
     const margin=z*Math.sqrt(phat*(1-phat)/n+z*z/(4*n*n))/den;
     const lower=center-margin,upper=center+margin;
-    if(lower>.5){m.good++;m.bad=0}else if(upper<.5){m.bad++;m.good=0}else{m.good=0;m.bad=0}
+    // Conservative shadow promotion threshold; 50% directional accuracy is not a payout edge.
+    if(lower>.55){m.good++;m.bad=0}else if(upper<.5){m.bad++;m.good=0}else{m.good=0;m.bad=0}
     m.status=m.bad>=3?'REJECTED':m.good>=3?'CANDIDATE':'RESEARCH';
    }
   }
@@ -64,7 +65,7 @@ module.exports=function createRiseFallResearch({dataDir}){
   state.updatedAt=Date.now();if(++lastSave>=100){lastSave=0;save()}
  }
  function publicModel(m){const n=m.recent.length,k=m.recent.reduce((a,b)=>a+b,0);return {id:m.id,horizon:m.horizon,lookback:m.lookback,rule:m.rule,gate:m.gate,samples:m.n,recentSamples:n,recentHitRate:n?k/n:null,flat:m.flat,status:m.status}}
- function summary(){const candidates=models.filter(m=>m.status==='CANDIDATE').sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length))-(a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length)));return {ok:true,mode:'RESEARCH_ONLY',strategy:'RISE_FALL',models:models.filter(m=>m.status!=='RETIRED').length,totalCreated:models.length,generations:state.generations,retired:state.retired,capacity:MAX,ticks:state.ticks,resolvedTests:state.tests,updatedAt:state.updatedAt,counts:{candidate:candidates.length,rejected:models.filter(m=>m.status==='REJECTED').length,research:models.filter(m=>m.status==='RESEARCH').length},candidates:candidates.slice(0,12).map(publicModel),warning:'Research predictions share ticks and are correlated. Accuracy is not profitability; payout and out-of-sample testing are required.'}}
+ function summary(){const candidates=models.filter(m=>m.status==='CANDIDATE').sort((a,b)=>(b.recent.reduce((x,y)=>x+y,0)/Math.max(1,b.recent.length))-(a.recent.reduce((x,y)=>x+y,0)/Math.max(1,a.recent.length)));return {ok:true,mode:'RESEARCH_ONLY',strategy:'RISE_FALL',models:models.filter(m=>m.status!=='RETIRED').length,totalCreated:models.length,generations:state.generations,retired:state.retired,capacity:MAX,ticks:state.ticks,resolvedTests:state.tests,updatedAt:state.updatedAt,counts:{candidate:candidates.length,rejected:models.filter(m=>m.status==='REJECTED').length,research:models.filter(m=>m.status==='RESEARCH').length},candidates:candidates.slice(0,12).map(publicModel),warning:'Conservative 55% shadow promotion threshold, not a profitability guarantee. Research predictions share ticks and are correlated; payout and out-of-sample testing are required.'}}
  function applyToPrediction(pred,history){
   if(!pred||!Array.isArray(history))return pred;
   const h=Number(pred.horizon)||1;
@@ -84,7 +85,7 @@ module.exports=function createRiseFallResearch({dataDir}){
    if(m.rule==='volatility')signal=momentum/(scale||1);
    if(m.rule==='reversion')signal=-momentum;
    if(!signal||Math.abs(signal)<m.gate*(m.rule==='volatility'||m.rule==='majority'?1:scale))continue;
-   const weight=Math.max(.01,m.recent.reduce((x,y)=>x+y,0)/m.recent.length-.5);
+   const weight=Math.max(.001,m.recent.reduce((x,y)=>x+y,0)/m.recent.length-.55);
    if(signal>0)rise+=weight;else fall+=weight;
    used++;
   }
