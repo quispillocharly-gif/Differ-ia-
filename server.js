@@ -3,6 +3,8 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const createResearchLab = require('./research-lab');
+const createRiseFallResearch = require('./rise-fall-research');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +12,8 @@ const SYMBOL = process.env.DERIV_SYMBOL || 'R_75';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const MEMORY_FILE = path.join(DATA_DIR, 'differ-ai-memory.json');
 const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
+const researchLab = createResearchLab({dataDir:DATA_DIR});
+const riseFallResearch = createRiseFallResearch({dataDir:DATA_DIR});
 
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
@@ -1116,8 +1120,30 @@ function riseFallBlendExperts(h,views){
     total+=w;
     used.push({name:v.name,p:v.p.slice(),support,weight:w,expertWeight:ew});
   }
+  // Conservative shrinkage of noisy expert consensus toward the observed
+  // unconditional horizon frequencies. Prevents artificial confidence from
+  // correlated experts; does not change Deriv connectivity or order execution.
+  const mixed=riseFallNorm3(num.map(x=>x/(total||1)));
+  const global=riseFallMem.global?.[h];
+  // Blend long-term frequency with the already learned fast frequency.
+  // During drift, emphasize the recent distribution without resetting memory.
+  const slowBaseline=riseFallNorm3(global?.counts);
+  const fastBaseline=riseFallNorm3(global?.fast||global?.counts);
+  const recentWeight=riseFallMem.drift?.[h]?.boostRemaining > 0 ? .45 : .22;
+  const baseline=riseFallNorm3(slowBaseline.map((v,i)=>(1-recentWeight)*v+recentWeight*fastBaseline[i]));
+  const n=Math.max(0,safeNum(global?.n,0));
+  const support=used.length?used.reduce((sum,v)=>sum+v.support*v.weight,0)/Math.max(.0001,total):0;
+  const perf=riseFallMem.performance?.[h]||freshRiseFallPerf();
+  const weakBrier=Math.max(0,safeNum(perf.brierEWMA,2/9)-2/9);
+  const weakLog=Math.max(0,safeNum(perf.logLossEWMA,Math.log(3))-Math.log(3));
+  // Adaptive reliability: an EWMA of out-of-sample scoring losses acts as
+  // a drift-aware trust penalty. Weak experts are shrunk toward observed
+  // horizon frequencies, rather than producing artificial directional certainty.
+  const excessLoss=clamp(weakBrier/.06+weakLog/.18,0,1);
+  const driftPenalty=clamp(safeNum(riseFallMem.drift?.[h]?.boostRemaining,0)/Math.max(1,RF_DRIFT_MAX_WINDOW),0,.35);
+  const reliability=clamp((1-Math.exp(-n/350))*support*(1-.85*excessLoss)*(1-driftPenalty),.08,.85);
   return {
-    p:riseFallNorm3(num.map(x=>x/(total||1))),
+    p:riseFallNorm3(mixed.map((v,i)=>reliability*v+(1-reliability)*baseline[i])),
     views:used,
     totalWeight:total
   };
@@ -2707,8 +2733,10 @@ function calibrateRisk(rawRisk){
   const b=c.bins[calibrationBin(raw)];
 
   // Local reliability for this probability band.
+  // Reliability-bin calibration with a neutral prior: the prior must not
+  // inherit the very raw risk estimate whose overconfidence we are testing.
   const prior=90;
-  const posterior=(safeNum(b.matches,0)+prior*raw)/(safeNum(b.n,0)+prior);
+  const posterior=(safeNum(b.matches,0)+prior*UNIFORM)/(safeNum(b.n,0)+prior);
   const binEvidence=1-Math.exp(-safeNum(b.n,0)/120);
 
   // Global under/over-prediction. Under-estimation is corrected more strongly
@@ -3518,22 +3546,46 @@ function scienceAuditRun(force=false){
   const predicted=clamp(safeNum(cal.predictedEWMA,UNIFORM),0,1);
   const observed=clamp(safeNum(cal.observedEWMA,UNIFORM),0,1);
   const gap=observed-predicted;
+  // Effective EWMA sample size: descriptive only; audit windows overlap.
+  const calibrationSamples=Math.max(0,safeNum(cal.samples,0));
+  const calibrationEffectiveN=Math.min(calibrationSamples,Math.round(2/.012-1));
+  const calibrationStandardError=Math.sqrt(Math.max(.000001,observed*(1-observed))/Math.max(1,calibrationEffectiveN));
+  const calibrationGapZ=gap/calibrationStandardError;
+  // Distinguish EWMA warning from independently accumulated evidence.
+  // Wilson bounds use observed shadow outcomes, not overlapping audit counts.
+  const shadowN=Math.max(0,safeNum(mem.shadow.total,0));
+  const shadowMatches=Math.max(0,safeNum(mem.shadow.matches,0));
+  const shadowRate=shadowN?shadowMatches/shadowN:UNIFORM;
+  const shadowUpper95=wilsonUpper95(shadowMatches,shadowN);
+  const shadowEvidenceReady=shadowN>=1500;
+  const shadowEdgeConfirmed=shadowEvidenceReady&&shadowUpper95<UNIFORM;
   const rank0=master.rankStats?.[0]||{n:0,matches:0};
   const rank0N=Math.max(0,safeNum(rank0.n,0));
   const rank0Rate=(safeNum(rank0.matches,0)+80*UNIFORM)/(rank0N+80);
   const rank0Upper95=wilsonUpper95(safeNum(rank0.matches,0),rank0N);
   const edgeConfirmed=rank0N>=1500&&rank0Upper95<UNIFORM;
 
+  // Science-only: aggregate the independently measured horizon diagnostics.
+  // This does not modify predictions, orders, or AUTO selection.
+  const rfHorizonDiagnostics=RF_HORIZONS.map(h=>{
+    const p=riseFallMem.performance?.[h]||freshRiseFallPerf();
+    return {h,resolved:safeNum(p.resolved,0),hit:safeNum(p.directionHitEWMA,.5),brier:safeNum(p.brierEWMA,2/9),logLoss:safeNum(p.logLossEWMA,Math.log(3))};
+  });
+  const rfEligible=rfHorizonDiagnostics.filter(x=>x.resolved>=500);
+  const rfWeakHorizons=rfEligible.filter(x=>x.hit<.49);
+  const rfCalibrationWeakHorizons=rfEligible.filter(x=>x.brier>(2/9)+.025);
   const rfPerf=riseFallMem.performance?.[1]||freshRiseFallPerf();
   const rfState=riseFallMem.signalState?.[1]||{action:'WAIT',age:0,switches:0,holds:0};
   const alerts=[];
   if(gap>=.030)alerts.push('DIFFER_CRITICAL_OVERCONFIDENCE');
   else if(gap>=.015)alerts.push('DIFFER_OVERCONFIDENCE');
   if(rank0N>=1500&&!edgeConfirmed)alerts.push('DIFFER_EDGE_NOT_CONFIRMED');
+  if(shadowEvidenceReady&&!shadowEdgeConfirmed)alerts.push('DIFFER_SHADOW_EDGE_NOT_CONFIRMED');
   if(digit.uniformityP<.001)alerts.push('DIGIT_UNIFORMITY_ANOMALY');
   if(digit.transitionP<.001)alerts.push('DIGIT_TRANSITION_ANOMALY');
-  if(safeNum(rfPerf.resolved,0)>=500&&safeNum(rfPerf.directionHitEWMA,.5)<.49)alerts.push('RISE_FALL_DIRECTION_WEAK');
-  if(safeNum(rfPerf.brierEWMA,2/9)>(2/9)+.025)alerts.push('RISE_FALL_CALIBRATION_WEAK');
+  if(rfEligible.length&&rfWeakHorizons.length===rfEligible.length)alerts.push('RISE_FALL_DIRECTION_WEAK_ALL_HORIZONS');
+  else if(rfWeakHorizons.length)alerts.push('RISE_FALL_DIRECTION_WEAK_PARTIAL');
+  if(rfCalibrationWeakHorizons.length)alerts.push('RISE_FALL_CALIBRATION_WEAK');
 
   const status=alerts.some(x=>/CRITICAL/.test(x))?'CRITICAL':alerts.length?'WATCH':'OK';
   master.scienceAudit={
@@ -3546,6 +3598,9 @@ function scienceAuditRun(force=false){
       predictedEWMA:predicted,
       observedEWMA:observed,
       calibrationGap:gap,
+      calibrationSamples,calibrationEffectiveN,calibrationGapZ,
+      calibrationBrierEWMA:safeNum(cal.brierEWMA,.09),calibrationECE:safeNum(cal.ece,0),
+      shadowN,shadowMatches,shadowRate,shadowUpper95,shadowEdgeConfirmed,
       rank0N,
       rank0Rate,
       rank0Upper95,
@@ -3562,6 +3617,7 @@ function scienceAuditRun(force=false){
       switches:safeNum(rfState.switches,0),
       holds:safeNum(rfState.holds,0),
       autoHorizonState:{...(riseFallMem.autoHorizonState||{horizon:1,direction:'WAIT',score:0,age:0,switches:0,lastEpoch:0})},
+      horizonAuditSummary:{eligible:rfEligible.length,weak:rfWeakHorizons.map(x=>x.h),calibrationWeak:rfCalibrationWeakHorizons.map(x=>x.h),diagnostics:rfHorizonDiagnostics},
       byHorizon:Object.fromEntries(RF_HORIZONS.map(h=>{
         const p=riseFallMem.performance[h]||freshRiseFallPerf();
         const op=riseFallMem.operationLearning?.byHorizon?.[h]||freshRfOpStat();
@@ -3658,6 +3714,8 @@ function processDigit(d,epoch,quote){
 
   hist.push(d);
   priceHist.push(targetPrice);
+  try{researchLab.onTick(d,targetPrice)}catch(e){console.error('Research lab tick:',e.message)}
+  try{riseFallResearch.onTick(targetPrice)}catch(e){console.error('Rise/Fall research tick:',e.message)}
   motionHist.push(motionSnapshot(priceHist));
   if(hist.length>MAX_HIST){hist.shift();motionHist.shift()}
   if(priceHist.length>MAX_HIST)priceHist.shift();
@@ -3843,6 +3901,7 @@ function masterPublic(){
     scienceAudit:master.scienceAudit||freshScienceAudit(),
     universalLab:master.universalLab||freshUniversalLab(),
     labIntegration:universalLabIntegrationPublic(),
+    researchKnowledge:researchLab.knowledge(),
     policyAnalytics:(()=>{
       const pa=master.policyAnalytics||freshPolicyAnalytics();
       const policies={};
@@ -4205,9 +4264,17 @@ function riseFallAutoPredict(){
     const opEvidence=1-Math.exp(-opN/70);
     const opLower=opN>=20?wilsonLower95(opWins,opN):.44;
 
+    // Evaluate AUTO horizons against a neutral 50% directional benchmark.
+    // A short streak must not outweigh persistent out-of-sample weakness.
     const historicalSkill=
-      clamp((actionRate-.48)/.08,-1,1)*actionEvidence*.65+
-      clamp((opRate-.48)/.08,-1,1)*opEvidence*.35;
+      clamp((actionRate-.50)/.08,-1,1)*actionEvidence*.65+
+      clamp((opRate-.50)/.08,-1,1)*opEvidence*.35;
+    const hitEvidence=1-Math.exp(-Math.max(0,safeNum(v.resolved,0))/500);
+    const belowChance=clamp((.50-safeNum(v.directionHitEWMA,.5))/.08,0,1)*hitEvidence;
+    const poorCalibration=clamp(
+      Math.max(0,safeNum(v.brierEWMA,2/9)-2/9)/.035+
+      Math.max(0,safeNum(v.logLossEWMA,Math.log(3))-Math.log(3))/.10,
+      0,1)*hitEvidence;
 
     let score=
       marginal*.18+
@@ -4235,6 +4302,8 @@ function riseFallAutoPredict(){
     score-=clamp(actionDeficit*actionEvidence*.65,0,.085);
     score-=clamp(operationDeficit*opEvidence*.40,0,.055);
     score-=clamp(logLossExcess*.20+brierExcess*.30,0,.065);
+    // Penalize horizons that fail both directional accuracy and calibration.
+    score-=belowChance*.14+poorCalibration*.09;
     if(!p.ready)score-=.40;
     if(!directional)score-=.12;
 
@@ -4373,7 +4442,7 @@ function riseFallAutoPredict(){
 
       if(!dwellOkay||autoState.pendingCount<requiredConfirm){
         const keep=directional.find(p=>p.horizon===previousH&&p.direction===previousDir);
-        if(keep)best=keep;
+        if(keep)best=keep;else best={...best,action:'WAIT',rawAction:'WAIT'};
       }else{
         if(previousH!==best.horizon)autoState.switches++;
         autoState.horizon=best.horizon;
@@ -4423,7 +4492,8 @@ app.get('/api/rise-fall/prediction',(req,res)=>{
     isolated:true,
     learnsWhenBrowserClosed:true,
     contractInfo:riseFallContractInfo,
-    prediction:auto?riseFallAutoPredict():riseFallPredict(h),
+    prediction:riseFallResearch.applyToPrediction(auto?riseFallAutoPredict():riseFallPredict(h),priceHist),
+    researchKnowledge:riseFallResearch.knowledge(),
     updatedAt:riseFallMem.updatedAt
   });
 });
@@ -4479,6 +4549,7 @@ app.get('/api/cloud/prediction',(req,res)=>{
   res.json({
     ok:true,
     prediction:lastPrediction,
+    researchKnowledge:researchLab.knowledge('DIFFER'),
     shadow:mem.shadow.last,
     calibration:calibrationSummary(),
     drift:driftSummary(),
@@ -4515,6 +4586,10 @@ app.get('/api/cloud/snapshot',(req,res)=>{
   });
 });
 
+app.get('/api/research/rise-fall',(req,res)=>{res.setHeader('Cache-Control','no-store');res.json(riseFallResearch.summary())});
+
+app.get('/api/research/lab',(req,res)=>{res.setHeader('Cache-Control','no-store');res.json(researchLab.summary())});
+
 app.get('/health',(req,res)=>{
   res.status(status==='ONLINE'?200:503).json({
     ok:status==='ONLINE',
@@ -4549,12 +4624,16 @@ app.listen(PORT,()=>{
 saveTimer=setInterval(()=>{
   saveMemory();
   saveRiseFallMemory();
+  researchLab.save();
+  riseFallResearch.save();
 },15000);
 
 function shutdown(){
   clearInterval(saveTimer);
   saveMemory();
   saveRiseFallMemory();
+  researchLab.save();
+  riseFallResearch.save();
   try{if(ws)ws.close()}catch(_){}
   process.exit(0);
 }
