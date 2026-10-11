@@ -45,15 +45,20 @@ module.exports=function createRiseFallResearch({dataDir}){
     const phat=k/n,z=1.96,den=1+z*z/n,center=(phat+z*z/(2*n))/den;
     const margin=z*Math.sqrt(phat*(1-phat)/n+z*z/(4*n*n))/den;
     const lower=center-margin,upper=center+margin;
+    // Independent forward segment: recent results must also exceed the baseline.
+    const hold=m.recent.slice(-80),train=m.recent.slice(0,-80);
+    const holdRate=hold.reduce((a,b)=>a+b,0)/Math.max(1,hold.length);
+    const trainRate=train.reduce((a,b)=>a+b,0)/Math.max(1,train.length);
+    const stable=hold.length===80&&train.length>=100&&holdRate>.52&&trainRate>.52;
     // Conservative shadow promotion threshold; 50% directional accuracy is not a payout edge.
-    if(lower>.55){m.good++;m.bad=0}else if(upper<.5){m.bad++;m.good=0}else{m.good=0;m.bad=0}
+    if(lower>.55&&stable){m.good++;m.bad=0}else if(upper<.5){m.bad++;m.good=0}else{m.good=0;m.bad=0}
     m.status=m.bad>=3?'REJECTED':m.good>=3?'CANDIDATE':'RESEARCH';
    }
   }
   if(state.ticks%1000===0){
    const rejected=models.filter(m=>m.status==='REJECTED');
    for(const m of rejected.slice(0,Math.min(32,rejected.length))){m.status='RETIRED';state.retired++}
-   const slots=Math.min(32,MAX-models.filter(m=>m.status!=='RETIRED').length);
+   const slots=Math.min(32,MAX-models.length);
    if(slots>0){const parents=models.filter(m=>m.status==='CANDIDATE'&&m.n>=MIN);
     for(let j=0;j<slots;j++){
      const id=models.length;const parent=parents.length?parents[(state.generations+j)%parents.length]:models[(state.generations*37+j*13)%Math.min(N,models.length)];
@@ -92,10 +97,8 @@ module.exports=function createRiseFallResearch({dataDir}){
   if(used<2||rise===fall)return {...pred,researchAdaptation:{mode:'BASELINE',reason:'INSUFFICIENT_LIVE_CONSENSUS',revision:state.tests}};
   const researchDirection=rise>fall?'RISE':'FALL',consensus=Math.max(rise,fall)/(rise+fall);
   if(consensus<.70)return {...pred,researchAdaptation:{mode:'BASELINE',reason:'LOW_CONSENSUS',consensus,revision:state.tests}};
-  const original=pred.action;
-  // Research may veto an unsupported entry, but never invent an entry or reverse direction.
-  const disagree=(original==='RISE'||original==='FALL')&&original!==researchDirection;
-  return {...pred,action:disagree?'WAIT':original,researchAdaptation:{mode:disagree?'VETO':'AGREEMENT',direction:researchDirection,consensus,modelsUsed:used,revision:state.tests}};
+  // Research improves the model's knowledge without imposing trade blocks or changing execution.
+  return {...pred,researchAdaptation:{mode:'ADVISORY',direction:researchDirection,consensus,modelsUsed:used,revision:state.tests}};
  }
  function knowledge(){const x=summary();return {revision:x.resolvedTests,updatedAt:x.updatedAt,validatedCandidates:x.candidates,advisoryOnly:true,productionDecisionsModified:false}}
  return {onTick,summary,knowledge,applyToPrediction,save};
