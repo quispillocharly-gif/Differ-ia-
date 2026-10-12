@@ -134,11 +134,13 @@
       const p=pendingProposal;pendingProposal=null;
       const id=m.proposal?.id,ask=Number(m.proposal?.ask_price);
       if(!id||!Number.isFinite(ask)){p.reject(new Error('Propuesta inválida'));return}
+      if(p.trace){p.trace.proposalAt=Date.now();p.trace.ask=ask;p.trace.proposalId=id;p.trace.buyAt=Date.now();}
       socket.send(JSON.stringify({buy:id,price:ask,req_id:++buyReq}));
       p.resolve();
     }
     if(m.msg_type==='buy'&&m.buy?.contract_id){
       activeContract=m.buy.contract_id;
+      if(window.lastDerivExecutionTrace){window.lastDerivExecutionTrace.contractId=String(activeContract);window.lastDerivExecutionTrace.confirmedAt=Date.now();console.info('[DERIV_EXECUTION_TRACE]',JSON.stringify(window.lastDerivExecutionTrace));}
       set(`${accountType.toUpperCase()} CONECTADO · ${accountId} · CONTRATO ${activeContract}`);
       socket.send(JSON.stringify({proposal_open_contract:1,contract_id:activeContract,subscribe:1,req_id:3001}));
     }
@@ -169,7 +171,9 @@
       reject(new Error('Parámetros inválidos'));
       return;
     }
-    pendingProposal={resolve,reject};
+    const trace={mode:accountType,digit,stake,requestedAt:Date.now(),proposalAt:null,buyAt:null,contractId:null};
+    window.lastDerivExecutionTrace=trace;
+    pendingProposal={resolve,reject,trace};
     socket.send(JSON.stringify({
       proposal:1,
       amount:Number(stake.toFixed(2)),
