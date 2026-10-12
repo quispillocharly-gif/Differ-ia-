@@ -2715,6 +2715,8 @@ function calibrateRisk(rawRisk){
   // because calling a 14% MATCH environment "8%" is exactly the failure we want to avoid.
   const predicted=clamp(safeNum(c.predictedEWMA,UNIFORM),.01,.30);
   const observed=clamp(safeNum(c.observedEWMA,UNIFORM),.01,.30);
+  // Correct persistent underestimation without treating a lucky streak as evidence
+  // of a predictive edge. The floor only raises risk; it never creates a buy signal.
   const ratio=clamp(observed/Math.max(.01,predicted),.78,2.25);
   const bias=clamp(observed-predicted,-.025,.085);
   const ratioAdjusted=raw*ratio;
@@ -2736,6 +2738,12 @@ function calibrateRisk(rawRisk){
 
   let calibrated=(1-binEvidence)*globalAdjusted+binEvidence*posterior;
   calibrated=Math.max(calibrated,shrunkRaw);
+  // When calibration persistently underestimates MATCH, prevent sparse
+  // probability bins from hiding that bias. This is a calibration-only change.
+  const biasEvidence=clamp((safeNum(c.samples,0)-100)/900,0,1);
+  if(observed>predicted && biasEvidence>0){
+    calibrated=Math.max(calibrated,raw+(observed-predicted)*biasEvidence);
+  }
 
   // OOS safety floor: while rank-0 has not statistically demonstrated edge below 10%,
   // do not let calibration advertise an artificially low MATCH probability.
