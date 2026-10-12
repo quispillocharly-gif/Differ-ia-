@@ -2920,7 +2920,14 @@ function blendViews(views,multiplier){
   return normalizeDist(num.map((x,d)=>x/(den[d]||1)));
 }
 function predictionFromDist(name,p,views){
-  const ranked=p.map((risk,d)=>({d,risk})).sort((a,b)=>a.risk-b.risk);
+  const history=mem.master?.digitCalibration||[];
+  const ranked=p.map((risk,d)=>{
+    const h=history[d]||{},n=Math.max(0,safeNum(h.n,0));
+    const observed=(safeNum(h.matches,0)+150*UNIFORM)/(n+150);
+    const predicted=n?safeNum(h.predictedSum,0)/n:UNIFORM;
+    const weight=Math.min(.65,n/(n+600));
+    return {d,risk:clamp(risk+weight*(observed-predicted),.001,.5)};
+  }).sort((a,b)=>a.risk-b.risk);
   const best=ranked[0];
   const activeViews=views.filter(v=>safeNum(v.base,0)>0);
   const confidenceViews=activeViews.length?activeViews:views;
