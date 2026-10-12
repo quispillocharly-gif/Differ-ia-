@@ -2943,12 +2943,24 @@ function predictionFromDist(name,p,views){
   const oosConfirmed=lab.edgeConfirmed===true&&audit.edgeConfirmed===true&&safeNum(lab.improvementVsUniform,0)>0;
   const oosConfidence=oosConfirmed?1:.42;
   const confidence=clamp((.18+.82*support)*Math.exp(-disagreement*16)*calibrationTrust*driftPenalty*oosConfidence,0,1);
+  // Do not report an optimistic MATCH risk while independent shadow/OOS
+  // evidence has not confirmed an edge. This changes AI calibration only.
+  const cal=mem.shadow.calibration||{};
+  const observed=clamp(safeNum(cal.observedEWMA,UNIFORM),0,.5);
+  const predicted=clamp(safeNum(cal.predictedEWMA,UNIFORM),0,.5);
+  const positiveGap=Math.max(0,observed-predicted);
+  const auditShadowN=Math.max(0,safeNum(audit.shadowN,0));
+  const conservativeFloor=!oosConfirmed&&auditShadowN>=1500
+    ?Math.max(UNIFORM,Math.min(.30,observed))
+    :0;
+  const calibratedRisk=Math.max(calibrateRisk(best.risk),conservativeFloor,
+    Math.min(.5,best.risk+positiveGap));
   return {
     name,
     probabilities:p,
     digit:best.d,
     rawRisk:best.risk,
-    risk:calibrateRisk(best.risk),
+    risk:calibratedRisk,
     confidence,
     disagreement
   };
