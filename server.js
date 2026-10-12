@@ -2920,6 +2920,15 @@ function blendViews(views,multiplier){
   return normalizeDist(num.map((x,d)=>x/(den[d]||1)));
 }
 function predictionFromDist(name,p,views){
+  // Keep the raw expert forecast visible in diagnostics, but avoid treating
+  // random-looking out-of-sample evidence as a proven digit advantage.
+  const rank0=mem.master?.rankStats?.[0]||{};
+  const rankN=Math.max(0,safeNum(rank0.n,0));
+  const edgeProven=rankN>=1500&&wilsonUpper95(safeNum(rank0.matches,0),rankN)<UNIFORM;
+  const lab=mem.master?.universalLab?.differ||{};
+  const independentEdge=edgeProven&&lab.edgeConfirmed===true&&safeNum(lab.improvementVsUniform,0)>0;
+  const trust=independentEdge?1:.15;
+  p=normalizeDist(p.map(v=>UNIFORM+(v-UNIFORM)*trust));
   const history=mem.master?.digitCalibration||[];
   const ranked=p.map((risk,d)=>{
     const h=history[d]||{},n=Math.max(0,safeNum(h.n,0));
