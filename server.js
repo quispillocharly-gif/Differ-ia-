@@ -2736,6 +2736,12 @@ function calibrateRisk(rawRisk){
 
   let calibrated=(1-binEvidence)*globalAdjusted+binEvidence*posterior;
   calibrated=Math.max(calibrated,shrunkRaw);
+  // Correct persistent underestimation using observed prequential outcomes.
+  // This adjusts predictions only, not order execution or account settings.
+  const biasEvidence=clamp((safeNum(c.samples,0)-100)/900,0,1);
+  if(observed>predicted && biasEvidence>0){
+    calibrated=Math.max(calibrated,raw+(observed-predicted)*biasEvidence);
+  }
 
   // OOS safety floor: while rank-0 has not statistically demonstrated edge below 10%,
   // do not let calibration advertise an artificially low MATCH probability.
