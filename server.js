@@ -4254,6 +4254,11 @@ function riseFallAutoPredict(){
     const brierSkill=clamp(((2/9)-safeNum(v.brierEWMA,2/9))/.035,-1,1);
     const logSkill=clamp((Math.log(3)-safeNum(v.logLossEWMA,Math.log(3)))/.10,-1,1);
     const modelPenalty=clamp(safeNum(p.adaptation?.modelPenalty,0),0,1);
+    const lab=mem.master?.universalLab?.riseFall||{};
+    const labN=Math.max(0,safeNum(lab.directionalTrials,0));
+    const labPenalty=labN>=300
+      ?clamp((.5-safeNum(lab.directionalHitRate,.5))*Math.min(1,labN/1200)*.65,0,.045)
+      :0;
     const sameDirection=readyRows.length
       ?readyRows.filter(x=>x.direction===p.direction).length/readyRows.length
       :0;
@@ -4298,6 +4303,7 @@ function riseFallAutoPredict(){
       clamp(safeNum(p.moveQuality?.agreement,0),0,1)*.05-
       clamp(safeNum(p.moveQuality?.noise,0),0,1)*.08-
       modelPenalty*.11-
+      labPenalty-
       ((p.horizon-1)/4)*.010;
 
     // Penalize weak out-of-sample directional evidence smoothly rather than
