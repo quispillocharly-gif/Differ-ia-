@@ -1231,7 +1231,7 @@ body .wrap>.grid.orbitalVisible{display:grid!important}
     }else if(type==='error'){
       fx.className='tradeFx show result match';
       q('tradeFxState').textContent='ERROR';
-      q('tradeFxInfo').textContent='ORDEN NO EJECUTADA';
+      q('tradeFxInfo').textContent='ORDEN NO EJECUTADA · '+String(data.error||'Revisa el registro DERIV').slice(0,160);
       tradeFxTimer=setTimeout(function(){fx.className='tradeFx';},1100);
     }else{
       q('tradeFxState').textContent='EJECUTANDO';
