@@ -4400,7 +4400,8 @@ function riseFallAutoPredict(){
 
   if(closeOpposite){
     if(autoState.lastEpoch!==lastEpoch){
-      autoState.direction='WAIT';
+      // A conflicting signal produces WAIT but must not erase the last
+      // committed AUTO direction; otherwise identical switches recur.
       autoState.age=0;
       autoState.score=safeNum(best.autoHorizonScore,0);
       autoState.lastEpoch=lastEpoch;
