@@ -2234,7 +2234,7 @@ function enterTrade(decision,manual=false){
 function tradeError(e){
   const failed=pendingTrade;
   log('ERROR DERIV · '+(e?.message||e));
-  if(failed)window.nexusTradeEffect?.('error',failed);
+  if(failed)window.nexusTradeEffect?.('error',{...failed,error:String(e?.message||e||'Error desconocido')});
   pendingTrade=null;
   resetAutoSignal();
   $('status').textContent='ERROR DERIV · IA SIGUE APRENDIENDO';
