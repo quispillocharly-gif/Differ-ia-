@@ -83,14 +83,12 @@
         }catch(_){}
       };
       socket.onerror=()=>{
-        failPending(new Error('Error WebSocket durante la operación'));
         ready=false;
         window.demoReady=false;
         set('ERROR WEBSOCKET');
         busy=false;
       };
       socket.onclose=()=>{
-        failPending(new Error('Deriv desconectado antes de confirmar compra'));
         ready=false;
         window.demoReady=false;
         clearInterval(pingInterval);
@@ -104,12 +102,7 @@
     }
   }
 
-  let pendingProposal=null,pendingBuy=null,activeContract=null,settled=new Set();
-  function failPending(error){
-    const e=error instanceof Error?error:new Error(String(error));
-    if(pendingProposal){const p=pendingProposal;pendingProposal=null;p.reject(e)}
-    if(pendingBuy){const p=pendingBuy;pendingBuy=null;p.reject(e)}
-  }
+  let pendingProposal=null,activeContract=null,settled=new Set();
 
   function onMessage(ev){
     let m;try{m=JSON.parse(ev.data)}catch(_){return}
@@ -118,8 +111,10 @@
         const bal=$('accountBalance');if(bal)bal.textContent='NO DISPONIBLE';
         return;
       }
-      if(pendingProposal||pendingBuy){
-        failPending(new Error(m.error.message||'Error Deriv'));
+      if(pendingProposal){
+        let rej=pendingProposal.reject;
+        pendingProposal=null;
+        rej(new Error(m.error.message||'Error Deriv'));
       }else{
         window.demoTradeError?.(new Error(m.error.message||'Error Deriv'));
       }
@@ -140,13 +135,11 @@
       const id=m.proposal?.id,ask=Number(m.proposal?.ask_price);
       if(!id||!Number.isFinite(ask)){p.reject(new Error('Propuesta inválida'));return}
       if(p.trace){p.trace.proposalAt=Date.now();p.trace.ask=ask;p.trace.proposalId=id;p.trace.buyAt=Date.now();}
-      pendingBuy=p;
-      try{socket.send(JSON.stringify({buy:id,price:ask,req_id:++buyReq}));}
-      catch(e){failPending(e)}
+      socket.send(JSON.stringify({buy:id,price:ask,req_id:++buyReq}));
+      p.resolve();
     }
     if(m.msg_type==='buy'&&m.buy?.contract_id){
       activeContract=m.buy.contract_id;
-      if(pendingBuy){const p=pendingBuy;pendingBuy=null;p.resolve({contractId:activeContract})}
       if(window.lastDerivExecutionTrace){window.lastDerivExecutionTrace.contractId=String(activeContract);window.lastDerivExecutionTrace.confirmedAt=Date.now();console.info('[DERIV_EXECUTION_TRACE]',JSON.stringify(window.lastDerivExecutionTrace));}
       set(`${accountType.toUpperCase()} CONECTADO · ${accountId} · CONTRATO ${activeContract}`);
       socket.send(JSON.stringify({proposal_open_contract:1,contract_id:activeContract,subscribe:1,req_id:3001}));
@@ -169,7 +162,7 @@
       reject(new Error('Deriv no conectado'));
       return;
     }
-    if(activeContract||pendingProposal||pendingBuy){
+    if(activeContract||pendingProposal){
       reject(new Error('Ya existe una operación en curso'));
       return;
     }
