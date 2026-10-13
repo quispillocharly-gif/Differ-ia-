@@ -17,6 +17,7 @@ let rfPing=null;
 let rfProposalReq=7000;
 let rfBuyReq=8000;
 let rfPendingProposal=null;
+let rfPendingBuy=null;
 let rfActiveContract=null;
 let rfActiveTrade=null;
 let rfSettled=new Set();
@@ -302,6 +303,7 @@ function onRfMessage(ev){
   }
 
   if(m.error){
+    if(rfPendingBuy&&m.echo_req?.buy){const p=rfPendingBuy;rfPendingBuy=null;rfActiveTrade=null;p.reject(new Error(String(m.error.message||m.error.code||'Compra rechazada')));return;}
     if(rfPendingProposal){
       const p=rfPendingProposal;
       rfPendingProposal=null;
@@ -351,11 +353,12 @@ function onRfMessage(ev){
       ready:p.ready,
       contractId:''
     };
+    rfPendingBuy={...p,breakEven,requiredProbability,edgeMargin};
     rfSocket.send(JSON.stringify({buy:id,price:ask,req_id:++rfBuyReq}));
-    p.resolve({bought:true,breakEven,requiredProbability,modelProbability:p.probability,edgeMargin});
   }
 
   if(m.msg_type==='buy'&&m.buy?.contract_id){
+    if(rfPendingBuy){const p=rfPendingBuy;rfPendingBuy=null;p.resolve({bought:true,breakEven:p.breakEven,requiredProbability:p.requiredProbability,modelProbability:p.probability,edgeMargin:p.edgeMargin});}
     rfActiveContract=m.buy.contract_id;
     if(rfActiveTrade)rfActiveTrade.contractId=String(m.buy.contract_id);
     rfSession.ops++;
@@ -392,7 +395,7 @@ function sendRfTrade(pred){
       reject(new Error('Rise/Fall no conectado'));
       return;
     }
-    if(rfActiveContract||rfPendingProposal||rfActiveTrade){
+    if(rfActiveContract||rfPendingProposal||rfPendingBuy||rfActiveTrade){
       resolve({bought:false,busy:true});
       return;
     }
