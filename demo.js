@@ -102,7 +102,7 @@
     }
   }
 
-  let pendingProposal=null,activeContract=null,settled=new Set();
+  let pendingProposal=null,pendingBuy=null,activeContract=null,settled=new Set();
 
   function onMessage(ev){
     let m;try{m=JSON.parse(ev.data)}catch(_){return}
@@ -111,6 +111,7 @@
         const bal=$('accountBalance');if(bal)bal.textContent='NO DISPONIBLE';
         return;
       }
+      if(pendingBuy&&m.echo_req?.buy){const p=pendingBuy;pendingBuy=null;p.reject(new Error(m.error.message||'Compra rechazada'));return;}
       if(pendingProposal){
         let rej=pendingProposal.reject;
         pendingProposal=null;
@@ -135,10 +136,11 @@
       const id=m.proposal?.id,ask=Number(m.proposal?.ask_price);
       if(!id||!Number.isFinite(ask)){p.reject(new Error('Propuesta inválida'));return}
       if(p.trace){p.trace.proposalAt=Date.now();p.trace.ask=ask;p.trace.proposalId=id;p.trace.buyAt=Date.now();}
+      pendingBuy=p;
       socket.send(JSON.stringify({buy:id,price:ask,req_id:++buyReq}));
-      p.resolve();
     }
     if(m.msg_type==='buy'&&m.buy?.contract_id){
+      if(pendingBuy){pendingBuy.resolve();pendingBuy=null;}
       activeContract=m.buy.contract_id;
       if(window.lastDerivExecutionTrace){window.lastDerivExecutionTrace.contractId=String(activeContract);window.lastDerivExecutionTrace.confirmedAt=Date.now();console.info('[DERIV_EXECUTION_TRACE]',JSON.stringify(window.lastDerivExecutionTrace));}
       set(`${accountType.toUpperCase()} CONECTADO · ${accountId} · CONTRATO ${activeContract}`);
@@ -162,7 +164,7 @@
       reject(new Error('Deriv no conectado'));
       return;
     }
-    if(activeContract||pendingProposal){
+    if(activeContract||pendingProposal||pendingBuy){
       reject(new Error('Ya existe una operación en curso'));
       return;
     }
