@@ -111,7 +111,7 @@
         const bal=$('accountBalance');if(bal)bal.textContent='NO DISPONIBLE';
         return;
       }
-      if(pendingBuy&&m.echo_req?.buy){const p=pendingBuy;pendingBuy=null;p.reject(new Error(m.error.message||'Compra rechazada'));return;}
+      if(pendingBuy&&m.echo_req?.buy){const p=pendingBuy;pendingBuy=null;const msg=m.error.message||'Compra rechazada';if(/unknown contract proposal/i.test(msg)&&!p.retried&&socket?.readyState===WebSocket.OPEN){p.retried=true;pendingProposal=p;socket.send(JSON.stringify({...p.proposalRequest,req_id:++proposalReq}));return;}p.reject(new Error(msg));return;}
       if(pendingProposal){
         let rej=pendingProposal.reject;
         pendingProposal=null;
@@ -175,8 +175,7 @@
     }
     const trace={mode:accountType,digit,stake,requestedAt:Date.now(),proposalAt:null,buyAt:null,contractId:null};
     window.lastDerivExecutionTrace=trace;
-    pendingProposal={resolve,reject,trace};
-    socket.send(JSON.stringify({
+    const proposalRequest={
       proposal:1,
       amount:Number(stake.toFixed(2)),
       basis:'stake',
@@ -187,7 +186,9 @@
       duration_unit:'t',
       underlying_symbol:'R_75',
       req_id:++proposalReq
-    }));
+    };
+    pendingProposal={resolve,reject,trace,proposalRequest,retried:false};
+    socket.send(JSON.stringify(proposalRequest));
   });
 
   $('auth').onclick=connectDeriv;
