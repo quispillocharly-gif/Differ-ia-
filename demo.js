@@ -109,19 +109,22 @@
   function onMessage(ev){
     let m;try{m=JSON.parse(ev.data)}catch(_){return}
     if(m.error){
+      const errorPhase=(pendingBuy&&m.req_id===pendingBuy.reqId)?'BUY':(pendingProposal&&m.req_id===pendingProposal.reqId)?'PROPOSAL':'OTHER';
+      const diagnostic=' ['+errorPhase+' · '+String(m.error.code||'sin código')+']';
+      console.warn('[DERIV_PROPOSAL_DIAGNOSTIC]',JSON.stringify({phase:errorPhase,code:m.error.code||null,message:m.error.message||null,req_id:m.req_id||null,msg_type:m.msg_type||null,contract_type:m.echo_req?.contract_type||null,underlying_symbol:m.echo_req?.underlying_symbol||null,barrier:m.echo_req?.barrier||null}));
       if(m.echo_req?.balance===1){
         const bal=$('accountBalance');if(bal)bal.textContent='NO DISPONIBLE';
         return;
       }
       if(pendingBuy&&m.req_id===pendingBuy.reqId){
         const p=pendingBuy;pendingBuy=null;
-        p.reject(new Error(m.error.message||'Compra rechazada por Deriv'));
+        p.reject(new Error((m.error.message||'Compra rechazada por Deriv')+diagnostic));
         return;
       }
       if(pendingProposal&&m.req_id===pendingProposal.reqId){
         let rej=pendingProposal.reject;
         pendingProposal=null;
-        rej(new Error(m.error.message||'Error Deriv'));
+        rej(new Error((m.error.message||'Error Deriv')+diagnostic));
       }else{
         window.demoTradeError?.(new Error(m.error.message||'Error Deriv'));
       }
