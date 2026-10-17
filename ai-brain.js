@@ -2568,10 +2568,9 @@ function multiChoose(){
     .sort((a,b)=>b.lower-a.lower);
   if(!ranks.length)return null;
   const leader=ranks[0];
-  // Solo usar un candidato multiíndice cuando su evaluación conservadora
-  // supera el azar de DIFFER (90%) con evidencia estadística suficiente.
-  // De lo contrario se conserva la decisión del cerebro original.
-  if(leader.samples>=100&&leader.lower>0.90&&leader.validatedRate>0.90)return leader;
+  // Restaurar la selección multiíndice anterior sin el umbral restrictivo nuevo.
+  // La atribución de riesgo y contexto de cada índice se mantiene corregida.
+  if(leader.validatedRate>0.90&&leader.lower>0.87)return leader;
   return null;
 }
 function connectMultiScanner(){
