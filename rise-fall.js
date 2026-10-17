@@ -32,6 +32,7 @@ let rfEffectiveHorizon=1;
 let rfAuto=false;
 let rfPrediction=null;
 let rfLastEpoch=0;
+let rfLastTradeSignalEpoch=0;
 let rfConfirm={action:null,count:0,lastEpoch:0,firstEpoch:0};
 const RF_BOOTSTRAP_OPS=120;
 const RF_CONFIRM_NEEDED=2;
@@ -50,23 +51,23 @@ const rfMarketSamples=new Map();
 let rfMarketScanner=null,rfScannerRetry=null,rfMarketChoice='R_75';
 function rfMarketRank(state){
   if(!state||state.prices.length<120||Date.now()-state.updated>15000)return null;
-  const prices=state.prices.slice(-300),changes=[];
-  for(let i=1;i<prices.length;i++)changes.push(Math.sign(prices[i]-prices[i-1]));
-  const recent=changes.slice(-100);
-  const up=recent.filter(x=>x>0).length,down=recent.filter(x=>x<0).length;
+  const prices=state.prices.slice(-220),steps=[];
+  for(let i=1;i<prices.length;i++)steps.push(Math.sign(prices[i]-prices[i-1]));
+  const recent=steps.slice(-100),up=recent.filter(x=>x>0).length,down=recent.filter(x=>x<0).length;
   const n=up+down;
   if(n<60)return null;
-  const rise=(up+2)/(n+4),fall=(down+2)/(n+4);
-  const action=rise>=fall?'RISE':'FALL';
-  const confidence=Math.max(rise,fall);
+  const pRise=(up+2)/(n+4),pFall=(down+2)/(n+4);
+  const action=pRise>=pFall?'RISE':'FALL',confidence=Math.max(pRise,pFall);
   const conservative=confidence-1.64*Math.sqrt(confidence*(1-confidence)/(n+4));
-  return {symbol:state.symbol,action,confidence,conservative,samples:n};
+  const last=steps.slice(-12),momentum=last.reduce((sum,x)=>sum+x,0);
+  const expectedUnits=prices.length>1?(prices[prices.length-1]-prices[prices.length-2]):0;
+  return {symbol:state.symbol,action,confidence,conservative,samples:n,
+    signalEpoch:state.epoch||0,expectedUnits,momentum};
 }
 function rfSelectMarket(){
-  const ranked=[...rfMarketSamples.values()].map(rfMarketRank).filter(Boolean).sort((a,b)=>b.conservative-a.conservative);
-  if(!ranked.length)return null;
-  const current=ranked.find(x=>x.symbol===rfMarketChoice);
-  return current&&current.conservative>=ranked[0].conservative-.005?current:ranked[0];
+  const ranked=[...rfMarketSamples.values()].map(rfMarketRank).filter(Boolean)
+    .sort((a,b)=>b.conservative-a.conservative||b.samples-a.samples);
+  return ranked[0]||null;
 }
 function rfConnectScanner(){
   clearTimeout(rfScannerRetry);
@@ -75,7 +76,7 @@ function rfConnectScanner(){
   rfMarketScanner=ws;
   ws.onopen=()=>{
     RF_MULTI_SYMBOLS.forEach((symbol,i)=>{
-      rfMarketSamples.set(symbol,{symbol,prices:[],updated:0});
+      rfMarketSamples.set(symbol,{symbol,prices:[],updated:0,epoch:0});
       ws.send(JSON.stringify({ticks_history:symbol,count:300,end:'latest',style:'ticks',req_id:12000+i}));
     });
   };
@@ -88,6 +89,7 @@ function rfConnectScanner(){
       if(!state)return;
       state.prices=m.history.prices.map(Number).filter(Number.isFinite).slice(-300);
       state.updated=Date.now();
+      state.epoch=Number(m.history.times?.at(-1)||0);
       ws.send(JSON.stringify({ticks:symbol,subscribe:1}));
     }
     if(m.tick){
@@ -98,6 +100,7 @@ function rfConnectScanner(){
       state.prices.push(price);
       if(state.prices.length>300)state.prices.shift();
       state.updated=Date.now();
+      state.epoch=Number(m.tick.epoch||0);
     }
   };
   ws.onclose=()=>{if(rfMarketScanner===ws)rfScannerRetry=setTimeout(rfConnectScanner,5000)};
@@ -514,65 +517,15 @@ function settleRfTrade(profit,t){
 async function evaluateAuto(pred){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
-  if(pred.marketAgreement===false){setText('rfStatus','MULTIÍNDICE · SIN ACUERDO DIRECCIONAL');return;}
   if(!pred.ready){
-    resetConfirmation();
-    setText('rfStatus','SHADOW · IA APRENDIENDO EN CLOUD');
+    setText('rfStatus','ANALIZANDO ÍNDICES · SIN MUESTRAS SUFICIENTES');
     return;
   }
-
   const epoch=Number(pred.signalEpoch||0);
-  if(!epoch||epoch===rfConfirm.lastEpoch)return;
-
-  const isDirectional=pred.action==='RISE'||pred.action==='FALL';
-
-  // A brief WAIT no longer destroys a valid 1/2 confirmation immediately.
-  // The candidate survives only a few signal epochs and any real opposite
-  // directional signal starts a new confirmation.
-  if(!isDirectional){
-    if(
-      rfConfirm.count>0 &&
-      rfConfirm.action &&
-      epoch-rfConfirm.lastEpoch<=RF_CONFIRM_WAIT_TTL
-    ){
-      setText(
-        'rfStatus',
-        'CONFIRMACIÓN '+rfConfirm.action+' · '+rfConfirm.count+'/'+RF_CONFIRM_NEEDED+
-        ' · ESPERANDO CONTINUIDAD'
-      );
-      return;
-    }
-    resetConfirmation();
-    setText('rfStatus','ESPERANDO MEJOR DIRECCIÓN');
-    return;
-  }
-
-  if(
-    rfConfirm.action===pred.action &&
-    rfConfirm.lastEpoch>0 &&
-    epoch>rfConfirm.lastEpoch &&
-    epoch-rfConfirm.lastEpoch<=RF_CONFIRM_MAX_GAP
-  ){
-    rfConfirm.count=Math.min(RF_CONFIRM_NEEDED,rfConfirm.count+1);
-    rfConfirm.lastEpoch=epoch;
-  }else{
-    rfConfirm={
-      action:pred.action,
-      count:1,
-      lastEpoch:epoch,
-      firstEpoch:epoch
-    };
-  }
-
-  if(rfConfirm.count<RF_CONFIRM_NEEDED){
-    setText(
-      'rfStatus',
-      'CONFIRMANDO '+pred.action+' · '+rfConfirm.count+'/'+RF_CONFIRM_NEEDED
-    );
-    return;
-  }
-
-  setText('rfStatus','CONFIRMADA '+pred.action+' · '+Number(pred.horizon||1)+'T · 2/2 · VERIFICANDO PROPUESTA');
+  if(!epoch||epoch===rfLastTradeSignalEpoch)return;
+  if(pred.action!=='RISE'&&pred.action!=='FALL')return;
+  rfLastTradeSignalEpoch=epoch;
+  setText('rfStatus','SEÑAL '+pred.action+' · '+Number(pred.horizon||1)+'T · VERIFICANDO PROPUESTA');
   resetConfirmation();
 
   try{
@@ -599,33 +552,30 @@ async function evaluateAuto(pred){
 }
 async function poll(){
   try{
-    const h=horizon();
-    const query=h===0?'auto=1':'h='+h;
-    const r=await fetch(CLOUD_URL+'/api/rise-fall/prediction?'+query+'&ts='+Date.now(),{cache:'no-store'});
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const data=await r.json();
-    if(!data?.ok||!data.prediction)throw new Error('Sin predicción');
-    rfPrediction=data.prediction;
     const choice=rfSelectMarket();
-    if(choice){
-      rfMarketChoice=choice.symbol;
-      // Se conserva la señal direccional del modelo CLOUD; el explorador sólo
-      // habilita el cambio cuando su dirección coincide con la predicción.
-      rfPrediction={...rfPrediction,symbol:choice.symbol,
-        marketAgreement:choice.action===rfPrediction.action,
-        marketConfidence:choice.confidence};
-      setText('rfStatus','MULTIÍNDICE · '+choice.symbol+' · '+choice.action);
+    if(!choice){
+      setText('rfStatus','ANALIZANDO TODOS LOS ÍNDICES');
+      return;
     }
+    rfMarketChoice=choice.symbol;
+    const h=horizon()||1;
+    rfPrediction={
+      symbol:choice.symbol,action:choice.action,direction:choice.action,
+      directionProbability:choice.confidence,conditionalDirectionProbability:choice.confidence,
+      expectedUnits:choice.expectedUnits,horizon:h,autoHorizon:horizon()===0,
+      ready:true,signalEpoch:choice.signalEpoch,
+      validation:{resolved:choice.samples,directionHitEWMA:choice.confidence},
+      phase:'MULTI_INDEX',reversalProbability:1-choice.confidence,
+      continuationProbability:choice.confidence
+    };
     render();
-
-    const epoch=Number(rfPrediction.signalEpoch||0);
-    if(epoch&&epoch!==rfLastEpoch){
-      rfLastEpoch=epoch;
+    setText('rfStatus','MULTIÍNDICE · '+choice.symbol+' · '+choice.action);
+    if(rfPrediction.signalEpoch&&rfPrediction.signalEpoch!==rfLastEpoch){
+      rfLastEpoch=rfPrediction.signalEpoch;
       await evaluateAuto(rfPrediction);
     }
   }catch(e){
-    setText('rfCloudMode','OFFLINE');
-    setText('rfStatus','CLOUD RISE/FALL NO DISPONIBLE');
+    setText('rfStatus','ERROR ANALIZADOR · '+(e?.message||e));
   }
 }
 
