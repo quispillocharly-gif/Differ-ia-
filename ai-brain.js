@@ -2221,12 +2221,12 @@ function enterTrade(decision,manual=false){
   const selection=manual?null:multiChoose();
   const digit=selection?.digit??decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
   const sessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
-  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual,policy:DIFFER_POLICY_VERSION};
+  pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:selection?(multiMarkets.get(selection.symbol)?.digits.slice(-6)||[]):hist.slice(-6),predictedRisk:selection?Math.max(0,Math.min(1,1-selection.validatedRate)):decision.best.risk,confidence:selection?selection.lower:decision.confidence,strategy:selection?.method||'base',streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual,policy:DIFFER_POLICY_VERSION};
   if(!manual)resetAutoSignal();
   session.ops++;
   mem.recentPicks.push(digit);if(mem.recentPicks.length>30)mem.recentPicks.shift();
   $('status').textContent=(manual?'MANUAL':'AUTO IA')+' · ENVIANDO D'+digit;
-  log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)} · ${DIFFER_POLICY_VERSION}`);
+  log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(pendingTrade.predictedRisk)} · conf ${fmtPct(pendingTrade.confidence)} · ${DIFFER_POLICY_VERSION}`);
   renderSession();
   window.nexusTradeEffect?.('buy',{digit,stake,mode,manual});
   const symbol=selection?.symbol||'R_75';
@@ -2567,12 +2567,11 @@ function multiChoose(){
   const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean)
     .sort((a,b)=>b.lower-a.lower);
   if(!ranks.length)return null;
-  // La estrategia ganadora del laboratorio se aplica a la siguiente decisión
-  // cuando su evidencia supera a la política de referencia del índice base.
-  // El modelo original sigue disponible como candidato, sin bloquear el mercado.
-  const baseline=Number.isFinite(Number(mem?.globalP?.[0]))?0.90:0.90;
   const leader=ranks[0];
-  if(leader.validatedRate>baseline&&leader.lower>baseline-.03)return leader;
+  // Solo usar un candidato multiíndice cuando su evaluación conservadora
+  // supera el azar de DIFFER (90%) con evidencia estadística suficiente.
+  // De lo contrario se conserva la decisión del cerebro original.
+  if(leader.samples>=100&&leader.lower>0.90&&leader.validatedRate>0.90)return leader;
   return null;
 }
 function connectMultiScanner(){
