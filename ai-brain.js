@@ -2536,20 +2536,25 @@ const multiMarkets=new Map();
 let multiWS=null,multiReconnect=null,multiSelected='R_75';
 function multiRank(m){
   if(!m||m.digits.length<120||Date.now()-m.updated>15000)return null;
-  const counts=Array(10).fill(1);
-  m.digits.slice(-300).forEach(d=>counts[d]++);
-  const n=counts.reduce((a,b)=>a+b,0);
-  const digit=counts.indexOf(Math.min(...counts));
-  const probability=counts[digit]/n;
-  const uncertainty=Math.sqrt(probability*(1-probability)/n);
-  return {symbol:m.symbol,digit,risk:probability+1.64*uncertainty,samples:m.digits.length};
+  const recent=m.digits.slice(-180),counts=Array(10).fill(0);
+  recent.forEach(d=>counts[d]++);
+  const candidates=counts.map((count,d)=>{
+    const n=recent.length;
+    const risk=(count+1)/(n+10);
+    const bound=risk+1.64*Math.sqrt(risk*(1-risk)/(n+10));
+    const last=recent.slice(-24).filter(x=>x===d).length;
+    return {symbol:m.symbol,digit:d,risk:bound,frequency:risk,shortFrequency:last/24,samples:n};
+  });
+  // Evaluar los diez dígitos de cada índice; no seleccionar por orden fijo.
+  candidates.sort((a,b)=>a.risk-b.risk||a.shortFrequency-b.shortFrequency);
+  return candidates;
 }
 function multiChoose(){
-  const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean).sort((a,b)=>a.risk-b.risk);
+  const ranks=[...multiMarkets.values()].flatMap(m=>multiRank(m)||[])
+    .sort((a,b)=>a.risk-b.risk||a.shortFrequency-b.shortFrequency);
   if(!ranks.length)return null;
-  const best=ranks[0],current=ranks.find(x=>x.symbol===multiSelected);
-  // Evitar cambios por diferencias insignificantes de estimación.
-  if(current&&current.risk<=best.risk+.005)return current;
+  const best=ranks[0];
+  // El mercado anterior no tiene prioridad automática: cada operación reevalúa 0–9.
   return best;
 }
 function connectMultiScanner(){
@@ -2559,7 +2564,7 @@ function connectMultiScanner(){
   multiWS=ws;
   ws.onopen=()=>{
     for(const symbol of MULTI_SYMBOLS){
-      multiMarkets.set(symbol,{symbol,digits:[],updated:0});
+      multiMarkets.set(symbol,{symbol,digits:[],rawHistory:[],pip:null,updated:0});
       ws.send(JSON.stringify({ticks_history:symbol,count:300,end:'latest',style:'ticks',req_id:9100+MULTI_SYMBOLS.indexOf(symbol)}));
     }
   };
@@ -2570,15 +2575,18 @@ function connectMultiScanner(){
       const symbol=MULTI_SYMBOLS[(Number(m.echo_req?.req_id||m.req_id)-9100)]||m.echo_req?.ticks_history;
       const state=multiMarkets.get(symbol);
       if(!state)return;
-      const pip=Number(m.pip_size??4);
-      state.digits=m.history.prices.map(p=>digitFromQuote(p,pip)).filter(d=>d!==null).slice(-300);
-      state.updated=Date.now();
+      state.rawHistory=m.history.prices.slice(-300);
+      const pip=Number(m.pip_size);
+      if(Number.isInteger(pip)&&pip>=0&&pip<=10){state.pip=pip;state.digits=state.rawHistory.map(p=>digitFromQuote(p,pip)).filter(d=>d!==null);state.updated=Date.now();}
       ws.send(JSON.stringify({ticks:symbol,subscribe:1}));
     }
     if(m.tick){
       const state=multiMarkets.get(m.tick.symbol);
       if(!state)return;
-      const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
+      const pip=Number(m.tick.pip_size);
+      if(!Number.isInteger(pip)||pip<0||pip>10)return;
+      if(state.pip!==pip){state.pip=pip;state.digits=state.rawHistory.map(p=>digitFromQuote(p,pip)).filter(d=>d!==null);}
+      const d=digitFromQuote(m.tick.quote,pip);
       if(d===null)return;
       state.digits.push(d);
       if(state.digits.length>300)state.digits.shift();
