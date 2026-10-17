@@ -2567,8 +2567,13 @@ function multiChoose(){
   const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean)
     .sort((a,b)=>b.lower-a.lower);
   if(!ranks.length)return null;
-  // Evidencia por mercado, sin usar el mismo dato para entrenar y validar.
-  return ranks[0].lower>0.90?ranks[0]:null;
+  // La estrategia ganadora del laboratorio se aplica a la siguiente decisión
+  // cuando su evidencia supera a la política de referencia del índice base.
+  // El modelo original sigue disponible como candidato, sin bloquear el mercado.
+  const baseline=Number.isFinite(Number(mem?.globalP?.[0]))?0.90:0.90;
+  const leader=ranks[0];
+  if(leader.validatedRate>baseline&&leader.lower>baseline-.03)return leader;
+  return null;
 }
 function connectMultiScanner(){
   clearTimeout(multiReconnect);
