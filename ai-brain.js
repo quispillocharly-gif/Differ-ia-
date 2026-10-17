@@ -2228,7 +2228,12 @@ function enterTrade(decision,manual=false){
   log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)} · ${DIFFER_POLICY_VERSION}`);
   renderSession();
   window.nexusTradeEffect?.('buy',{digit,stake,mode,manual});
-  window.sendDemoTrade(digit,stake).catch(tradeError);
+  const selection=manual?null:multiChoose();
+  const symbol=selection?.symbol||'R_75';
+  multiSelected=symbol;
+  if(pendingTrade)pendingTrade.symbol=symbol;
+  log('MULTIÍNDICE DIFFER · '+symbol+' · '+(selection?'riesgo estadístico '+fmtPct(selection.risk):'sin datos suficientes, índice base'));
+  window.sendDemoTrade(digit,stake,symbol).catch(tradeError);
 }
 
 function tradeError(e){
@@ -2524,6 +2529,66 @@ async function syncFromCloud(){
     log('NUBE · no disponible, continúo con la última copia local · '+(e?.message||e));
   }
 }
+
+// Explorador multiíndice independiente: no mezcla historiales ni cambia la conexión de compra.
+const MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1HZ50V','1HZ75V','1HZ100V'];
+const multiMarkets=new Map();
+let multiWS=null,multiReconnect=null,multiSelected='R_75';
+function multiRank(m){
+  if(!m||m.digits.length<120||Date.now()-m.updated>15000)return null;
+  const counts=Array(10).fill(1);
+  m.digits.slice(-300).forEach(d=>counts[d]++);
+  const n=counts.reduce((a,b)=>a+b,0);
+  const digit=counts.indexOf(Math.min(...counts));
+  const probability=counts[digit]/n;
+  const uncertainty=Math.sqrt(probability*(1-probability)/n);
+  return {symbol:m.symbol,digit,risk:probability+1.64*uncertainty,samples:m.digits.length};
+}
+function multiChoose(){
+  const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean).sort((a,b)=>a.risk-b.risk);
+  if(!ranks.length)return null;
+  const best=ranks[0],current=ranks.find(x=>x.symbol===multiSelected);
+  // Evitar cambios por diferencias insignificantes de estimación.
+  if(current&&current.risk<=best.risk+.005)return current;
+  return best;
+}
+function connectMultiScanner(){
+  clearTimeout(multiReconnect);
+  try{multiWS?.close()}catch(_){}
+  const ws=new WebSocket('wss://api.derivws.com/trading/v1/options/ws/public');
+  multiWS=ws;
+  ws.onopen=()=>{
+    for(const symbol of MULTI_SYMBOLS){
+      multiMarkets.set(symbol,{symbol,digits:[],updated:0});
+      ws.send(JSON.stringify({ticks_history:symbol,count:300,end:'latest',style:'ticks',req_id:9100+MULTI_SYMBOLS.indexOf(symbol)}));
+    }
+  };
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data)}catch(_){return}
+    if(m.error)return;
+    if(m.history?.prices){
+      const symbol=MULTI_SYMBOLS[(Number(m.echo_req?.req_id||m.req_id)-9100)]||m.echo_req?.ticks_history;
+      const state=multiMarkets.get(symbol);
+      if(!state)return;
+      const pip=Number(m.pip_size??4);
+      state.digits=m.history.prices.map(p=>digitFromQuote(p,pip)).filter(d=>d!==null).slice(-300);
+      state.updated=Date.now();
+      ws.send(JSON.stringify({ticks:symbol,subscribe:1}));
+    }
+    if(m.tick){
+      const state=multiMarkets.get(m.tick.symbol);
+      if(!state)return;
+      const d=digitFromQuote(m.tick.quote,m.tick.pip_size);
+      if(d===null)return;
+      state.digits.push(d);
+      if(state.digits.length>300)state.digits.shift();
+      state.updated=Date.now();
+    }
+  };
+  ws.onclose=()=>{if(multiWS===ws)multiReconnect=setTimeout(connectMultiScanner,5000)};
+}
+connectMultiScanner();
+
 function connectMarket(){
   clearTimeout(reconnectTimer);
   try{marketWS?.close()}catch(_){}
