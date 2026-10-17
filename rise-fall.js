@@ -58,19 +58,6 @@ try{
   }
 }catch(_){} 
 
-let rfBackgroundResearch={markets:{},updatedAt:0};
-async function rfRefreshBackground(){
- try{const r=await fetch('/api/multi-index-learning',{cache:'no-store'});if(!r.ok)return;
- const data=await r.json();if(data?.markets&&typeof data.updatedAt==='number')rfBackgroundResearch=data;
- }catch(_){}
-}
-rfRefreshBackground();
-setInterval(rfRefreshBackground,30000);
-function rfBackgroundScore(symbol,method){
- const m=rfBackgroundResearch.markets?.[symbol],x=m?.rfMethods?.[method];
- if(!x||x.samples<100||Date.now()-m.updatedAt>120000)return 0;
- return Math.max(-.035,Math.min(.035,(x.hitEWMA-.5)*.14));
-}
 function rfExperienceScore(symbol,method){
   const x=rfExperience.get(symbol+'|'+method);
   return x&&x.n>=5?Math.max(-.04,Math.min(.04,(x.w/x.n-.5)*.08)):0;
@@ -97,7 +84,7 @@ function rfMarketRank(state){
     const p=hits/n,lower=p-2.58*Math.sqrt(Math.max(.000001,p*(1-p))/n);
     candidates.push({method,p,lower,n});
   }
-  candidates.sort((a,b)=>(b.lower+rfExperienceScore(state.symbol,b.method)+rfBackgroundScore(state.symbol,b.method))-(a.lower+rfExperienceScore(state.symbol,a.method)+rfBackgroundScore(state.symbol,a.method)));
+  candidates.sort((a,b)=>(b.lower+rfExperienceScore(state.symbol,b.method))-(a.lower+rfExperienceScore(state.symbol,a.method)));
   const best=candidates[0];if(!best)return null;
   const direction=predict(steps,best.method);
   return {symbol:state.symbol,action:direction>0?'RISE':'FALL',
@@ -107,7 +94,7 @@ function rfMarketRank(state){
 }
 function rfSelectMarket(){
   const ranked=[...rfMarketSamples.values()].map(rfMarketRank).filter(Boolean)
-    .sort((a,b)=>(b.conservative+rfBackgroundScore(b.symbol,b.method))-(a.conservative+rfBackgroundScore(a.symbol,a.method))||b.samples-a.samples);
+    .sort((a,b)=>b.conservative-a.conservative||b.samples-a.samples);
   return ranked[0]||null;
 }
 function rfConnectScanner(){
