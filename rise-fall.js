@@ -49,6 +49,12 @@ let rfTrainingAttempts=0;
 const RF_MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1HZ50V','1HZ75V','1HZ100V'];
 const rfMarketSamples=new Map();
 let rfMarketScanner=null,rfScannerRetry=null,rfMarketChoice='R_75';
+const rfExperience=new Map();
+
+function rfExperienceScore(symbol,method){
+  const x=rfExperience.get(symbol+'|'+method);
+  return x&&x.n>=5?Math.max(-.04,Math.min(.04,(x.w/x.n-.5)*.08)):0;
+}
 function rfMarketRank(state){
   if(!state||state.prices.length<180||Date.now()-state.updated>15000)return null;
   const prices=state.prices.slice(-300),steps=[];
@@ -71,7 +77,7 @@ function rfMarketRank(state){
     const p=hits/n,lower=p-2.58*Math.sqrt(Math.max(.000001,p*(1-p))/n);
     candidates.push({method,p,lower,n});
   }
-  candidates.sort((a,b)=>b.lower-a.lower);
+  candidates.sort((a,b)=>(b.lower+rfExperienceScore(state.symbol,b.method))-(a.lower+rfExperienceScore(state.symbol,a.method)));
   const best=candidates[0];if(!best)return null;
   const direction=predict(steps,best.method);
   return {symbol:state.symbol,action:direction>0?'RISE':'FALL',
@@ -427,6 +433,8 @@ function onRfMessage(ev){
       breakEven,
       signalEpoch:p.signalEpoch,
       phase:p.phase,
+      symbol:p.symbol,
+      method:p.method,
       ready:p.ready,
       contractId:''
     };
@@ -507,6 +515,10 @@ function sendRfTrade(pred){
   });
 }
 function settleRfTrade(profit,t){
+  if(t?.symbol&&t?.method){
+    const key=t.symbol+'|'+t.method,old=rfExperience.get(key)||{w:0,n:0};
+    rfExperience.set(key,{w:old.w*.98+Number(profit>0),n:old.n*.98+1});
+  }
   rfSession.pnl+=profit;
   if(profit>0){
     rfSession.wins++;
@@ -580,7 +592,7 @@ async function poll(){
       expectedUnits:choice.expectedUnits,horizon:h,autoHorizon:horizon()===0,
       ready:true,signalEpoch:choice.signalEpoch,
       validation:{resolved:choice.samples,directionHitEWMA:choice.confidence},
-      phase:'MULTI_INDEX',reversalProbability:1-choice.confidence,
+      phase:'MULTI_INDEX',method:choice.method,reversalProbability:1-choice.confidence,
       continuationProbability:choice.confidence
     };
     render();
