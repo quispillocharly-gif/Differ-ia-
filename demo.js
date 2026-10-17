@@ -159,7 +159,7 @@
     }
   }
 
-  window.sendDemoTrade=(digit,stake)=>new Promise((resolve,reject)=>{
+  window.sendDemoTrade=(digit,stake,symbol='R_75')=>new Promise((resolve,reject)=>{
     if(!ready||!socket||socket.readyState!==WebSocket.OPEN){
       reject(new Error('Deriv no conectado'));
       return;
@@ -169,6 +169,8 @@
       return;
     }
     digit=Number(digit);stake=Number(stake);
+    // El analizador puede seleccionar el índice sin modificar la conexión existente.
+    symbol=typeof symbol==='string'&&/^[A-Za-z0-9_]+$/.test(symbol)?symbol:'R_75';
     if(!Number.isInteger(digit)||digit<0||digit>9||!Number.isFinite(stake)||stake<=0){
       reject(new Error('Parámetros inválidos'));
       return;
@@ -185,7 +187,7 @@
       barrier:String(digit),
       duration:1,
       duration_unit:'t',
-      underlying_symbol:'R_75',
+      underlying_symbol:symbol,
       req_id:++proposalReq
     }));
   });
