@@ -2563,9 +2563,22 @@ function multiRank(m){
   candidates.sort((a,b)=>b.lower-a.lower);
   return candidates[0]||null;
 }
+let backgroundResearch={markets:{},updatedAt:0};
+async function refreshBackgroundResearch(){
+ try{const r=await fetch('/api/multi-index-learning',{cache:'no-store'});if(!r.ok)return;
+ const data=await r.json();if(data?.markets&&typeof data.updatedAt==='number')backgroundResearch=data;
+ }catch(_){}
+}
+refreshBackgroundResearch();
+setInterval(refreshBackgroundResearch,30000);
+function backgroundDigitScore(symbol,method){
+ const m=backgroundResearch.markets?.[symbol],x=m?.methods?.[method];
+ if(!x||x.samples<100||Date.now()-m.updatedAt>120000)return 0;
+ return Math.max(-.035,Math.min(.035,(x.hitEWMA-.9)*.35));
+}
 function multiChoose(){
   const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean)
-    .sort((a,b)=>b.lower-a.lower);
+    .sort((a,b)=>(b.lower+backgroundDigitScore(b.symbol,b.method))-(a.lower+backgroundDigitScore(a.symbol,a.method)));
   if(!ranks.length)return null;
   // La estrategia ganadora del laboratorio se aplica a la siguiente decisión
   // cuando su evidencia supera a la política de referencia del índice base.
