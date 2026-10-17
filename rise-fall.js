@@ -512,6 +512,7 @@ function sendRfTrade(pred){
       retryCount:0,
       signalEpoch:Number(pred.signalEpoch||0),
       phase:String(pred.phase||'UNKNOWN'),
+      method:typeof pred.method==='string'?pred.method:'',
       ready:!!pred.ready
     };
     rfPendingProposal=p;
