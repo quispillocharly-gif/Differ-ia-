@@ -50,6 +50,13 @@ const RF_MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1
 const rfMarketSamples=new Map();
 let rfMarketScanner=null,rfScannerRetry=null,rfMarketChoice='R_75';
 const rfExperience=new Map();
+try{
+  const saved=JSON.parse(localStorage.getItem('rf-experience-v1')||'{}');
+  for(const [key,v] of Object.entries(saved)){
+    if(typeof key==='string'&&Number.isFinite(v?.w)&&Number.isFinite(v?.n)&&v.n>=0&&v.n<=100)
+      rfExperience.set(key,{w:v.w,n:v.n});
+  }
+}catch(_){} 
 
 function rfExperienceScore(symbol,method){
   const x=rfExperience.get(symbol+'|'+method);
@@ -518,6 +525,7 @@ function settleRfTrade(profit,t){
   if(t?.symbol&&t?.method){
     const key=t.symbol+'|'+t.method,old=rfExperience.get(key)||{w:0,n:0};
     rfExperience.set(key,{w:old.w*.98+Number(profit>0),n:old.n*.98+1});
+    try{localStorage.setItem('rf-experience-v1',JSON.stringify(Object.fromEntries(rfExperience)))}catch(_){}
   }
   rfSession.pnl+=profit;
   if(profit>0){
