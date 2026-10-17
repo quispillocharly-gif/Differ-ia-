@@ -50,19 +50,51 @@ const RF_MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1
 const rfMarketSamples=new Map();
 let rfMarketScanner=null,rfScannerRetry=null,rfMarketChoice='R_75';
 function rfMarketRank(state){
-  if(!state||state.prices.length<120||Date.now()-state.updated>15000)return null;
-  const prices=state.prices.slice(-220),steps=[];
+  if(!state||state.prices.length<180||Date.now()-state.updated>15000)return null;
+  const prices=state.prices.slice(-300),steps=[];
   for(let i=1;i<prices.length;i++)steps.push(Math.sign(prices[i]-prices[i-1]));
-  const recent=steps.slice(-100),up=recent.filter(x=>x>0).length,down=recent.filter(x=>x<0).length;
-  const n=up+down;
-  if(n<60)return null;
-  const pRise=(up+2)/(n+4),pFall=(down+2)/(n+4);
-  const action=pRise>=pFall?'RISE':'FALL',confidence=Math.max(pRise,pFall);
-  const conservative=confidence-1.64*Math.sqrt(confidence*(1-confidence)/(n+4));
-  const last=steps.slice(-12),momentum=last.reduce((sum,x)=>sum+x,0);
-  const expectedUnits=prices.length>1?(prices[prices.length-1]-prices[prices.length-2]):0;
-  return {symbol:state.symbol,action,confidence,conservative,samples:n,
-    signalEpoch:state.epoch||0,expectedUnits,momentum};
+  const methods=['frequency','transition','momentum'];
+  const results=[];
+  for(const method of methods){
+    let hits=0,n=0;
+    for(let i=110;i<steps.length-1;i++){
+      const past=steps.slice(i-100,i),last=steps[i-1];
+      const nonflat=past.filter(x=>x!==0),up=nonflat.filter(x=>x>0).length;
+      let direction;
+      if(method==='frequency')direction=up>=nonflat.length/2?1:-1;
+      else if(method==='momentum'){
+        const recent=past.slice(-12).reduce((a,b)=>a+b,0);
+        direction=recent>=0?1:-1;
+      }else{
+        const transitions=[];
+        for(let j=1;j<past.length;j++)if(past[j-1]===last&&past[j]!==0)transitions.push(past[j]);
+        direction=transitions.filter(x=>x>0).length>=transitions.length/2?1:-1;
+      }
+      hits+=Number(steps[i]===direction);n++;
+    }
+    if(n<50)continue;
+    const p=hits/n,lower=p-2.58*Math.sqrt(p*(1-p)/n);
+    results.push({method,p,lower,n});
+  }
+  results.sort((a,b)=>b.lower-a.lower);
+  const best=results[0];
+  if(!best)return null;
+  const past=steps.slice(-100),last=steps.at(-1);
+  let direction;
+  if(best.method==='frequency'){
+    const nonflat=past.filter(x=>x!==0);
+    direction=nonflat.filter(x=>x>0).length>=nonflat.length/2?1:-1;
+  }else if(best.method==='momentum'){
+    direction=past.slice(-12).reduce((a,b)=>a+b,0)>=0?1:-1;
+  }else{
+    const transitions=[];
+    for(let j=1;j<past.length;j++)if(past[j-1]===last&&past[j]!==0)transitions.push(past[j]);
+    direction=transitions.filter(x=>x>0).length>=transitions.length/2?1:-1;
+  }
+  return {symbol:state.symbol,action:direction>0?'RISE':'FALL',
+    confidence:best.p,conservative:best.lower,samples:best.n,
+    method:best.method,signalEpoch:state.epoch||0,
+    expectedUnits:prices.at(-1)-prices.at(-2)};
 }
 function rfSelectMarket(){
   const ranked=[...rfMarketSamples.values()].map(rfMarketRank).filter(Boolean)
