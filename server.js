@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const createResearchLab = require('./research-lab');
 const createRiseFallResearch = require('./rise-fall-research');
+const startBackgroundLearning = require('./multi-index-background');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +15,8 @@ const MEMORY_FILE = path.join(DATA_DIR, 'differ-ai-memory.json');
 const RISE_FALL_FILE = path.join(DATA_DIR, 'rise-fall-ai-memory.json');
 const researchLab = createResearchLab({dataDir:DATA_DIR});
 const riseFallResearch = createRiseFallResearch({dataDir:DATA_DIR});
+const backgroundMultiIndex = startBackgroundLearning(DATA_DIR);
+app.get('/api/multi-index-learning',(_req,res)=>res.json(backgroundMultiIndex.snapshot()));
 
 const ORDERS = [1,2,3];
 const HORIZONS = [1,2,3];
