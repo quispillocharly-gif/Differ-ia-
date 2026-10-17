@@ -2535,43 +2535,39 @@ const MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1HZ5
 const multiMarkets=new Map();
 let multiWS=null,multiReconnect=null,multiSelected='R_75';
 function multiRank(m){
-  if(!m||m.digits.length<150||Date.now()-m.updated>15000)return null;
-  const ds=m.digits.slice(-300),out=[];
-  // Evaluación walk-forward sin mirar el siguiente tick. Se contrastan
-  // frecuencias, transición Markov y referencia uniforme por índice/dígito.
-  const methods=['frequency','markov','uniform'];
-  for(const method of methods){
-    let wins=0,total=0;
-    for(let t=100;t<ds.length-1;t++){
-      const train=ds.slice(Math.max(0,t-100),t),prev=ds[t-1];
-      const freq=Array(10).fill(1),transition=Array(10).fill(1);
-      train.forEach(d=>freq[d]++);
-      for(let j=1;j<train.length;j++)if(train[j-1]===prev)transition[train[j]]++;
-      const predicted=method==='frequency'?freq.indexOf(Math.min(...freq)):
-        method==='markov'?transition.indexOf(Math.min(...transition)):(t%10);
-      wins+=Number(ds[t]!==predicted);
-      total++;
-    }
-    if(total<35)continue;
-    const p=wins/total;
-    // Penalizar incertidumbre y múltiples estrategias probadas.
-    const lower=p-2.58*Math.sqrt(p*(1-p)/total);
-    out.push({symbol:m.symbol,method,validatedRate:p,lower,samples:total});
+  if(!m||m.digits.length<180||Date.now()-m.updated>15000)return null;
+  const ds=m.digits.slice(-300),methods=['frequency','markov','recent','ensemble'];
+  const candidates=[];
+  function predict(history,method){
+    const counts=Array(10).fill(1),transitions=Array(10).fill(1),recent=Array(10).fill(1);
+    history.slice(-100).forEach(d=>counts[d]++);
+    history.slice(-25).forEach(d=>recent[d]++);
+    const last=history.at(-1);
+    for(let j=Math.max(1,history.length-100);j<history.length;j++)
+      if(history[j-1]===last)transitions[history[j]]++;
+    const score=counts.map((n,d)=>method==='frequency'?n:
+      method==='markov'?transitions[d]:method==='recent'?recent[d]:
+      .35*n/100+.4*transitions[d]/Math.max(10,transitions.reduce((a,b)=>a+b,0))+.25*recent[d]/35);
+    return score.indexOf(Math.min(...score));
   }
-  const best=out.sort((x,y)=>y.lower-x.lower)[0];
-  if(!best)return null;
-  const train=ds.slice(-100),freq=Array(10).fill(1),transition=Array(10).fill(1),prev=ds.at(-1);
-  train.forEach(d=>freq[d]++);
-  for(let j=1;j<train.length;j++)if(train[j-1]===prev)transition[train[j]]++;
-  const digit=best.method==='frequency'?freq.indexOf(Math.min(...freq)):
-    best.method==='markov'?transition.indexOf(Math.min(...transition)):(ds.length%10);
-  return {...best,digit,risk:1-best.validatedRate};
+  for(const method of methods){
+    let correct=0,n=0;
+    for(let t=110;t<ds.length;t++){
+      const digit=predict(ds.slice(0,t),method);
+      correct+=Number(ds[t]!==digit);n++;
+    }
+    if(n<60)continue;
+    const p=correct/n,lower=p-2.58*Math.sqrt(Math.max(.000001,p*(1-p))/n);
+    candidates.push({symbol:m.symbol,method,digit:predict(ds,method),validatedRate:p,lower,risk:1-p,samples:n});
+  }
+  candidates.sort((a,b)=>b.lower-a.lower);
+  return candidates[0]||null;
 }
 function multiChoose(){
   const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean)
     .sort((a,b)=>b.lower-a.lower);
   if(!ranks.length)return null;
-  // Si no hay evidencia superior a la referencia 90%, se mantiene el modelo original.
+  // Evidencia por mercado, sin usar el mismo dato para entrenar y validar.
   return ranks[0].lower>0.90?ranks[0]:null;
 }
 function connectMultiScanner(){
