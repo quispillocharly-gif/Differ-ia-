@@ -44,6 +44,65 @@ let pollTimer=null;
 let rfLastTrainingAttemptAt=0;
 let rfTrainingAttempts=0;
 
+
+const RF_MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1HZ50V','1HZ75V','1HZ100V'];
+const rfMarketSamples=new Map();
+let rfMarketScanner=null,rfScannerRetry=null,rfMarketChoice='R_75';
+function rfMarketRank(state){
+  if(!state||state.prices.length<120||Date.now()-state.updated>15000)return null;
+  const prices=state.prices.slice(-300),changes=[];
+  for(let i=1;i<prices.length;i++)changes.push(Math.sign(prices[i]-prices[i-1]));
+  const recent=changes.slice(-100);
+  const up=recent.filter(x=>x>0).length,down=recent.filter(x=>x<0).length;
+  const n=up+down;
+  if(n<60)return null;
+  const rise=(up+2)/(n+4),fall=(down+2)/(n+4);
+  const action=rise>=fall?'RISE':'FALL';
+  const confidence=Math.max(rise,fall);
+  const conservative=confidence-1.64*Math.sqrt(confidence*(1-confidence)/(n+4));
+  return {symbol:state.symbol,action,confidence,conservative,samples:n};
+}
+function rfSelectMarket(){
+  const ranked=[...rfMarketSamples.values()].map(rfMarketRank).filter(Boolean).sort((a,b)=>b.conservative-a.conservative);
+  if(!ranked.length)return null;
+  const current=ranked.find(x=>x.symbol===rfMarketChoice);
+  return current&&current.conservative>=ranked[0].conservative-.005?current:ranked[0];
+}
+function rfConnectScanner(){
+  clearTimeout(rfScannerRetry);
+  try{rfMarketScanner?.close()}catch(_){}
+  const ws=new WebSocket('wss://api.derivws.com/trading/v1/options/ws/public');
+  rfMarketScanner=ws;
+  ws.onopen=()=>{
+    RF_MULTI_SYMBOLS.forEach((symbol,i)=>{
+      rfMarketSamples.set(symbol,{symbol,prices:[],updated:0});
+      ws.send(JSON.stringify({ticks_history:symbol,count:300,end:'latest',style:'ticks',req_id:12000+i}));
+    });
+  };
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data)}catch(_){return}
+    if(m.error)return;
+    if(m.history?.prices){
+      const symbol=RF_MULTI_SYMBOLS[Number(m.echo_req?.req_id??m.req_id)-12000]||m.echo_req?.ticks_history;
+      const state=rfMarketSamples.get(symbol);
+      if(!state)return;
+      state.prices=m.history.prices.map(Number).filter(Number.isFinite).slice(-300);
+      state.updated=Date.now();
+      ws.send(JSON.stringify({ticks:symbol,subscribe:1}));
+    }
+    if(m.tick){
+      const state=rfMarketSamples.get(m.tick.symbol);
+      if(!state)return;
+      const price=Number(m.tick.quote);
+      if(!Number.isFinite(price))return;
+      state.prices.push(price);
+      if(state.prices.length>300)state.prices.shift();
+      state.updated=Date.now();
+    }
+  };
+  ws.onclose=()=>{if(rfMarketScanner===ws)rfScannerRetry=setTimeout(rfConnectScanner,5000)};
+}
+
 function selected(){
   return $('strategyMode')?.value==='RISE_FALL';
 }
@@ -455,6 +514,7 @@ function settleRfTrade(profit,t){
 async function evaluateAuto(pred){
   if(!selected()||!rfAuto||!pred||rfActiveContract||rfPendingProposal||rfActiveTrade)return;
 
+  if(pred.marketAgreement===false){setText('rfStatus','MULTIÍNDICE · SIN ACUERDO DIRECCIONAL');return;}
   if(!pred.ready){
     resetConfirmation();
     setText('rfStatus','SHADOW · IA APRENDIENDO EN CLOUD');
@@ -546,6 +606,16 @@ async function poll(){
     const data=await r.json();
     if(!data?.ok||!data.prediction)throw new Error('Sin predicción');
     rfPrediction=data.prediction;
+    const choice=rfSelectMarket();
+    if(choice){
+      rfMarketChoice=choice.symbol;
+      // Se conserva la señal direccional del modelo CLOUD; el explorador sólo
+      // habilita el cambio cuando su dirección coincide con la predicción.
+      rfPrediction={...rfPrediction,symbol:choice.symbol,
+        marketAgreement:choice.action===rfPrediction.action,
+        marketConfidence:choice.confidence};
+      setText('rfStatus','MULTIÍNDICE · '+choice.symbol+' · '+choice.action);
+    }
     render();
 
     const epoch=Number(rfPrediction.signalEpoch||0);
@@ -603,6 +673,7 @@ function init(){
   rfNextStake=stakeBase();
   render();
   applyStrategy();
+  rfConnectScanner();
   poll();
   clearInterval(pollTimer);
   pollTimer=setInterval(poll,RF_POLL_MS);
