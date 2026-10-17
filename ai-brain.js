@@ -2218,7 +2218,8 @@ function confirmAutoEntry(decision){
 function enterTrade(decision,manual=false){
   if(pendingTrade||!decision||!canTradeMode())return;
   autoWaitTicks=0;
-  const digit=decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
+  const selection=manual?null:multiChoose();
+  const digit=selection?.digit??decision.best.d,stake=Math.max(.01,safeNum(nextStake,baseStake())),mode=$('mode').value;
   const sessionOp=Math.max(1,Math.floor(safeNum(session.settled,0))+1);
   pendingTrade={digit,stake,mode,signalTick:liveTickCounter,signalEpoch:lastEpoch,context:hist.slice(-6),predictedRisk:decision.best.risk,confidence:decision.confidence,streakBefore:Math.max(0,Math.floor(safeNum(session.streak,0))),sessionOp,manual,policy:DIFFER_POLICY_VERSION};
   if(!manual)resetAutoSignal();
@@ -2228,7 +2229,6 @@ function enterTrade(decision,manual=false){
   log(`${manual?'MANUAL':'AUTO'} ${mode} · DIFFER D${digit} · $${stake.toFixed(2)} · riesgo ${fmtPct(decision.best.risk)} · conf ${fmtPct(decision.confidence)} · ${DIFFER_POLICY_VERSION}`);
   renderSession();
   window.nexusTradeEffect?.('buy',{digit,stake,mode,manual});
-  const selection=manual?null:multiChoose();
   const symbol=selection?.symbol||'R_75';
   multiSelected=symbol;
   if(pendingTrade)pendingTrade.symbol=symbol;
