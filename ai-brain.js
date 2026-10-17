@@ -2535,27 +2535,44 @@ const MULTI_SYMBOLS=['R_10','R_25','R_50','R_75','R_100','1HZ10V','1HZ25V','1HZ5
 const multiMarkets=new Map();
 let multiWS=null,multiReconnect=null,multiSelected='R_75';
 function multiRank(m){
-  if(!m||m.digits.length<120||Date.now()-m.updated>15000)return null;
-  const recent=m.digits.slice(-180),counts=Array(10).fill(0);
-  recent.forEach(d=>counts[d]++);
-  const candidates=counts.map((count,d)=>{
-    const n=recent.length;
-    const risk=(count+1)/(n+10);
-    const bound=risk+1.64*Math.sqrt(risk*(1-risk)/(n+10));
-    const last=recent.slice(-24).filter(x=>x===d).length;
-    return {symbol:m.symbol,digit:d,risk:bound,frequency:risk,shortFrequency:last/24,samples:n};
-  });
-  // Evaluar los diez dígitos de cada índice; no seleccionar por orden fijo.
-  candidates.sort((a,b)=>a.risk-b.risk||a.shortFrequency-b.shortFrequency);
-  return candidates;
+  if(!m||m.digits.length<150||Date.now()-m.updated>15000)return null;
+  const ds=m.digits.slice(-300),out=[];
+  // Evaluación walk-forward sin mirar el siguiente tick. Se contrastan
+  // frecuencias, transición Markov y referencia uniforme por índice/dígito.
+  const methods=['frequency','markov','uniform'];
+  for(const method of methods){
+    let wins=0,total=0;
+    for(let t=100;t<ds.length-1;t++){
+      const train=ds.slice(Math.max(0,t-100),t),prev=ds[t-1];
+      const freq=Array(10).fill(1),transition=Array(10).fill(1);
+      train.forEach(d=>freq[d]++);
+      for(let j=1;j<train.length;j++)if(train[j-1]===prev)transition[train[j]]++;
+      const predicted=method==='frequency'?freq.indexOf(Math.min(...freq)):
+        method==='markov'?transition.indexOf(Math.min(...transition)):(t%10);
+      wins+=Number(ds[t]!==predicted);
+      total++;
+    }
+    if(total<35)continue;
+    const p=wins/total;
+    // Penalizar incertidumbre y múltiples estrategias probadas.
+    const lower=p-2.58*Math.sqrt(p*(1-p)/total);
+    out.push({symbol:m.symbol,method,validatedRate:p,lower,samples:total});
+  }
+  const best=out.sort((x,y)=>y.lower-x.lower)[0];
+  if(!best)return null;
+  const train=ds.slice(-100),freq=Array(10).fill(1),transition=Array(10).fill(1),prev=ds.at(-1);
+  train.forEach(d=>freq[d]++);
+  for(let j=1;j<train.length;j++)if(train[j-1]===prev)transition[train[j]]++;
+  const digit=best.method==='frequency'?freq.indexOf(Math.min(...freq)):
+    best.method==='markov'?transition.indexOf(Math.min(...transition)):(ds.length%10);
+  return {...best,digit,risk:1-best.validatedRate};
 }
 function multiChoose(){
-  const ranks=[...multiMarkets.values()].flatMap(m=>multiRank(m)||[])
-    .sort((a,b)=>a.risk-b.risk||a.shortFrequency-b.shortFrequency);
+  const ranks=[...multiMarkets.values()].map(multiRank).filter(Boolean)
+    .sort((a,b)=>b.lower-a.lower);
   if(!ranks.length)return null;
-  const best=ranks[0];
-  // El mercado anterior no tiene prioridad automática: cada operación reevalúa 0–9.
-  return best;
+  // Si no hay evidencia superior a la referencia 90%, se mantiene el modelo original.
+  return ranks[0].lower>0.90?ranks[0]:null;
 }
 function connectMultiScanner(){
   clearTimeout(multiReconnect);
