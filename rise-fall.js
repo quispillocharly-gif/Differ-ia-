@@ -288,7 +288,7 @@ function sendProposalForPending(p){
     currency:rfCurrency||'USD',
     duration:p.horizon,
     duration_unit:'t',
-    underlying_symbol:'R_75',
+    underlying_symbol:p.symbol||'R_75',
     req_id:++rfProposalReq
   }));
   return true;
@@ -409,6 +409,7 @@ function sendRfTrade(pred){
     const p={
       resolve,reject,
       action,
+      symbol:typeof pred.symbol==='string'&&/^[A-Za-z0-9_]+$/.test(pred.symbol)?pred.symbol:'R_75',
       contractType:contractTypeFor(action),
       probability:clamp(pred.directionProbability,0,1),
       conditionalProbability:clamp(pred.conditionalDirectionProbability,0,1),
