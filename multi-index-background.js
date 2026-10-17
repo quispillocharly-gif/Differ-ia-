@@ -20,7 +20,9 @@ module.exports=function startBackgroundLearning(dataDir){
  function learn(state){
   const ds=state.digits;if(ds.length<130)return;
   const outcome=ds.at(-1),history=ds.slice(0,-1);
-  const market=store.markets[state.symbol]||(store.markets[state.symbol]={samples:0,methods:{},direction:{up:0,down:0,flat:0},updatedAt:0});
+  const market=store.markets[state.symbol]||(store.markets[state.symbol]={samples:0,methods:{},direction:{up:0,down:0,flat:0},rfMethods:{},updatedAt:0});
+  const steps=state.prices.slice(-131).map((p,i,a)=>i?Math.sign(p-a[i-1]):null).slice(1);
+  if(steps.length>=110){const actual=steps.at(-1),past=steps.slice(0,-1);for(const method of ['frequency','transition','momentum']){const sample=past.slice(-100).filter(v=>v!==0);let dir=1;if(method==='frequency')dir=sample.filter(v=>v>0).length>=sample.length/2?1:-1;else if(method==='momentum')dir=past.slice(-12).reduce((a,b)=>a+b,0)>=0?1:-1;else{const last=past.at(-1),next=[];for(let j=1;j<past.length;j++)if(past[j-1]===last&&past[j]!==0)next.push(past[j]);dir=next.filter(v=>v>0).length>=next.length/2?1:-1;}const x=(market.rfMethods||(market.rfMethods={}))[method]||((market.rfMethods[method])={samples:0,hitEWMA:.5});x.samples++;x.hitEWMA=.98*x.hitEWMA+.02*Number(dir===actual);}}
   for(const method of ['frequency','markov','recent','ensemble']){
    const pick=predict(history,method),hit=Number(pick!==outcome);
    const x=market.methods[method]||(market.methods[method]={samples:0,hitEWMA:.9,correct:0});
