@@ -1,0 +1,29 @@
+name: Build Aim Training APK
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'aim-training-android/**'
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aim-training-android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: aim-training-debug-apk
+          path: aim-training-android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
