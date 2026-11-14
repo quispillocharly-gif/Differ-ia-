@@ -1,16 +1,6 @@
-# Aim Training for 8 Ball Pool (Android)
+# Aim Training FULL – Android
+Independent app in `aim-training-android/`; it does not edit or execute Differ.
 
-Independent Android project stored under `aim-training-android/` in the Differ repository. It does not import, edit, or execute Differ code.
+Included: Android MediaProjection capture consent and foreground service; movable floating overlay; live green-table segmentation and heuristic ball-candidate detection; cue candidate and target guidance line; angle adjustment and show/hide controls. It does not automate game input, aiming, or shooting.
 
-## Current implementation
-- Android launcher for Android 8+ (tested build target Android 13 compatible).
-- User-approved Android overlay permission flow.
-- Movable floating training panel.
-- On-screen practice guide line with angle adjustment and show/hide controls.
-- Close control; no automated aiming, touching, or shooting in 8 Ball Pool.
-
-## Important status
-This is the first buildable implementation, **not the promised full automatic ball-recognition release**. It does not yet detect balls, pockets, rails, cue-ball position, or calculate bank shots from the live game screen. Those features require MediaProjection capture, computer-vision work, and real-device validation on the Galaxy A14 4G. Do not treat the guide line as an automatically aligned shot prediction.
-
-## Build
-GitHub Actions workflow: `.github/workflows/build-apk.yml` (repository path: `aim-training-android/.github/workflows/build-apk.yml`). Run it manually from Actions or push a change under this folder. The APK is uploaded as `aim-training-debug-apk`.
+Accuracy: computer vision is heuristic and depends on table color, resolution, animation, shadows, and layout. It is not a guaranteed solver. It needs validation against actual Galaxy A14 gameplay. White highlights can be confused with the cue ball; reflections and rails can create false candidates. Pocket recognition, calibrated bank-shot geometry, collision physics and pocket selection are not yet validated.
