@@ -85,7 +85,7 @@ class AimOverlayService : Service() {
                     if(img!=null) workerHandler?.post {
                         try {
                             latest=TableVision.analyze(img)
-                            overlay?.postInvalidate()
+                            this@AimOverlayService.overlay?.postInvalidate()
                             statusText?.post { statusText?.text=if(latest.tableFound) "Mesa · ${latest.balls.size} candidatos · ${latest.message}" else "Buscando mesa… ${latest.message}" }
                         } catch(_:Exception) { } finally { img.close() }
                     }
@@ -101,10 +101,10 @@ class AimOverlayService : Service() {
         val box=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(12,8,12,8); setBackgroundColor(0xE91B2D43.toInt()) }
         box.addView(TextView(this).apply { text="AIM TRAINING • LIVE"; textSize=13f; setTextColor(Color.WHITE) })
         statusText=TextView(this).apply { text="Iniciando análisis…"; textSize=11f; setTextColor(0xFFB9E9FF.toInt()) }; box.addView(statusText)
-        box.addView(Button(this).apply { text="Ángulo −"; setOnClickListener { angleOffset-=1f; overlay?.postInvalidate() } })
-        box.addView(Button(this).apply { text="Ángulo +"; setOnClickListener { angleOffset+=1f; overlay?.postInvalidate() } })
-        box.addView(Button(this).apply { text="Trayectoria ON/OFF"; setOnClickListener { showPath=!showPath; overlay?.postInvalidate() } })
-        box.addView(Button(this).apply { text="Bolas ON/OFF"; setOnClickListener { showBalls=!showBalls; overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Ángulo −"; setOnClickListener { angleOffset-=1f; this@AimOverlayService.overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Ángulo +"; setOnClickListener { angleOffset+=1f; this@AimOverlayService.overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Trayectoria ON/OFF"; setOnClickListener { showPath=!showPath; this@AimOverlayService.overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Bolas ON/OFF"; setOnClickListener { showBalls=!showBalls; this@AimOverlayService.overlay?.postInvalidate() } })
         box.addView(Button(this).apply { text="Cerrar"; setOnClickListener { stopSelf() } })
         box.setOnTouchListener(object:View.OnTouchListener {
             var sx=0f; var sy=0f; var ox=0; var oy=0
