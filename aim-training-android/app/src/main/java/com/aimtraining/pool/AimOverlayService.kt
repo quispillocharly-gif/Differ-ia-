@@ -101,10 +101,10 @@ class AimOverlayService : Service() {
         val box=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(12,8,12,8); setBackgroundColor(0xE91B2D43.toInt()) }
         box.addView(TextView(this).apply { text="AIM TRAINING • LIVE"; textSize=13f; setTextColor(Color.WHITE) })
         statusText=TextView(this).apply { text="Iniciando análisis…"; textSize=11f; setTextColor(0xFFB9E9FF.toInt()) }; box.addView(statusText)
-        box.addView(Button(this).apply { text="Ángulo −"; setOnClickListener { angleOffset-=1f; overlay?.invalidate() } })
-        box.addView(Button(this).apply { text="Ángulo +"; setOnClickListener { angleOffset+=1f; overlay?.invalidate() } })
-        box.addView(Button(this).apply { text="Trayectoria ON/OFF"; setOnClickListener { showPath=!showPath; overlay?.invalidate() } })
-        box.addView(Button(this).apply { text="Bolas ON/OFF"; setOnClickListener { showBalls=!showBalls; overlay?.invalidate() } })
+        box.addView(Button(this).apply { text="Ángulo −"; setOnClickListener { angleOffset-=1f; overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Ángulo +"; setOnClickListener { angleOffset+=1f; overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Trayectoria ON/OFF"; setOnClickListener { showPath=!showPath; overlay?.postInvalidate() } })
+        box.addView(Button(this).apply { text="Bolas ON/OFF"; setOnClickListener { showBalls=!showBalls; overlay?.postInvalidate() } })
         box.addView(Button(this).apply { text="Cerrar"; setOnClickListener { stopSelf() } })
         box.setOnTouchListener(object:View.OnTouchListener {
             var sx=0f; var sy=0f; var ox=0; var oy=0
